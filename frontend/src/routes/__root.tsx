@@ -1,5 +1,5 @@
 import type { QueryClient } from '@tanstack/react-query'
-import { createRootRouteWithContext, Link, Outlet } from '@tanstack/react-router'
+import { createRootRouteWithContext, Link, Outlet, useRouterState } from '@tanstack/react-router'
 import { Moon, RefreshCw, Sun } from 'lucide-react'
 
 import { useAppUpdateAvailable } from '@/api/appVersion'
@@ -36,6 +36,8 @@ function RootLayout() {
   const [theme, setTheme] = useTheme()
   const bioclim = useBioclim()
   const updateAvailable = useAppUpdateAvailable()
+  // The registry page has its own prominent search in the hero; avoid a second box there.
+  const onRegistry = useRouterState({ select: (s) => s.location.pathname === '/' })
   return (
     <TooltipProvider delayDuration={200}>
       <div className="min-h-full">
@@ -73,7 +75,11 @@ function RootLayout() {
                 Validation
               </Link>
             </nav>
-            <SpeciesSearch className="mx-auto w-full max-w-xl" />
+            {onRegistry ? (
+              <div className="flex-1" />
+            ) : (
+              <SpeciesSearch className="mx-auto w-full max-w-xl" />
+            )}
             <div className="flex items-center gap-2">
               {bioclim.data && (
                 <Badge variant="outline" className="hidden font-mono md:inline-flex">

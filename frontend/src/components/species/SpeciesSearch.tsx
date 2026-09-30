@@ -1,6 +1,6 @@
 import { useNavigate } from '@tanstack/react-router'
 import { ChevronRight, Leaf, Loader2, Search } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { useSpeciesSearch } from '@/api/queries'
 import { Badge } from '@/components/ui/badge'
@@ -26,12 +26,13 @@ export function SpeciesSearch({ className, autoFocus }: { className?: string; au
   const debounced = useDebounced(q, 250)
   const search = useSpeciesSearch(debounced)
   const navigate = useNavigate()
+  const boxRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'k' && (e.metaKey || e.ctrlKey)) {
         e.preventDefault()
-        document.getElementById('species-search-input')?.focus()
+        boxRef.current?.querySelector('input')?.focus()
       }
     }
     window.addEventListener('keydown', onKey)
@@ -44,7 +45,9 @@ export function SpeciesSearch({ className, autoFocus }: { className?: string; au
     <Command shouldFilter={false} className={cn('overflow-visible bg-transparent', className)}>
       <Popover open={open && debounced.trim().length >= 2} onOpenChange={setOpen}>
         <PopoverAnchor asChild>
-          <div className="relative flex h-10 items-center gap-2 rounded-lg border bg-card/80 px-3 shadow-sm focus-within:ring-[3px] focus-within:ring-ring/40">
+          <div
+            ref={boxRef}
+            className="relative flex h-10 items-center gap-2 rounded-lg border bg-card/80 px-3 shadow-sm focus-within:ring-[3px] focus-within:ring-ring/40">
             <Search className="size-4 text-muted-foreground" />
             <CommandInputBare
               value={q}
@@ -128,7 +131,6 @@ function CommandInputBare(props: React.ComponentProps<typeof CommandInput>) {
   return (
     <div className="flex-1 [&>div]:border-0 [&>div]:px-0 [&_svg]:hidden">
       <CommandInput
-        id="species-search-input"
         placeholder="Search a species — e.g. Lantana camara, Vespa velutina…"
         className="h-9 py-0"
         {...props}
