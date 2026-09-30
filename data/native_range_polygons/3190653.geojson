@@ -1,0 +1,52 @@
+{
+ "type": "FeatureCollection",
+ "features": [
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Polygon",
+    "coordinates": [
+     [
+      [
+       100,
+       22
+      ],
+      [
+       122,
+       22
+      ],
+      [
+       123,
+       30
+      ],
+      [
+       122,
+       40
+      ],
+      [
+       115,
+       42
+      ],
+      [
+       104,
+       38
+      ],
+      [
+       98,
+       30
+      ],
+      [
+       100,
+       22
+      ]
+     ]
+    ]
+   },
+   "properties": {
+    "status": "confirmed",
+    "source": "validation-suite: Temperate China & Taiwan (Kowarik & S\u00e4umel 2007)",
+    "note": "Coarse literature outline used by the validation suite. Review and refine in the native-range editor before operational use."
+   }
+  }
+ ]
+}

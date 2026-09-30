@@ -1,0 +1,69 @@
+# Single public entry point: SPA + reverse proxy for the API and both tile servers.
+# Rendered by the nginx image's envsubst step; upstream hosts come from SDM_UPSTREAM_* env
+# (Compose service names by default; Kubernetes overrides them with FQDNs). Upstreams go
+# through variables + `resolver` (resolver.conf, 15-sdm-resolver.sh) so a recreated backend
+# container's new IP is picked up without restarting the gateway.
+# Everything is same-origin, so optional Basic auth (auth.conf, generated at container start
+# from SDM_AUTH_USER / SDM_AUTH_PASSWORD) also covers tile requests made by deck.gl.
+server {
+    listen 80;
+    server_name _;
+    root /usr/share/nginx/html;
+
+    include /etc/nginx/sdm/auth.conf;
+    include /etc/nginx/sdm/resolver.conf;
+
+    gzip on;
+    gzip_types text/css application/javascript application/json image/svg+xml
+               application/x-protobuf application/vnd.mapbox-vector-tile;
+
+    client_max_body_size 2m;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+
+    location = /healthz {
+        auth_basic off;
+        access_log off;
+        return 200 "ok\n";
+    }
+
+    # FastAPI (served with --root-path /api so /api/docs works behind the prefix).
+    location /api/ {
+        set $sdm_api ${SDM_UPSTREAM_API};
+        rewrite ^/api/(.*)$ /$1 break;
+        proxy_pass http://$sdm_api;
+        proxy_read_timeout 120s;
+    }
+
+    # titiler: suitability / MESS / zones COG tiles.
+    location /tiles/raster/ {
+        set $sdm_titiler ${SDM_UPSTREAM_TITILER};
+        rewrite ^/tiles/raster/(.*)$ /$1 break;
+        proxy_pass http://$sdm_titiler;
+        proxy_read_timeout 60s;
+        add_header Cache-Control "public, max-age=3600";
+    }
+
+    # pg_tileserv: occurrence + native-range vector tiles (change after every ingest).
+    location /tiles/vector/ {
+        set $sdm_tileserv ${SDM_UPSTREAM_TILESERV};
+        rewrite ^/tiles/vector/(.*)$ /$1 break;
+        proxy_pass http://$sdm_tileserv;
+        proxy_read_timeout 60s;
+        add_header Cache-Control "no-cache";
+    }
+
+    # Hashed assets are immutable.
+    location /assets/ {
+        add_header Cache-Control "public, max-age=31536000, immutable";
+        try_files $uri =404;
+    }
+
+    # SPA fallback for client-side (TanStack Router) routes; index + version.json never cached.
+    location / {
+        add_header Cache-Control "no-cache";
+        try_files $uri /index.html;
+    }
+}

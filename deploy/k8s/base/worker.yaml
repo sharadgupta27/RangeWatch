@@ -1,0 +1,77 @@
+# Celery worker (runs the Prefect flows: ingest → features → model → rasters → bulletin) and
+# Celery beat (single scheduler: nightly refresh of all species + stale-job reaper).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: worker }
+  template:
+    metadata:
+      labels: { app: worker }
+    spec:
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      # Long pipeline steps: give in-flight tasks time to finish on rollout (acks_late
+      # re-queues anything that does not).
+      terminationGracePeriodSeconds: 600
+      containers:
+        - name: worker
+          image: sdm-backend
+          args:
+            - celery
+            - -A
+            - src.orchestration.celery_app
+            - worker
+            - --loglevel=INFO
+            - --concurrency=2
+          envFrom:
+            - configMapRef: { name: sdm-config }
+            - secretRef: { name: sdm-secrets }
+          resources:
+            requests: { cpu: "1", memory: 2Gi }
+            limits: { memory: 6Gi }
+          volumeMounts:
+            - { name: data, mountPath: /data }
+            - { name: artifacts, mountPath: /artifacts }
+      volumes:
+        - name: data
+          persistentVolumeClaim: { claimName: sdm-data }
+        - name: artifacts
+          persistentVolumeClaim: { claimName: sdm-artifacts }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: beat
+spec:
+  replicas: 1                 # exactly one scheduler, or sweeps run twice
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { app: beat }
+  template:
+    metadata:
+      labels: { app: beat }
+    spec:
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+      containers:
+        - name: beat
+          image: sdm-backend
+          args:
+            - celery
+            - -A
+            - src.orchestration.celery_app
+            - beat
+            - --loglevel=INFO
+            - --schedule=/tmp/celerybeat-schedule
+          envFrom:
+            - configMapRef: { name: sdm-config }
+            - secretRef: { name: sdm-secrets }
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }

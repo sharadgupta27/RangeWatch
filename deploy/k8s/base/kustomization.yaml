@@ -1,0 +1,30 @@
+# SDM dashboard — Kubernetes base (kustomize).
+#   kubectl apply -k deploy/k8s/overlays/kind        # local smoke test
+# Production overlays should set: images (registry tags), the sdm-secrets Secret, RWX storage
+# classes for the shared volumes, the Ingress host/TLS and resource requests.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: sdm
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: sdm-dashboard
+    includeSelectors: false
+resources:
+  - namespace.yaml
+  - config.yaml
+  - storage.yaml
+  - postgres.yaml
+  - redis.yaml
+  - mlflow.yaml
+  - prefect.yaml
+  - db-migrate-job.yaml
+  - api.yaml
+  - worker.yaml
+  - tiles.yaml
+  - gateway.yaml
+  - bioclim-build-job.yaml
+images:
+  - name: sdm-backend
+    newTag: latest
+  - name: sdm-frontend
+    newTag: latest

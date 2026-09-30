@@ -1,0 +1,45 @@
+@page {
+  size: A4;
+  margin: 16mm 15mm 18mm 15mm;
+  @bottom-left { content: "SDM invasion-risk bulletin"; font-size: 7pt; color: #6b7785; }
+  @bottom-right { content: "Page " counter(page) " of " counter(pages); font-size: 7pt; color: #6b7785; }
+}
+
+:root { --ink: #1f2933; --muted: #6b7785; --accent: #2a9d8f; --warn: #e76f51; --rule: #dde2e6; }
+
+body { font-family: "DejaVu Sans", "Helvetica", sans-serif; font-size: 9pt; color: var(--ink); line-height: 1.45; }
+h1 { font-size: 20pt; margin: 0 0 2pt; font-weight: 700; }
+h2 { font-size: 11pt; margin: 14pt 0 6pt; padding-bottom: 3pt; border-bottom: 1px solid var(--rule); color: var(--ink); }
+h3 { font-size: 9.5pt; margin: 10pt 0 4pt; }
+p { margin: 0 0 6pt; }
+img { max-width: 100%; }
+
+.masthead { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 3px solid var(--accent); padding-bottom: 8pt; }
+.kicker { text-transform: uppercase; letter-spacing: 0.08em; font-size: 7pt; color: var(--accent); font-weight: 700; margin: 0 0 4pt; }
+.common { font-size: 11pt; color: var(--muted); margin: 0 0 4pt; }
+.meta { font-size: 7.5pt; color: var(--muted); margin: 0 0 2pt; }
+.thumb { width: 70pt; height: 70pt; object-fit: cover; border-radius: 6pt; margin-left: 12pt; }
+
+.lead { font-size: 10pt; }
+.banner { padding: 6pt 8pt; border-radius: 4pt; margin-top: 8pt; }
+.banner.warn { background: #fdf0ec; border-left: 3px solid var(--warn); }
+.caveat { background: #f6f7f8; border-left: 3px solid var(--muted); padding: 6pt 8pt; font-size: 8pt; margin: 6pt 0; }
+
+.figure img { width: 100%; max-height: 100mm; object-fit: contain; }
+.figure { page-break-inside: avoid; }
+.caption { font-size: 7.5pt; color: var(--muted); }
+.page-break { page-break-before: always; }
+
+.two-col { display: flex; gap: 14pt; }
+.two-col > section { flex: 1; }
+
+table { width: 100%; border-collapse: collapse; font-size: 8pt; margin-bottom: 6pt; }
+th, td { text-align: left; padding: 3pt 4pt; border-bottom: 1px solid var(--rule); vertical-align: top; }
+th { color: var(--muted); font-weight: 600; }
+table.compact td, table.compact th { padding: 2pt 4pt; }
+tr.total td { font-weight: 700; border-top: 1px solid var(--ink); }
+
+.small { font-size: 7.5pt; color: var(--muted); }
+ul.small { padding-left: 12pt; margin: 4pt 0; }
+.methods { font-size: 8pt; }
+.refs { font-size: 7pt; color: var(--muted); padding-left: 14pt; }

@@ -1,0 +1,48 @@
+{
+ "type": "FeatureCollection",
+ "features": [
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Polygon",
+    "coordinates": [
+     [
+      [
+       -66,
+       -38
+      ],
+      [
+       -47,
+       -36
+      ],
+      [
+       -44,
+       -24
+      ],
+      [
+       -50,
+       -14
+      ],
+      [
+       -62,
+       -15
+      ],
+      [
+       -66,
+       -25
+      ],
+      [
+       -66,
+       -38
+      ]
+     ]
+    ]
+   },
+   "properties": {
+    "status": "confirmed",
+    "source": "validation-suite: Paran\u00e1\u2013Uruguay basins (Wild 2004; Tsutsui et al. 2001)",
+    "note": "Coarse literature outline used by the validation suite. Review and refine in the native-range editor before operational use."
+   }
+  }
+ ]
+}

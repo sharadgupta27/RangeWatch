@@ -1,0 +1,6 @@
+outs:
+- md5: 570b8e2137926f05d8fa6f1a3bc4da98.dir
+  size: 54041967
+  nfiles: 2
+  hash: md5
+  path: bioclim_v1

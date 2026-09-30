@@ -1,0 +1,18 @@
+# Non-secret runtime configuration shared by api / worker / beat / jobs.
+# Secrets (DB password + URL, GBIF credentials, gateway Basic auth) live in the `sdm-secrets`
+# Secret, which is created per environment — see overlays/kind for a development example.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sdm-config
+data:
+  SDM_REDIS_URL: redis://redis:6379/0
+  SDM_BIOCLIM_VERSION: bioclim_v1
+  SDM_MLFLOW_TRACKING_URI: http://mlflow:5000
+  SDM_DATA_ROOT: /data
+  SDM_ARTIFACT_ROOT: /artifacts
+  SDM_TITILER_ARTIFACT_ROOT: /data/artifacts
+  SDM_TITILER_PUBLIC_URL: /tiles/raster
+  SDM_TILESERV_PUBLIC_URL: /tiles/vector
+  SDM_CORS_ORIGINS: '[]'
+  PREFECT_API_URL: http://prefect:4200/api

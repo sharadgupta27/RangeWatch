@@ -1,0 +1,75 @@
+# titiler (raster COG tiles from the artifact volume) and pg_tileserv (PostGIS vector tiles).
+# Neither is exposed directly — the gateway proxies /tiles/raster and /tiles/vector.
+apiVersion: v1
+kind: Service
+metadata:
+  name: titiler
+spec:
+  selector: { app: titiler }
+  ports:
+    - port: 8000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: titiler
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app: titiler }
+  template:
+    metadata:
+      labels: { app: titiler }
+    spec:
+      containers:
+        - name: titiler
+          image: ghcr.io/developmentseed/titiler:latest
+          args: ["uvicorn", "titiler.application.main:app", "--host", "0.0.0.0", "--port", "8000"]
+          env:
+            - { name: GDAL_DISABLE_READDIR_ON_OPEN, value: EMPTY_DIR }
+          ports:
+            - containerPort: 8000
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8000 }
+          resources:
+            requests: { cpu: 200m, memory: 256Mi }
+          volumeMounts:
+            - { name: artifacts, mountPath: /data/artifacts, readOnly: true }
+      volumes:
+        - name: artifacts
+          persistentVolumeClaim: { claimName: sdm-artifacts }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pg-tileserv
+spec:
+  selector: { app: pg-tileserv }
+  ports:
+    - port: 7800
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pg-tileserv
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: pg-tileserv }
+  template:
+    metadata:
+      labels: { app: pg-tileserv }
+    spec:
+      containers:
+        - name: pg-tileserv
+          image: pramsey/pg_tileserv:latest
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef: { name: sdm-secrets, key: TILESERV_DATABASE_URL }
+          ports:
+            - containerPort: 7800
+          readinessProbe:
+            httpGet: { path: /index.json, port: 7800 }
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }

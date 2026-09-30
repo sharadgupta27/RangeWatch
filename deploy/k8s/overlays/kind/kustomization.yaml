@@ -1,0 +1,66 @@
+# Local smoke-test overlay for a single-node kind cluster.
+#   docker tag sdm-backend:latest sdm-backend:dev
+#   docker tag species_distribution_mlops-frontend:latest sdm-frontend:dev
+#   kind create cluster --name sdm
+#   kind load docker-image sdm-backend:dev sdm-frontend:dev --name sdm
+#     (Docker Desktop's multi-platform store breaks this — see README for the
+#      `docker save --platform linux/amd64 | ctr images import` workaround)
+#   kubectl apply -k deploy/k8s/overlays/kind
+#   kubectl -n sdm port-forward svc/gateway 8088:80      # → http://localhost:8088
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+images:
+  # Non-"latest" tags → imagePullPolicy IfNotPresent, so images loaded into kind are used.
+  - name: sdm-backend
+    newTag: dev
+  - name: sdm-frontend
+    newTag: dev
+secretGenerator:
+  # DEVELOPMENT VALUES ONLY — production creates sdm-secrets out of band (sealed/external secrets).
+  - name: sdm-secrets
+    namespace: sdm
+    options:
+      disableNameSuffixHash: true
+    literals:
+      - POSTGRES_PASSWORD=sdm-dev
+      - SDM_DATABASE_URL=postgresql+psycopg2://sdm:sdm-dev@postgres:5432/sdm
+      - TILESERV_DATABASE_URL=postgres://sdm:sdm-dev@postgres:5432/sdm
+patches:
+  # Single node: ReadWriteOnce volumes can be shared by all pods on that node.
+  - target: { kind: PersistentVolumeClaim, name: sdm-(data|artifacts) }
+    patch: |-
+      - op: replace
+        path: /spec/accessModes
+        value: [ReadWriteOnce]
+      - op: replace
+        path: /spec/resources/requests/storage
+        value: 5Gi
+  - target: { kind: Deployment, name: (api|titiler|gateway) }
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 1
+  - target: { kind: Deployment, name: worker }
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources
+        value: { requests: { cpu: 500m, memory: 1Gi }, limits: { memory: 4Gi } }
+  # No ingress controller in a bare kind cluster; use port-forward instead.
+  - target: { kind: Ingress, name: sdm }
+    patch: |-
+      $patch: delete
+      apiVersion: networking.k8s.io/v1
+      kind: Ingress
+      metadata:
+        name: sdm
+  # Build a small (10′) climate layer right away.
+  - target: { kind: Job, name: bioclim-build }
+    patch: |-
+      - op: replace
+        path: /spec/suspend
+        value: false
+      - op: replace
+        path: /spec/template/spec/containers/0/args
+        value: [python, -m, src.features.bioclim_store, build, --version=bioclim_v1, --resolution=10m]

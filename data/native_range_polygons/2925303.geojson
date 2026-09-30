@@ -1,0 +1,68 @@
+{
+ "type": "FeatureCollection",
+ "features": [
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Polygon",
+    "coordinates": [
+     [
+      [
+       -106,
+       20
+      ],
+      [
+       -97,
+       26
+      ],
+      [
+       -80,
+       25
+      ],
+      [
+       -60,
+       18
+      ],
+      [
+       -50,
+       5
+      ],
+      [
+       -35,
+       -8
+      ],
+      [
+       -40,
+       -25
+      ],
+      [
+       -58,
+       -28
+      ],
+      [
+       -70,
+       -15
+      ],
+      [
+       -80,
+       -5
+      ],
+      [
+       -92,
+       12
+      ],
+      [
+       -106,
+       20
+      ]
+     ]
+    ]
+   },
+   "properties": {
+    "status": "confirmed",
+    "source": "validation-suite: Neotropics, Mexico to N Argentina (Day et al. 2003)",
+    "note": "Coarse literature outline used by the validation suite. Review and refine in the native-range editor before operational use."
+   }
+  }
+ ]
+}

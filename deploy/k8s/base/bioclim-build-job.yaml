@@ -1,0 +1,37 @@
+# One-time construction of the global static layer (downloads WorldClim once). Created
+# suspended — start it deliberately:
+#   kubectl -n sdm patch job bioclim-build -p '{"spec":{"suspend":false}}'
+# Resolution: 2.5m recommended for production (~0.6 GB download, ~1 GB COG); 10m for tests.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: bioclim-build
+spec:
+  suspend: true
+  backoffLimit: 2
+  template:
+    spec:
+      restartPolicy: OnFailure
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+        - name: build
+          image: sdm-backend
+          args:
+            - python
+            - -m
+            - src.features.bioclim_store
+            - build
+            - --version=bioclim_v1
+            - --resolution=2.5m
+          envFrom:
+            - configMapRef: { name: sdm-config }
+          resources:
+            requests: { cpu: 500m, memory: 2Gi }
+          volumeMounts:
+            - { name: data, mountPath: /data }
+      volumes:
+        - name: data
+          persistentVolumeClaim: { claimName: sdm-data }

@@ -1,0 +1,4032 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "SDM Invasion-Risk API",
+    "description": "Species-keyed MLOps service for MaxEnt species distribution models: incremental GBIF/iNaturalist ingestion, conditional retraining, model lineage, map-layer descriptors (titiler / pg_tileserv) and automated bulletins.",
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/health": {
+      "get": {
+        "tags": [
+          "meta"
+        ],
+        "summary": "Health",
+        "operationId": "health",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bioclim": {
+      "get": {
+        "tags": [
+          "meta"
+        ],
+        "summary": "Bioclim",
+        "operationId": "getBioclimInfo",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BioclimInfo"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/species/search": {
+      "get": {
+        "tags": [
+          "species"
+        ],
+        "summary": "Search Species",
+        "description": "Resolve free text to canonical GBIF backbone taxon keys, enriched with iNat metadata.",
+        "operationId": "searchSpecies",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 2,
+              "maxLength": 100,
+              "title": "Q"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 25,
+              "minimum": 1,
+              "default": 10,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/TaxonSearchResult"
+                  },
+                  "title": "Response Searchspecies"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/species": {
+      "get": {
+        "tags": [
+          "species"
+        ],
+        "summary": "List Species",
+        "operationId": "listSpecies",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/SpeciesSummary"
+                  },
+                  "type": "array",
+                  "title": "Response Listspecies"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/species/{taxon_key}": {
+      "get": {
+        "tags": [
+          "species"
+        ],
+        "summary": "Get Species",
+        "operationId": "getSpecies",
+        "parameters": [
+          {
+            "name": "taxon_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Taxon Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpeciesDetail"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/species/{taxon_key}/runs": {
+      "post": {
+        "tags": [
+          "species"
+        ],
+        "summary": "Run Pipeline",
+        "description": "Enqueue the incremental-fetch / conditional-retrain pipeline (full run if new).",
+        "operationId": "runSpeciesPipeline",
+        "parameters": [
+          {
+            "name": "taxon_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Taxon Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/RunRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/species/{taxon_key}/scenarios": {
+      "post": {
+        "tags": [
+          "species"
+        ],
+        "summary": "Project Scenarios",
+        "description": "Project the current model onto registered climate scenarios (no retraining).",
+        "operationId": "projectScenarios",
+        "parameters": [
+          {
+            "name": "taxon_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Taxon Key"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/species/{taxon_key}/native-range": {
+      "get": {
+        "tags": [
+          "species"
+        ],
+        "summary": "Get Native Range",
+        "operationId": "getNativeRange",
+        "parameters": [
+          {
+            "name": "taxon_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Taxon Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NativeRangeOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "species"
+        ],
+        "summary": "Put Native Range",
+        "description": "Save a user-reviewed polygon. Confirming it unlocks (re)training.",
+        "operationId": "updateNativeRange",
+        "parameters": [
+          {
+            "name": "taxon_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Taxon Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NativeRangeUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NativeRangeUpdateResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/species/{taxon_key}/occurrences": {
+      "get": {
+        "tags": [
+          "species"
+        ],
+        "summary": "List Occurrences",
+        "description": "Paginated occurrence list for table views (map layers use pg_tileserv vector tiles).",
+        "operationId": "listOccurrences",
+        "parameters": [
+          {
+            "name": "taxon_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Taxon Key"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "source",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "GBIF",
+                    "iNaturalist"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Source"
+            }
+          },
+          {
+            "name": "range_label",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "native",
+                    "introduced",
+                    "unknown"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Range Label"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OccurrencePage"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/species/{taxon_key}/occurrences/timeline": {
+      "get": {
+        "tags": [
+          "species"
+        ],
+        "summary": "Occurrence Timeline",
+        "operationId": "getOccurrenceTimeline",
+        "parameters": [
+          {
+            "name": "taxon_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Taxon Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Timeline"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/species/{taxon_key}/severity-config": {
+      "put": {
+        "tags": [
+          "species"
+        ],
+        "summary": "Put Severity Config",
+        "description": "Update the severity weights/priors and re-weight the current model's components\n(no retraining; returns null if no model exists yet).",
+        "operationId": "updateSeverityConfig",
+        "parameters": [
+          {
+            "name": "taxon_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Taxon Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SeverityConfigModel"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/SeverityResult"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "title": "Response Updateseverityconfig"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/species/{taxon_key}/models": {
+      "get": {
+        "tags": [
+          "models"
+        ],
+        "summary": "List Models",
+        "description": "All model versions, newest first, with full reproducibility metadata.",
+        "operationId": "listModelVersions",
+        "parameters": [
+          {
+            "name": "taxon_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Taxon Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ModelVersionOut"
+                  },
+                  "title": "Response Listmodelversions"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/species/{taxon_key}/models/{model_version}": {
+      "get": {
+        "tags": [
+          "models"
+        ],
+        "summary": "Get Model",
+        "operationId": "getModelVersion",
+        "parameters": [
+          {
+            "name": "taxon_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Taxon Key"
+            }
+          },
+          {
+            "name": "model_version",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Model Version"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelVersionDetail"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/species/{taxon_key}/layers": {
+      "get": {
+        "tags": [
+          "layers"
+        ],
+        "summary": "Get Layers",
+        "operationId": "getLayers",
+        "parameters": [
+          {
+            "name": "taxon_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Taxon Key"
+            }
+          },
+          {
+            "name": "model_version",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Model Version"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LayerSet"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/species/{taxon_key}/bulletin": {
+      "post": {
+        "tags": [
+          "bulletin"
+        ],
+        "summary": "Generate",
+        "operationId": "generateBulletin",
+        "parameters": [
+          {
+            "name": "taxon_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Taxon Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/BulletinRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "bulletin"
+        ],
+        "summary": "Bulletin Status",
+        "operationId": "getBulletinStatus",
+        "parameters": [
+          {
+            "name": "taxon_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Taxon Key"
+            }
+          },
+          {
+            "name": "model_version",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Model Version"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BulletinStatus"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/species/{taxon_key}/bulletin/file": {
+      "get": {
+        "tags": [
+          "bulletin"
+        ],
+        "summary": "Download",
+        "operationId": "downloadBulletin",
+        "parameters": [
+          {
+            "name": "taxon_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Taxon Key"
+            }
+          },
+          {
+            "name": "format",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "pdf",
+                "html"
+              ],
+              "type": "string",
+              "default": "pdf",
+              "title": "Format"
+            }
+          },
+          {
+            "name": "model_version",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Model Version"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/pdf": {},
+              "text/html": {}
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/jobs/{job_id}": {
+      "get": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Get Job",
+        "operationId": "getJob",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/jobs": {
+      "get": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "List Jobs",
+        "operationId": "listJobs",
+        "parameters": [
+          {
+            "name": "taxon_key",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Taxon Key"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 20,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/JobOut"
+                  },
+                  "title": "Response Listjobs"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/validation": {
+      "get": {
+        "tags": [
+          "validation"
+        ],
+        "summary": "Latest Report",
+        "operationId": "getValidationReport",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationReport"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/validation/runs": {
+      "post": {
+        "tags": [
+          "validation"
+        ],
+        "summary": "Run",
+        "operationId": "runValidationSuite",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/ValidationRunRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "BioclimInfo": {
+        "properties": {
+          "version": {
+            "type": "string",
+            "title": "Version"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source"
+          },
+          "resolution": {
+            "type": "string",
+            "title": "Resolution"
+          },
+          "selected_predictors": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Selected Predictors"
+          },
+          "vif": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "type": "object",
+            "title": "Vif"
+          },
+          "descriptions": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Descriptions"
+          },
+          "scenarios": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Scenarios"
+          },
+          "citation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Citation"
+          }
+        },
+        "type": "object",
+        "required": [
+          "version",
+          "source",
+          "resolution",
+          "selected_predictors",
+          "vif",
+          "descriptions",
+          "scenarios"
+        ],
+        "title": "BioclimInfo"
+      },
+      "BulletinRequest": {
+        "properties": {
+          "model_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Version"
+          }
+        },
+        "type": "object",
+        "title": "BulletinRequest"
+      },
+      "BulletinStatus": {
+        "properties": {
+          "taxon_key": {
+            "type": "integer",
+            "title": "Taxon Key"
+          },
+          "model_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Version"
+          },
+          "pdf_available": {
+            "type": "boolean",
+            "title": "Pdf Available"
+          },
+          "html_available": {
+            "type": "boolean",
+            "title": "Html Available"
+          },
+          "pdf_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pdf Url"
+          },
+          "html_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Html Url"
+          }
+        },
+        "type": "object",
+        "required": [
+          "taxon_key",
+          "model_version",
+          "pdf_available",
+          "html_available"
+        ],
+        "title": "BulletinStatus"
+      },
+      "FoldMetricsOut": {
+        "properties": {
+          "fold": {
+            "type": "integer",
+            "title": "Fold"
+          },
+          "n_train_presence": {
+            "type": "integer",
+            "title": "N Train Presence"
+          },
+          "n_test_presence": {
+            "type": "integer",
+            "title": "N Test Presence"
+          },
+          "n_test_background": {
+            "type": "integer",
+            "title": "N Test Background"
+          },
+          "auc": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auc"
+          },
+          "tss": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tss"
+          },
+          "cbi": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cbi"
+          }
+        },
+        "type": "object",
+        "required": [
+          "fold",
+          "n_train_presence",
+          "n_test_presence",
+          "n_test_background",
+          "auc",
+          "tss",
+          "cbi"
+        ],
+        "title": "FoldMetricsOut"
+      },
+      "GeoJSONMultiPolygon": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "MultiPolygon",
+            "title": "Type"
+          },
+          "coordinates": {
+            "items": {
+              "items": {
+                "items": {
+                  "items": {
+                    "type": "number"
+                  },
+                  "type": "array"
+                },
+                "type": "array"
+              },
+              "type": "array"
+            },
+            "type": "array",
+            "title": "Coordinates"
+          }
+        },
+        "type": "object",
+        "required": [
+          "type",
+          "coordinates"
+        ],
+        "title": "GeoJSONMultiPolygon"
+      },
+      "GeoJSONPolygon": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "Polygon",
+            "title": "Type"
+          },
+          "coordinates": {
+            "items": {
+              "items": {
+                "items": {
+                  "type": "number"
+                },
+                "type": "array"
+              },
+              "type": "array"
+            },
+            "type": "array",
+            "title": "Coordinates"
+          }
+        },
+        "type": "object",
+        "required": [
+          "type",
+          "coordinates"
+        ],
+        "title": "GeoJSONPolygon"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "Health": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "const": "ok",
+            "title": "Status"
+          },
+          "bioclim_version": {
+            "type": "string",
+            "title": "Bioclim Version"
+          },
+          "bioclim_available": {
+            "type": "boolean",
+            "title": "Bioclim Available"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "bioclim_version",
+          "bioclim_available"
+        ],
+        "title": "Health"
+      },
+      "JobKind": {
+        "type": "string",
+        "enum": [
+          "pipeline",
+          "bulletin",
+          "scenarios",
+          "validation"
+        ],
+        "title": "JobKind"
+      },
+      "JobOut": {
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Job Id"
+          },
+          "taxon_key": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Taxon Key"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/JobKind"
+          },
+          "status": {
+            "$ref": "#/components/schemas/JobStatus"
+          },
+          "stage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stage"
+          },
+          "progress": {
+            "type": "number",
+            "title": "Progress"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result"
+          },
+          "created_ts": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created Ts"
+          },
+          "updated_ts": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated Ts"
+          }
+        },
+        "type": "object",
+        "required": [
+          "job_id",
+          "taxon_key",
+          "kind",
+          "status",
+          "progress",
+          "created_ts",
+          "updated_ts"
+        ],
+        "title": "JobOut"
+      },
+      "JobStatus": {
+        "type": "string",
+        "enum": [
+          "queued",
+          "running",
+          "succeeded",
+          "failed"
+        ],
+        "title": "JobStatus"
+      },
+      "LayerCaveats": {
+        "properties": {
+          "model_type": {
+            "type": "string",
+            "enum": [
+              "A",
+              "B"
+            ],
+            "title": "Model Type"
+          },
+          "confidence_label": {
+            "type": "string",
+            "enum": [
+              "standard",
+              "lower"
+            ],
+            "title": "Confidence Label"
+          },
+          "transferability_caveat": {
+            "type": "string",
+            "title": "Transferability Caveat"
+          },
+          "mess_required": {
+            "type": "boolean",
+            "title": "Mess Required",
+            "default": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "model_type",
+          "confidence_label",
+          "transferability_caveat"
+        ],
+        "title": "LayerCaveats"
+      },
+      "LayerSet": {
+        "properties": {
+          "taxon_key": {
+            "type": "integer",
+            "title": "Taxon Key"
+          },
+          "model_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Version"
+          },
+          "occurrences": {
+            "$ref": "#/components/schemas/VectorLayer"
+          },
+          "native_range": {
+            "$ref": "#/components/schemas/VectorLayer"
+          },
+          "suitability": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RasterLayer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "mess": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RasterLayer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "zones": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RasterLayer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "extrapolation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RasterLayer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "MESS < 0 mask; always offered as an overlay with any projection"
+          },
+          "scenarios": {
+            "items": {
+              "$ref": "#/components/schemas/ScenarioLayer"
+            },
+            "type": "array",
+            "title": "Scenarios"
+          },
+          "scenarios_available": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Scenarios Available",
+            "description": "Scenarios registered for the model's bioclim version (projected or not)"
+          },
+          "caveats": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LayerCaveats"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "taxon_key",
+          "model_version",
+          "occurrences",
+          "native_range"
+        ],
+        "title": "LayerSet"
+      },
+      "LegendEntry": {
+        "properties": {
+          "value": {
+            "type": "number",
+            "title": "Value"
+          },
+          "color": {
+            "type": "string",
+            "title": "Color"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          }
+        },
+        "type": "object",
+        "required": [
+          "value",
+          "color",
+          "label"
+        ],
+        "title": "LegendEntry"
+      },
+      "ModelSummary": {
+        "properties": {
+          "model_version": {
+            "type": "integer",
+            "title": "Model Version"
+          },
+          "model_type": {
+            "type": "string",
+            "enum": [
+              "A",
+              "B"
+            ],
+            "title": "Model Type"
+          },
+          "confidence_label": {
+            "type": "string",
+            "enum": [
+              "standard",
+              "lower"
+            ],
+            "title": "Confidence Label"
+          },
+          "trained_ts": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Trained Ts"
+          },
+          "trigger": {
+            "type": "string",
+            "title": "Trigger"
+          },
+          "auc_mean": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auc Mean"
+          },
+          "cbi_mean": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cbi Mean"
+          },
+          "tss_mean": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tss Mean"
+          },
+          "transferability_caveat": {
+            "type": "string",
+            "title": "Transferability Caveat"
+          },
+          "severity": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SeverityResult"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "model_version",
+          "model_type",
+          "confidence_label",
+          "trained_ts",
+          "trigger",
+          "transferability_caveat"
+        ],
+        "title": "ModelSummary"
+      },
+      "ModelVersionDetail": {
+        "properties": {
+          "model_version": {
+            "type": "integer",
+            "title": "Model Version"
+          },
+          "model_type": {
+            "type": "string",
+            "enum": [
+              "A",
+              "B"
+            ],
+            "title": "Model Type"
+          },
+          "confidence_label": {
+            "type": "string",
+            "enum": [
+              "standard",
+              "lower"
+            ],
+            "title": "Confidence Label"
+          },
+          "trained_ts": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Trained Ts"
+          },
+          "trigger": {
+            "type": "string",
+            "title": "Trigger"
+          },
+          "auc_mean": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auc Mean"
+          },
+          "auc_std": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auc Std"
+          },
+          "cbi_mean": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cbi Mean"
+          },
+          "cbi_std": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cbi Std"
+          },
+          "tss_mean": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tss Mean"
+          },
+          "tss_std": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tss Std"
+          },
+          "n_presence": {
+            "type": "integer",
+            "title": "N Presence"
+          },
+          "n_background": {
+            "type": "integer",
+            "title": "N Background"
+          },
+          "n_cv_folds": {
+            "type": "integer",
+            "title": "N Cv Folds"
+          },
+          "feature_classes": {
+            "type": "string",
+            "title": "Feature Classes"
+          },
+          "beta_multiplier": {
+            "type": "number",
+            "title": "Beta Multiplier"
+          },
+          "severity_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Severity Score"
+          },
+          "mlflow_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mlflow Run Id"
+          },
+          "reproducibility": {
+            "$ref": "#/components/schemas/ReproducibilityInfo"
+          },
+          "threshold": {
+            "type": "number",
+            "title": "Threshold"
+          },
+          "threshold_rule": {
+            "type": "string",
+            "title": "Threshold Rule"
+          },
+          "cv_method": {
+            "type": "string",
+            "title": "Cv Method"
+          },
+          "predictors": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Predictors"
+          },
+          "variable_importance": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "type": "object",
+            "title": "Variable Importance"
+          },
+          "folds": {
+            "items": {
+              "$ref": "#/components/schemas/FoldMetricsOut"
+            },
+            "type": "array",
+            "title": "Folds"
+          },
+          "tuning": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Tuning"
+          },
+          "projection": {
+            "$ref": "#/components/schemas/ProjectionSummaryOut"
+          },
+          "transferability_caveat": {
+            "type": "string",
+            "title": "Transferability Caveat"
+          },
+          "severity": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SeverityResult"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "n_records_by_effective_label": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "N Records By Effective Label"
+          }
+        },
+        "type": "object",
+        "required": [
+          "model_version",
+          "model_type",
+          "confidence_label",
+          "trained_ts",
+          "trigger",
+          "n_presence",
+          "n_background",
+          "n_cv_folds",
+          "feature_classes",
+          "beta_multiplier",
+          "reproducibility",
+          "threshold",
+          "threshold_rule",
+          "cv_method",
+          "predictors",
+          "variable_importance",
+          "folds",
+          "tuning",
+          "projection",
+          "transferability_caveat",
+          "n_records_by_effective_label"
+        ],
+        "title": "ModelVersionDetail"
+      },
+      "ModelVersionOut": {
+        "properties": {
+          "model_version": {
+            "type": "integer",
+            "title": "Model Version"
+          },
+          "model_type": {
+            "type": "string",
+            "enum": [
+              "A",
+              "B"
+            ],
+            "title": "Model Type"
+          },
+          "confidence_label": {
+            "type": "string",
+            "enum": [
+              "standard",
+              "lower"
+            ],
+            "title": "Confidence Label"
+          },
+          "trained_ts": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Trained Ts"
+          },
+          "trigger": {
+            "type": "string",
+            "title": "Trigger"
+          },
+          "auc_mean": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auc Mean"
+          },
+          "auc_std": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auc Std"
+          },
+          "cbi_mean": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cbi Mean"
+          },
+          "cbi_std": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cbi Std"
+          },
+          "tss_mean": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tss Mean"
+          },
+          "tss_std": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tss Std"
+          },
+          "n_presence": {
+            "type": "integer",
+            "title": "N Presence"
+          },
+          "n_background": {
+            "type": "integer",
+            "title": "N Background"
+          },
+          "n_cv_folds": {
+            "type": "integer",
+            "title": "N Cv Folds"
+          },
+          "feature_classes": {
+            "type": "string",
+            "title": "Feature Classes"
+          },
+          "beta_multiplier": {
+            "type": "number",
+            "title": "Beta Multiplier"
+          },
+          "severity_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Severity Score"
+          },
+          "mlflow_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mlflow Run Id"
+          },
+          "reproducibility": {
+            "$ref": "#/components/schemas/ReproducibilityInfo"
+          }
+        },
+        "type": "object",
+        "required": [
+          "model_version",
+          "model_type",
+          "confidence_label",
+          "trained_ts",
+          "trigger",
+          "n_presence",
+          "n_background",
+          "n_cv_folds",
+          "feature_classes",
+          "beta_multiplier",
+          "reproducibility"
+        ],
+        "title": "ModelVersionOut"
+      },
+      "NativeRangeOut": {
+        "properties": {
+          "taxon_key": {
+            "type": "integer",
+            "title": "Taxon Key"
+          },
+          "geometry": {
+            "$ref": "#/components/schemas/GeoJSONMultiPolygon"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "draft",
+              "confirmed"
+            ],
+            "title": "Status"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "updated_ts": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated Ts"
+          },
+          "confirmed_ts": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confirmed Ts"
+          }
+        },
+        "type": "object",
+        "required": [
+          "taxon_key",
+          "geometry",
+          "status",
+          "source",
+          "updated_ts"
+        ],
+        "title": "NativeRangeOut"
+      },
+      "NativeRangeUpdate": {
+        "properties": {
+          "geometry": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/GeoJSONPolygon"
+              },
+              {
+                "$ref": "#/components/schemas/GeoJSONMultiPolygon"
+              }
+            ],
+            "title": "Geometry",
+            "discriminator": {
+              "propertyName": "type",
+              "mapping": {
+                "MultiPolygon": "#/components/schemas/GeoJSONMultiPolygon",
+                "Polygon": "#/components/schemas/GeoJSONPolygon"
+              }
+            }
+          },
+          "confirm": {
+            "type": "boolean",
+            "title": "Confirm",
+            "description": "Mark as user-reviewed; required before training",
+            "default": false
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "train": {
+            "type": "boolean",
+            "title": "Train",
+            "description": "Enqueue a pipeline run after confirming",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "geometry"
+        ],
+        "title": "NativeRangeUpdate"
+      },
+      "NativeRangeUpdateResult": {
+        "properties": {
+          "native_range": {
+            "$ref": "#/components/schemas/NativeRangeOut"
+          },
+          "job": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/JobOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "native_range"
+        ],
+        "title": "NativeRangeUpdateResult"
+      },
+      "OccurrencePage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/OccurrenceRow"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "offset": {
+            "type": "integer",
+            "title": "Offset"
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "offset",
+          "limit"
+        ],
+        "title": "OccurrencePage"
+      },
+      "OccurrenceRow": {
+        "properties": {
+          "source": {
+            "type": "string",
+            "enum": [
+              "GBIF",
+              "iNaturalist"
+            ],
+            "title": "Source"
+          },
+          "record_id": {
+            "type": "integer",
+            "title": "Record Id"
+          },
+          "longitude": {
+            "type": "number",
+            "title": "Longitude"
+          },
+          "latitude": {
+            "type": "number",
+            "title": "Latitude"
+          },
+          "event_date": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Event Date"
+          },
+          "coordinate_uncertainty_m": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Coordinate Uncertainty M"
+          },
+          "basis_of_record": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Basis Of Record"
+          },
+          "country_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Country Code"
+          },
+          "range_label": {
+            "type": "string",
+            "enum": [
+              "native",
+              "introduced",
+              "unknown"
+            ],
+            "title": "Range Label"
+          },
+          "ingested_ts": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Ingested Ts"
+          }
+        },
+        "type": "object",
+        "required": [
+          "source",
+          "record_id",
+          "longitude",
+          "latitude",
+          "range_label",
+          "ingested_ts"
+        ],
+        "title": "OccurrenceRow"
+      },
+      "OccurrenceSources": {
+        "properties": {
+          "gbif": {
+            "type": "integer",
+            "title": "Gbif",
+            "description": "Records ingested from GBIF"
+          },
+          "gbif_from_inaturalist": {
+            "type": "integer",
+            "title": "Gbif From Inaturalist",
+            "description": "Subset of the GBIF records that are iNaturalist research-grade observations republished to GBIF (linked by inat_crossref_id)"
+          },
+          "inaturalist_direct": {
+            "type": "integer",
+            "title": "Inaturalist Direct",
+            "description": "Research-grade observations fetched from iNaturalist and not yet in GBIF"
+          },
+          "last_inat_fetch_ts": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Inat Fetch Ts"
+          }
+        },
+        "type": "object",
+        "required": [
+          "gbif",
+          "gbif_from_inaturalist",
+          "inaturalist_direct"
+        ],
+        "title": "OccurrenceSources",
+        "description": "How the merged occurrence set was assembled (records are de-duplicated across sources)."
+      },
+      "ProjectionSummaryOut": {
+        "properties": {
+          "land_area_km2": {
+            "type": "number",
+            "title": "Land Area Km2"
+          },
+          "nonnative_land_area_km2": {
+            "type": "number",
+            "title": "Nonnative Land Area Km2"
+          },
+          "native_suitable_area_km2": {
+            "type": "number",
+            "title": "Native Suitable Area Km2"
+          },
+          "established_outside_area_km2": {
+            "type": "number",
+            "title": "Established Outside Area Km2"
+          },
+          "candidate_area_km2": {
+            "type": "number",
+            "title": "Candidate Area Km2"
+          },
+          "candidate_mean_suitability": {
+            "type": "number",
+            "title": "Candidate Mean Suitability"
+          },
+          "candidate_fraction_of_nonnative_land": {
+            "type": "number",
+            "title": "Candidate Fraction Of Nonnative Land"
+          },
+          "candidate_mess_ok_fraction": {
+            "type": "number",
+            "title": "Candidate Mess Ok Fraction"
+          },
+          "candidate_envelope_fraction": {
+            "type": "number",
+            "title": "Candidate Envelope Fraction"
+          },
+          "extrapolation_area_km2": {
+            "type": "number",
+            "title": "Extrapolation Area Km2"
+          },
+          "top_candidate_regions": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Top Candidate Regions"
+          },
+          "top_limiting_variables": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Top Limiting Variables"
+          }
+        },
+        "type": "object",
+        "required": [
+          "land_area_km2",
+          "nonnative_land_area_km2",
+          "native_suitable_area_km2",
+          "established_outside_area_km2",
+          "candidate_area_km2",
+          "candidate_mean_suitability",
+          "candidate_fraction_of_nonnative_land",
+          "candidate_mess_ok_fraction",
+          "candidate_envelope_fraction",
+          "extrapolation_area_km2",
+          "top_candidate_regions",
+          "top_limiting_variables"
+        ],
+        "title": "ProjectionSummaryOut"
+      },
+      "RasterLayer": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "tile_url": {
+            "type": "string",
+            "title": "Tile Url",
+            "description": "XYZ template with {z}/{x}/{y}"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "continuous",
+              "categorical"
+            ],
+            "title": "Kind"
+          },
+          "legend": {
+            "items": {
+              "$ref": "#/components/schemas/LegendEntry"
+            },
+            "type": "array",
+            "title": "Legend"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "label",
+          "tile_url",
+          "kind",
+          "legend",
+          "description"
+        ],
+        "title": "RasterLayer"
+      },
+      "ReproducibilityInfo": {
+        "properties": {
+          "bioclim_version_used": {
+            "type": "string",
+            "title": "Bioclim Version Used"
+          },
+          "bioclim_source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bioclim Source"
+          },
+          "bioclim_sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bioclim Sha256"
+          },
+          "bioclim_dvc_md5": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bioclim Dvc Md5",
+            "description": "DVC hash of the bioclim version directory (data/bioclim/<v>.dvc)"
+          },
+          "gbif_download_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gbif Download Key"
+          },
+          "gbif_download_doi": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gbif Download Doi"
+          },
+          "gbif_citation": {
+            "type": "string",
+            "title": "Gbif Citation"
+          },
+          "inat_citation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Inat Citation"
+          },
+          "package_versions": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Package Versions"
+          },
+          "random_seeds": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Random Seeds"
+          },
+          "training_config": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Training Config"
+          },
+          "native_range_source": {
+            "type": "string",
+            "title": "Native Range Source"
+          },
+          "native_range_confirmed_ts": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Native Range Confirmed Ts"
+          },
+          "training_data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TrainingSnapshotInfo"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Exact MaxEnt input (presences + background with predictors); absent for versions trained before snapshots were introduced"
+          },
+          "occurrence_manifest": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TrainingSnapshotInfo"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "All valid records considered, with ingested and effective labels"
+          }
+        },
+        "type": "object",
+        "required": [
+          "bioclim_version_used",
+          "gbif_citation",
+          "package_versions",
+          "random_seeds",
+          "training_config",
+          "native_range_source"
+        ],
+        "title": "ReproducibilityInfo"
+      },
+      "RunRequest": {
+        "properties": {
+          "force_retrain": {
+            "type": "boolean",
+            "title": "Force Retrain",
+            "default": false
+          },
+          "full_resync": {
+            "type": "boolean",
+            "title": "Full Resync",
+            "description": "Re-fetch all records (not only the delta) and append missing ones",
+            "default": false
+          }
+        },
+        "type": "object",
+        "title": "RunRequest"
+      },
+      "ScenarioLayer": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "'scenario:<name>'"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "suitability": {
+            "$ref": "#/components/schemas/RasterLayer"
+          },
+          "extrapolation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RasterLayer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "This scenario's own MESS < 0 mask (null for legacy projections)"
+          },
+          "extrapolated_land_fraction": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Extrapolated Land Fraction"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "label",
+          "suitability"
+        ],
+        "title": "ScenarioLayer"
+      },
+      "SeverityComponents": {
+        "properties": {
+          "suitability": {
+            "type": "number",
+            "title": "Suitability"
+          },
+          "climate_analogy": {
+            "type": "number",
+            "title": "Climate Analogy"
+          },
+          "spread_rate": {
+            "type": "number",
+            "title": "Spread Rate"
+          },
+          "ecological_impact_prior": {
+            "type": "number",
+            "title": "Ecological Impact Prior"
+          }
+        },
+        "type": "object",
+        "required": [
+          "suitability",
+          "climate_analogy",
+          "spread_rate",
+          "ecological_impact_prior"
+        ],
+        "title": "SeverityComponents"
+      },
+      "SeverityConfidence": {
+        "properties": {
+          "level": {
+            "type": "string",
+            "enum": [
+              "low",
+              "moderate",
+              "high"
+            ],
+            "title": "Level"
+          },
+          "mess_ok_fraction": {
+            "type": "number",
+            "title": "Mess Ok Fraction"
+          },
+          "model_type": {
+            "type": "string",
+            "enum": [
+              "A",
+              "B"
+            ],
+            "title": "Model Type"
+          },
+          "note": {
+            "type": "string",
+            "title": "Note"
+          }
+        },
+        "type": "object",
+        "required": [
+          "level",
+          "mess_ok_fraction",
+          "model_type",
+          "note"
+        ],
+        "title": "SeverityConfidence"
+      },
+      "SeverityConfigModel": {
+        "properties": {
+          "weights": {
+            "$ref": "#/components/schemas/SeverityWeights"
+          },
+          "impact_prior": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Impact Prior",
+            "default": 0.5
+          },
+          "impact_prior_source": {
+            "type": "string",
+            "title": "Impact Prior Source",
+            "default": "default (unknown)"
+          },
+          "suitability_saturation": {
+            "type": "number",
+            "maximum": 1.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Suitability Saturation",
+            "default": 0.1
+          },
+          "spread_half_saturation": {
+            "type": "number",
+            "exclusiveMinimum": 0.0,
+            "title": "Spread Half Saturation",
+            "default": 5.0
+          },
+          "spread_window_years": {
+            "type": "integer",
+            "maximum": 50.0,
+            "minimum": 2.0,
+            "title": "Spread Window Years",
+            "default": 10
+          }
+        },
+        "type": "object",
+        "title": "SeverityConfigModel"
+      },
+      "SeverityResult": {
+        "properties": {
+          "score": {
+            "type": "number",
+            "title": "Score"
+          },
+          "score_0_100": {
+            "type": "number",
+            "title": "Score 0 100"
+          },
+          "category": {
+            "type": "string",
+            "enum": [
+              "low",
+              "moderate",
+              "high",
+              "very high"
+            ],
+            "title": "Category"
+          },
+          "components": {
+            "$ref": "#/components/schemas/SeverityComponents"
+          },
+          "weights": {
+            "$ref": "#/components/schemas/SeverityComponents"
+          },
+          "contributions": {
+            "$ref": "#/components/schemas/SeverityComponents"
+          },
+          "descriptions": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Descriptions"
+          },
+          "confidence": {
+            "$ref": "#/components/schemas/SeverityConfidence"
+          },
+          "formula": {
+            "type": "string",
+            "title": "Formula"
+          },
+          "config": {
+            "$ref": "#/components/schemas/SeverityConfigModel"
+          },
+          "inputs": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Inputs"
+          }
+        },
+        "type": "object",
+        "required": [
+          "score",
+          "score_0_100",
+          "category",
+          "components",
+          "weights",
+          "contributions",
+          "descriptions",
+          "confidence",
+          "formula",
+          "config",
+          "inputs"
+        ],
+        "title": "SeverityResult"
+      },
+      "SeverityWeights": {
+        "properties": {
+          "suitability": {
+            "type": "number",
+            "minimum": 0.0,
+            "title": "Suitability",
+            "default": 0.35
+          },
+          "climate_analogy": {
+            "type": "number",
+            "minimum": 0.0,
+            "title": "Climate Analogy",
+            "default": 0.25
+          },
+          "spread_rate": {
+            "type": "number",
+            "minimum": 0.0,
+            "title": "Spread Rate",
+            "default": 0.2
+          },
+          "ecological_impact_prior": {
+            "type": "number",
+            "minimum": 0.0,
+            "title": "Ecological Impact Prior",
+            "default": 0.2
+          }
+        },
+        "type": "object",
+        "title": "SeverityWeights"
+      },
+      "SpeciesDetail": {
+        "properties": {
+          "taxon_key": {
+            "type": "integer",
+            "title": "Taxon Key"
+          },
+          "scientific_name": {
+            "type": "string",
+            "title": "Scientific Name"
+          },
+          "common_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Common Name"
+          },
+          "thumbnail_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Thumbnail Url"
+          },
+          "status": {
+            "$ref": "#/components/schemas/SpeciesStatus"
+          },
+          "n_occurrences_total": {
+            "type": "integer",
+            "title": "N Occurrences Total"
+          },
+          "n_occurrences_native": {
+            "type": "integer",
+            "title": "N Occurrences Native"
+          },
+          "n_pending_records": {
+            "type": "integer",
+            "title": "N Pending Records"
+          },
+          "model_version": {
+            "type": "integer",
+            "title": "Model Version"
+          },
+          "model_trained_ts": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Trained Ts"
+          },
+          "last_gbif_fetch_ts": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Gbif Fetch Ts"
+          },
+          "retrain_needed": {
+            "type": "boolean",
+            "title": "Retrain Needed"
+          },
+          "severity_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Severity Score",
+            "description": "0\u2013100, current model"
+          },
+          "model_type": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "A",
+                  "B"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Type"
+          },
+          "canonical_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Canonical Name"
+          },
+          "inat_taxon_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Inat Taxon Id"
+          },
+          "last_gbif_download_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Gbif Download Key"
+          },
+          "last_gbif_download_doi": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Gbif Download Doi"
+          },
+          "bioclim_version_used": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bioclim Version Used"
+          },
+          "last_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error"
+          },
+          "native_range_status": {
+            "type": "string",
+            "enum": [
+              "missing",
+              "draft",
+              "confirmed"
+            ],
+            "title": "Native Range Status"
+          },
+          "sources": {
+            "$ref": "#/components/schemas/OccurrenceSources"
+          },
+          "current_model": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ModelSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "severity_config": {
+            "$ref": "#/components/schemas/SeverityConfigModel"
+          }
+        },
+        "type": "object",
+        "required": [
+          "taxon_key",
+          "scientific_name",
+          "status",
+          "n_occurrences_total",
+          "n_occurrences_native",
+          "n_pending_records",
+          "model_version",
+          "retrain_needed",
+          "native_range_status",
+          "sources",
+          "severity_config"
+        ],
+        "title": "SpeciesDetail"
+      },
+      "SpeciesStatus": {
+        "type": "string",
+        "enum": [
+          "registered",
+          "ingesting",
+          "awaiting_native_range_review",
+          "training",
+          "up_to_date",
+          "minor_update_pending",
+          "retrain_pending",
+          "failed"
+        ],
+        "title": "SpeciesStatus",
+        "description": "Lifecycle state surfaced to the frontend as status badges."
+      },
+      "SpeciesSummary": {
+        "properties": {
+          "taxon_key": {
+            "type": "integer",
+            "title": "Taxon Key"
+          },
+          "scientific_name": {
+            "type": "string",
+            "title": "Scientific Name"
+          },
+          "common_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Common Name"
+          },
+          "thumbnail_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Thumbnail Url"
+          },
+          "status": {
+            "$ref": "#/components/schemas/SpeciesStatus"
+          },
+          "n_occurrences_total": {
+            "type": "integer",
+            "title": "N Occurrences Total"
+          },
+          "n_occurrences_native": {
+            "type": "integer",
+            "title": "N Occurrences Native"
+          },
+          "n_pending_records": {
+            "type": "integer",
+            "title": "N Pending Records"
+          },
+          "model_version": {
+            "type": "integer",
+            "title": "Model Version"
+          },
+          "model_trained_ts": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Trained Ts"
+          },
+          "last_gbif_fetch_ts": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Gbif Fetch Ts"
+          },
+          "retrain_needed": {
+            "type": "boolean",
+            "title": "Retrain Needed"
+          },
+          "severity_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Severity Score",
+            "description": "0\u2013100, current model"
+          },
+          "model_type": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "A",
+                  "B"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Type"
+          }
+        },
+        "type": "object",
+        "required": [
+          "taxon_key",
+          "scientific_name",
+          "status",
+          "n_occurrences_total",
+          "n_occurrences_native",
+          "n_pending_records",
+          "model_version",
+          "retrain_needed"
+        ],
+        "title": "SpeciesSummary"
+      },
+      "TaxonSearchResult": {
+        "properties": {
+          "taxon_key": {
+            "type": "integer",
+            "title": "Taxon Key"
+          },
+          "scientific_name": {
+            "type": "string",
+            "title": "Scientific Name"
+          },
+          "canonical_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Canonical Name"
+          },
+          "rank": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rank"
+          },
+          "breadcrumb": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Breadcrumb",
+            "description": "Kingdom \u2192 genus"
+          },
+          "common_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Common Name"
+          },
+          "thumbnail_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Thumbnail Url"
+          },
+          "inat_taxon_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Inat Taxon Id"
+          },
+          "in_registry": {
+            "type": "boolean",
+            "title": "In Registry",
+            "default": false
+          },
+          "status": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SpeciesStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "taxon_key",
+          "scientific_name"
+        ],
+        "title": "TaxonSearchResult"
+      },
+      "Timeline": {
+        "properties": {
+          "years": {
+            "items": {
+              "$ref": "#/components/schemas/TimelineYear"
+            },
+            "type": "array",
+            "title": "Years"
+          },
+          "min_year": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Year"
+          },
+          "max_year": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Year"
+          }
+        },
+        "type": "object",
+        "required": [
+          "years",
+          "min_year",
+          "max_year"
+        ],
+        "title": "Timeline"
+      },
+      "TimelineYear": {
+        "properties": {
+          "year": {
+            "type": "integer",
+            "title": "Year"
+          },
+          "native": {
+            "type": "integer",
+            "title": "Native"
+          },
+          "introduced": {
+            "type": "integer",
+            "title": "Introduced"
+          },
+          "unknown": {
+            "type": "integer",
+            "title": "Unknown"
+          },
+          "cumulative": {
+            "type": "integer",
+            "title": "Cumulative"
+          }
+        },
+        "type": "object",
+        "required": [
+          "year",
+          "native",
+          "introduced",
+          "unknown",
+          "cumulative"
+        ],
+        "title": "TimelineYear"
+      },
+      "TrainingSnapshotInfo": {
+        "properties": {
+          "path": {
+            "type": "string",
+            "title": "Path",
+            "description": "Artifact path, relative to the artifact root"
+          },
+          "sha256": {
+            "type": "string",
+            "title": "Sha256"
+          },
+          "n_rows": {
+            "type": "integer",
+            "title": "N Rows"
+          },
+          "bytes": {
+            "type": "integer",
+            "title": "Bytes"
+          }
+        },
+        "type": "object",
+        "required": [
+          "path",
+          "sha256",
+          "n_rows",
+          "bytes"
+        ],
+        "title": "TrainingSnapshotInfo",
+        "description": "A per-version, content-addressed data file (see training_snapshot.py)."
+      },
+      "TransferabilityResult": {
+        "properties": {
+          "auc": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auc"
+          },
+          "cbi": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cbi"
+          },
+          "n_native_train": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "N Native Train"
+          },
+          "n_introduced_test": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "N Introduced Test"
+          },
+          "literature_mean_auc": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Literature Mean Auc"
+          },
+          "method": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Method"
+          },
+          "skipped": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Skipped"
+          }
+        },
+        "type": "object",
+        "title": "TransferabilityResult"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      },
+      "ValidationRegion": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "bbox": {
+            "items": {
+              "type": "number"
+            },
+            "type": "array",
+            "title": "Bbox"
+          },
+          "expect": {
+            "type": "string",
+            "enum": [
+              "suitable",
+              "unsuitable"
+            ],
+            "title": "Expect"
+          },
+          "ref": {
+            "type": "string",
+            "title": "Ref"
+          },
+          "fraction_suitable": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fraction Suitable"
+          },
+          "mean_suitability": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mean Suitability"
+          },
+          "passed": {
+            "type": "boolean",
+            "title": "Passed"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "bbox",
+          "expect",
+          "ref",
+          "passed"
+        ],
+        "title": "ValidationRegion"
+      },
+      "ValidationReport": {
+        "properties": {
+          "generated_ts": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Generated Ts"
+          },
+          "criteria": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Criteria"
+          },
+          "species": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationSpecies"
+            },
+            "type": "array",
+            "title": "Species"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/ValidationSummary"
+          }
+        },
+        "type": "object",
+        "required": [
+          "generated_ts",
+          "criteria",
+          "species",
+          "summary"
+        ],
+        "title": "ValidationReport"
+      },
+      "ValidationRunRequest": {
+        "properties": {
+          "taxon_keys": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Taxon Keys",
+            "description": "Subset of reference species"
+          },
+          "train": {
+            "type": "boolean",
+            "title": "Train",
+            "description": "Ingest/train reference species that lack a model",
+            "default": true
+          }
+        },
+        "type": "object",
+        "title": "ValidationRunRequest"
+      },
+      "ValidationSpecies": {
+        "properties": {
+          "taxon_key": {
+            "type": "integer",
+            "title": "Taxon Key"
+          },
+          "scientific_name": {
+            "type": "string",
+            "title": "Scientific Name"
+          },
+          "native_range_reference": {
+            "type": "string",
+            "title": "Native Range Reference"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "evaluated",
+              "no_model",
+              "error"
+            ],
+            "title": "Status"
+          },
+          "passed": {
+            "type": "boolean",
+            "title": "Passed"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "model_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Version"
+          },
+          "model_type": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "A",
+                  "B"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Type"
+          },
+          "bioclim_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bioclim Version"
+          },
+          "auc_mean": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auc Mean"
+          },
+          "cbi_mean": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cbi Mean"
+          },
+          "tss_mean": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tss Mean"
+          },
+          "n_occurrences": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "N Occurrences"
+          },
+          "regions": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationRegion"
+            },
+            "type": "array",
+            "title": "Regions"
+          },
+          "invaded_captured": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Invaded Captured"
+          },
+          "invaded_total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Invaded Total"
+          },
+          "controls_correct": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Controls Correct"
+          },
+          "controls_total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Controls Total"
+          },
+          "transferability": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TransferabilityResult"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "taxon_key",
+          "scientific_name",
+          "native_range_reference",
+          "status",
+          "passed"
+        ],
+        "title": "ValidationSpecies"
+      },
+      "ValidationSummary": {
+        "properties": {
+          "n_species": {
+            "type": "integer",
+            "title": "N Species"
+          },
+          "n_passed": {
+            "type": "integer",
+            "title": "N Passed"
+          },
+          "mean_transfer_auc": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mean Transfer Auc"
+          },
+          "literature_mean_transfer_auc": {
+            "type": "number",
+            "title": "Literature Mean Transfer Auc"
+          }
+        },
+        "type": "object",
+        "required": [
+          "n_species",
+          "n_passed",
+          "literature_mean_transfer_auc"
+        ],
+        "title": "ValidationSummary"
+      },
+      "VectorLayer": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "tile_url": {
+            "type": "string",
+            "title": "Tile Url",
+            "description": "MVT XYZ template; extra query params may be appended"
+          },
+          "source_layer": {
+            "type": "string",
+            "title": "Source Layer"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "label",
+          "tile_url",
+          "source_layer"
+        ],
+        "title": "VectorLayer"
+      }
+    }
+  }
+}

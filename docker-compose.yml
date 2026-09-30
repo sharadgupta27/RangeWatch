@@ -1,0 +1,162 @@
+# Local / single-host deployment of the full stack.
+#   docker compose up -d --build
+#   docker compose run --rm api python -m src.features.bioclim_store build --resolution 10m
+# Defaults are for local development only — set real credentials in a git-ignored .env.
+#
+# The `frontend` Nginx is the single public entry point (http://localhost:8080): it serves the
+# SPA and proxies /api, /tiles/raster (titiler) and /tiles/vector (pg_tileserv), with optional
+# Basic auth (SDM_AUTH_USER / SDM_AUTH_PASSWORD). Every other port binds to 127.0.0.1 only.
+
+x-backend: &backend
+  # One shared image for api / worker / beat so a single build updates all of them.
+  image: sdm-backend:latest
+  build: ./backend
+  restart: unless-stopped
+  env_file:
+    - path: .env
+      required: false
+  environment: &backend-env
+    SDM_DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-sdm}:${POSTGRES_PASSWORD:-sdm}@postgres:5432/${POSTGRES_DB:-sdm}
+    SDM_REDIS_URL: redis://redis:6379/0
+    SDM_BIOCLIM_VERSION: ${SDM_BIOCLIM_VERSION:-bioclim_v1}
+    SDM_MLFLOW_TRACKING_URI: http://mlflow:5000
+    SDM_DATA_ROOT: /data
+    SDM_ARTIFACT_ROOT: /artifacts
+    SDM_TITILER_ARTIFACT_ROOT: /data/artifacts
+    # Tile URLs handed to the browser: same-origin paths routed by the gateway.
+    SDM_TITILER_PUBLIC_URL: ${SDM_TITILER_PUBLIC_URL:-/tiles/raster}
+    SDM_TILESERV_PUBLIC_URL: ${SDM_TILESERV_PUBLIC_URL:-/tiles/vector}
+    SDM_CORS_ORIGINS: '["http://localhost:8080","http://localhost:5173"]'
+    PREFECT_API_URL: http://prefect:4200/api
+  volumes:
+    - ./data:/data
+    - artifacts:/artifacts
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_started
+
+services:
+  postgres:
+    image: postgis/postgis:16-3.4
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-sdm}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-sdm}
+      POSTGRES_DB: ${POSTGRES_DB:-sdm}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./backend/db/schema.sql:/docker-entrypoint-initdb.d/10-schema.sql:ro
+    ports: ["127.0.0.1:5432:5432"]
+    healthcheck:
+      # TCP check: the initdb bootstrap server only listens on the unix socket, so this
+      # does not report healthy until the real server is accepting connections.
+      test: ["CMD-SHELL", "pg_isready -h localhost -U ${POSTGRES_USER:-sdm} -d ${POSTGRES_DB:-sdm}"]
+      interval: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v2.22.0
+    restart: unless-stopped
+    command: >
+      mlflow server --host 0.0.0.0 --port 5000
+      --backend-store-uri sqlite:////mlflow/mlflow.db
+      --artifacts-destination /mlflow/artifacts
+    volumes: [mlflow:/mlflow]
+    ports: ["127.0.0.1:5000:5000"]
+
+  prefect:
+    image: prefecthq/prefect:3-latest
+    restart: unless-stopped
+    command: prefect server start --host 0.0.0.0
+    ports: ["127.0.0.1:4200:4200"]
+
+  api:
+    <<: *backend
+    # Served behind the gateway at /api (root-path keeps /api/docs working).
+    command: uvicorn src.api.main:app --host 0.0.0.0 --port 8000 --root-path /api --proxy-headers --forwarded-allow-ips=*
+    ports: ["127.0.0.1:8000:8000"]
+
+  worker:
+    <<: *backend
+    command: celery -A src.orchestration.celery_app worker --loglevel=INFO --concurrency=2
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      mlflow:
+        condition: service_started
+      prefect:
+        condition: service_started
+
+  beat:
+    <<: *backend
+    command: celery -A src.orchestration.celery_app beat --loglevel=INFO --schedule /tmp/celerybeat-schedule
+
+  titiler:
+    image: ghcr.io/developmentseed/titiler:latest
+    restart: unless-stopped
+    command: uvicorn titiler.application.main:app --host 0.0.0.0 --port 8000
+    environment:
+      TITILER_API_CORS_ORIGINS: "*"
+      GDAL_DISABLE_READDIR_ON_OPEN: EMPTY_DIR
+    volumes:
+      - artifacts:/data/artifacts:ro
+    ports: ["127.0.0.1:8001:8000"]
+
+  pg_tileserv:
+    image: pramsey/pg_tileserv:latest
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-sdm}:${POSTGRES_PASSWORD:-sdm}@postgres:5432/${POSTGRES_DB:-sdm}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports: ["127.0.0.1:7800:7800"]
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/api}
+    restart: unless-stopped
+    environment:
+      SDM_AUTH_USER: ${SDM_AUTH_USER:-}
+      SDM_AUTH_PASSWORD: ${SDM_AUTH_PASSWORD:-}
+    ports: ["${SDM_GATEWAY_PORT:-8080}:80"]
+    depends_on: [api, titiler, pg_tileserv]
+
+  # S3-compatible remote for DVC, which versions the global static layer (data/bioclim/*).
+  # Opt-in:  docker compose --profile dvc up -d dvc-remote   (see README "Data versioning").
+  # Objects are plain files in the `dvcstore` volume. No default keys: set SDM_DVC_ACCESS_KEY /
+  # SDM_DVC_SECRET_KEY in .env (the DVC client reads its copy from .dvc/config.local).
+  dvc-remote:
+    image: versity/versitygw:v1.8.0
+    profiles: [dvc]
+    restart: unless-stopped
+    environment:
+      ROOT_ACCESS_KEY_ID: ${SDM_DVC_ACCESS_KEY:-}
+      ROOT_SECRET_ACCESS_KEY: ${SDM_DVC_SECRET_KEY:-}
+      SDM_DVC_BUCKET: ${SDM_DVC_BUCKET:-sdm-dvc}
+    entrypoint:
+      - sh
+      - -c
+      - |
+        [ -n "$$ROOT_ACCESS_KEY_ID" ] && [ -n "$$ROOT_SECRET_ACCESS_KEY" ] || {
+          echo "dvc-remote: set SDM_DVC_ACCESS_KEY and SDM_DVC_SECRET_KEY in .env" >&2; exit 1; }
+        mkdir -p "/gw/$$SDM_DVC_BUCKET"   # posix backend: a top-level directory is a bucket
+        exec versitygw --port :7070 posix /gw
+    ports: ["127.0.0.1:${SDM_DVC_PORT:-7070}:7070"]
+    volumes: [dvcstore:/gw]
+
+volumes:
+  pgdata:
+  artifacts:
+  mlflow:
+  dvcstore:

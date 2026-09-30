@@ -1,0 +1,22 @@
+# Shared volumes. Both are mounted by several Deployments (api, worker, titiler, jobs), so
+# production needs a ReadWriteMany storage class (NFS, EFS, Filestore, Azure Files, CephFS) or
+# an S3/MinIO-backed CSI driver. Single-node clusters can use ReadWriteOnce (see overlays/kind).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: sdm-data            # versioned global bioclim layer + curated native-range polygons
+spec:
+  accessModes: [ReadWriteMany]
+  resources:
+    requests:
+      storage: 20Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: sdm-artifacts       # models, suitability/MESS/zone COGs, bulletins, validation reports
+spec:
+  accessModes: [ReadWriteMany]
+  resources:
+    requests:
+      storage: 50Gi

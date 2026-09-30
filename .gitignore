@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Data & artifacts. Each data/bioclim/<version>/ directory is versioned by DVC: git tracks
+# only the data/bioclim/<version>.dvc pointer files next to them (`dvc add` a new version).
+# Ignore the files *inside* version directories: DVC's git matcher treats data/bioclim/
+# itself as matching `data/bioclim/*` or `data/bioclim/*/`, which hides the .dvc files.
+data/bioclim/*/*
+artifacts/
+mlruns/
+mlartifacts/
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/src/routeTree.gen.ts
+*.tsbuildinfo
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

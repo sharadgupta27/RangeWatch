@@ -1,0 +1,44 @@
+{
+ "type": "FeatureCollection",
+ "features": [
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Polygon",
+    "coordinates": [
+     [
+      [
+       17,
+       -35
+      ],
+      [
+       26,
+       -35
+      ],
+      [
+       28,
+       -33
+      ],
+      [
+       24,
+       -30
+      ],
+      [
+       18,
+       -28
+      ],
+      [
+       17,
+       -35
+      ]
+     ]
+    ]
+   },
+   "properties": {
+    "status": "confirmed",
+    "source": "validation-suite: Cape region, South Africa (Campoy et al. 2018)",
+    "note": "Coarse literature outline used by the validation suite. Review and refine in the native-range editor before operational use."
+   }
+  }
+ ]
+}

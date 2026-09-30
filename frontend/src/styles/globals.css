@@ -1,0 +1,132 @@
+@import 'tailwindcss';
+@import 'maplibre-gl/dist/maplibre-gl.css';
+
+/* Class-based dark mode (html.dark), shadcn/ui token convention. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --radius: 0.625rem;
+  --background: oklch(0.985 0.002 247);
+  --foreground: oklch(0.21 0.02 257);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.21 0.02 257);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.21 0.02 257);
+  --primary: oklch(0.6 0.12 185);
+  --primary-foreground: oklch(0.98 0.01 185);
+  --secondary: oklch(0.955 0.006 247);
+  --secondary-foreground: oklch(0.27 0.02 257);
+  --muted: oklch(0.955 0.006 247);
+  --muted-foreground: oklch(0.52 0.02 257);
+  --accent: oklch(0.94 0.02 185);
+  --accent-foreground: oklch(0.3 0.05 185);
+  --destructive: oklch(0.6 0.2 27);
+  --warning: oklch(0.75 0.15 70);
+  --success: oklch(0.65 0.14 160);
+  --border: oklch(0.91 0.008 247);
+  --input: oklch(0.91 0.008 247);
+  --ring: oklch(0.6 0.12 185);
+
+  /* Semantic data colours shared by maps, charts and badges. */
+  --native: #2a9d8f;
+  --introduced: #f4845f;
+  --unknown: #94a3b8;
+  --candidate: #e63946;
+  --established: #f4a261;
+  --sev-suitability: #264653;
+  --sev-analogy: #2a9d8f;
+  --sev-spread: #e9c46a;
+  --sev-impact: #e76f51;
+}
+
+.dark {
+  --background: oklch(0.155 0.015 257);
+  --foreground: oklch(0.96 0.005 247);
+  --card: oklch(0.195 0.018 257);
+  --card-foreground: oklch(0.96 0.005 247);
+  --popover: oklch(0.21 0.02 257);
+  --popover-foreground: oklch(0.96 0.005 247);
+  --primary: oklch(0.76 0.12 180);
+  --primary-foreground: oklch(0.2 0.03 185);
+  --secondary: oklch(0.26 0.02 257);
+  --secondary-foreground: oklch(0.96 0.005 247);
+  --muted: oklch(0.25 0.018 257);
+  --muted-foreground: oklch(0.7 0.02 257);
+  --accent: oklch(0.3 0.04 190);
+  --accent-foreground: oklch(0.95 0.02 185);
+  --destructive: oklch(0.65 0.2 25);
+  --warning: oklch(0.8 0.14 75);
+  --success: oklch(0.72 0.14 160);
+  --border: oklch(0.29 0.018 257);
+  --input: oklch(0.31 0.02 257);
+  --ring: oklch(0.76 0.12 180);
+  --sev-suitability: #4c8fa8;
+}
+
+@theme inline {
+  --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-warning: var(--warning);
+  --color-success: var(--success);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-native: var(--native);
+  --color-introduced: var(--introduced);
+  --color-candidate: var(--candidate);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: 'cv11', 'ss01';
+  }
+}
+
+/* MapLibre chrome tuned to the theme. */
+.maplibregl-ctrl-attrib {
+  font-size: 10px;
+  background: color-mix(in oklab, var(--card) 80%, transparent) !important;
+  color: var(--muted-foreground);
+}
+.maplibregl-ctrl-attrib a {
+  color: var(--muted-foreground);
+}
+.maplibregl-ctrl-group {
+  background: var(--card) !important;
+  border: 1px solid var(--border);
+  box-shadow: none !important;
+}
+.maplibregl-ctrl-group button + button {
+  border-top-color: var(--border) !important;
+}
+.dark .maplibregl-ctrl-icon {
+  filter: invert(1);
+}

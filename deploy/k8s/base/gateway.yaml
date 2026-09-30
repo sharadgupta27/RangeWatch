@@ -1,0 +1,64 @@
+# The only public entry point: SPA + /api + /tiles/raster + /tiles/vector (optional Basic auth
+# from sdm-secrets SDM_AUTH_USER / SDM_AUTH_PASSWORD — leave empty to disable).
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway
+spec:
+  selector: { app: gateway }
+  ports:
+    - port: 80
+      targetPort: 80
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app: gateway }
+  template:
+    metadata:
+      labels: { app: gateway }
+    spec:
+      containers:
+        - name: gateway
+          image: sdm-frontend
+          env:
+            # FQDNs: nginx's per-request resolver (kube-dns) ignores the pod's search domains.
+            # Keep the namespace in sync with base/kustomization.yaml.
+            - { name: SDM_UPSTREAM_API, value: "api.sdm.svc.cluster.local:8000" }
+            - { name: SDM_UPSTREAM_TITILER, value: "titiler.sdm.svc.cluster.local:8000" }
+            - { name: SDM_UPSTREAM_TILESERV, value: "pg-tileserv.sdm.svc.cluster.local:7800" }
+            - name: SDM_AUTH_USER
+              valueFrom:
+                secretKeyRef: { name: sdm-secrets, key: SDM_AUTH_USER, optional: true }
+            - name: SDM_AUTH_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: sdm-secrets, key: SDM_AUTH_PASSWORD, optional: true }
+          ports:
+            - containerPort: 80
+          readinessProbe:
+            httpGet: { path: /healthz, port: 80 }
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: sdm
+  annotations:
+    # Generated bulletins and large tile bursts: generous timeouts / body size.
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "120"
+spec:
+  rules:
+    - host: sdm.example.org
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: gateway
+                port: { number: 80 }

@@ -1,0 +1,7 @@
+[core]
+    remote = storage
+    analytics = false
+['remote "storage"']
+    url = s3://sdm-dvc
+    endpointurl = http://127.0.0.1:7070
+    region = us-east-1

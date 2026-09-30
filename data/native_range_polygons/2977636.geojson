@@ -1,0 +1,60 @@
+{
+ "type": "FeatureCollection",
+ "features": [
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Polygon",
+    "coordinates": [
+     [
+      [
+       100,
+       20
+      ],
+      [
+       122,
+       20
+      ],
+      [
+       132,
+       33
+      ],
+      [
+       142,
+       42
+      ],
+      [
+       140,
+       45
+      ],
+      [
+       128,
+       43
+      ],
+      [
+       118,
+       42
+      ],
+      [
+       104,
+       35
+      ],
+      [
+       98,
+       27
+      ],
+      [
+       100,
+       20
+      ]
+     ]
+    ]
+   },
+   "properties": {
+    "status": "confirmed",
+    "source": "validation-suite: China, Korea & Japan (Forseth & Innis 2004)",
+    "note": "Coarse literature outline used by the validation suite. Review and refine in the native-range editor before operational use."
+   }
+  }
+ ]
+}

@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Invasion-risk bulletin — {{ species.scientific_name }} (v{{ mv.model_version }})</title>
+<link rel="stylesheet" href="bulletin.css">
+</head>
+<body>
+
+<!-- 1. Header -->
+<header class="masthead">
+  <div class="masthead-text">
+    <p class="kicker">Species distribution &amp; invasion-risk bulletin</p>
+    <h1><em>{{ species.scientific_name }}</em></h1>
+    {% if species.common_name %}<p class="common">{{ species.common_name }}</p>{% endif %}
+    <p class="meta">
+      GBIF taxon key {{ species.taxon_key }} · Model v{{ mv.model_version }}
+      ({{ "Model B — native + invaded" if mv.model_type == "B" else "Model A — native only" }})
+      · Generated {{ generated }}
+    </p>
+    <p class="meta">Occurrence data: {{ repro.gbif_citation }}</p>
+    {% if repro.inat_citation %}<p class="meta">Supplementary data: {{ repro.inat_citation }}</p>{% endif %}
+  </div>
+  {% if species.thumbnail_url %}
+  <img class="thumb" src="{{ species.thumbnail_url }}" alt="">
+  {% endif %}
+</header>
+
+{% if mv.model_type == "A" %}
+<div class="banner warn">
+  <strong>Lower-confidence projection.</strong> No documented introduced-range records were
+  available, so this model was trained on native-range data only (Model A).
+</div>
+{% endif %}
+
+<!-- 2. Executive summary -->
+<section>
+  <h2>Executive summary</h2>
+  <p class="lead">{{ summary }}</p>
+  <div class="caveat"><strong>Transferability caveat.</strong> {{ caveat }}</div>
+</section>
+
+<!-- 3. Map panel 1 -->
+<section class="figure">
+  <h2>Native range and suitability</h2>
+  <img src="{{ figures.native_map }}" alt="Native-range occurrence map">
+  <p class="caption">Occurrences by effective range label over continuous suitability; white
+    contour = binarisation threshold ({{ m.threshold | num(3) }}, {{ m.threshold_rule }});
+    dashed line = native-range polygon, {{ native_status }}.</p>
+</section>
+
+<!-- 4. Map panel 2 -->
+<section class="figure">
+  <h2>Global projection, candidate invasion zones and extrapolation</h2>
+  <img src="{{ figures.global_map }}" alt="Global projection map">
+  <p class="caption">Hatched cells have MESS &lt; 0: at least one predictor lies outside the
+    training range, so suitability there is an extrapolation and should be treated with low
+    confidence. {{ m.projection.extrapolation_area_km2 | num }} km² of land is extrapolated.</p>
+</section>
+
+<div class="two-col">
+  <!-- 5. Severity gauge -->
+  <section>
+    <h2>Severity index</h2>
+    {% if figures.gauge %}<img src="{{ figures.gauge }}" alt="Severity gauge">{% endif %}
+    <table class="compact">
+      <tr><th>Component</th><th>S</th><th>w</th><th>w·S</th></tr>
+      {# fixed order: jsonb does not preserve key order #}
+      {% for k in severity_components %}{% set v = sev.components[k] %}
+      <tr><td>{{ k.replace('_', ' ') }}</td><td>{{ v | num(2) }}</td>
+          <td>{{ sev.weights[k] | num(2) }}</td><td>{{ sev.contributions[k] | num(3) }}</td></tr>
+      {% endfor %}
+      <tr class="total"><td>Severity</td><td></td><td></td><td>{{ sev.score | num(3) }}</td></tr>
+    </table>
+    <p class="small">Confidence: <strong>{{ sev.confidence.level }}</strong>
+      ({{ (sev.confidence.mess_ok_fraction * 100) | num }}% of candidate area with MESS ≥ 0;
+      {{ sev.confidence.note }})</p>
+  </section>
+
+  <!-- 6. Variable importance -->
+  <section>
+    <h2>Variable importance</h2>
+    <img src="{{ figures.importance }}" alt="Variable importance">
+    <ul class="small">
+      {% for p in m.predictors %}<li>{{ p.upper() }} — {{ bioclim_names[p] }}</li>{% endfor %}
+    </ul>
+  </section>
+</div>
+
+<!-- 7. Diagnostics -->
+<section>
+  <h2>Model diagnostics</h2>
+  <table>
+    <tr><th>Metric</th><th>Value</th><th>Metric</th><th>Value</th></tr>
+    <tr><td>AUC (spatial CV)</td><td>{{ m.auc_mean | num(3) }} ± {{ m.auc_std | num(3) }}</td>
+        <td>n presences (thinned)</td><td>{{ m.n_presence | num }}</td></tr>
+    <tr><td>CBI (spatial CV)</td><td>{{ m.cbi_mean | num(3) }} ± {{ m.cbi_std | num(3) }}</td>
+        <td>n background</td><td>{{ m.n_background | num }} ({{ m.background_method }})</td></tr>
+    <tr><td>TSS (spatial CV)</td><td>{{ m.tss_mean | num(3) }} ± {{ m.tss_std | num(3) }}</td>
+        <td>CV folds</td><td>{{ m.n_cv_folds }} — {{ m.cv_method }}</td></tr>
+    <tr><td>Training AUC</td><td>{{ m.train_auc | num(3) }}</td>
+        <td>Features / regularisation</td><td>{{ m.feature_classes }} / β = {{ m.beta_multiplier }}</td></tr>
+  </table>
+</section>
+
+<!-- 8. Expansion outlook -->
+<section>
+  <h2>Expansion outlook</h2>
+  <img src="{{ figures.timeline }}" alt="Records per year">
+  <p>{{ outlook.trend }}
+    {% if outlook.spread_rate is not none %}Newly occupied 1° cells outside the native range:
+    {{ outlook.spread_rate | num(1) }} per year.{% endif %}</p>
+  {% if outlook.regions %}
+  <p><strong>Largest candidate invasion zones (10° tiles):</strong>
+    {% for r in outlook.regions %}{{ r.tile }} ({{ r.area_km2 | num }} km²){% if not loop.last %}; {% endif %}{% endfor %}.</p>
+  {% endif %}
+  {% if outlook.limiting %}
+  <p><strong>Main sources of extrapolation (MESS most-dissimilar variable):</strong>
+    {% for d in outlook.limiting %}{{ d.name }}{% if not loop.last %}, {% endif %}{% endfor %}.</p>
+  {% endif %}
+  <div class="caveat">{{ caveat }}</div>
+</section>
+
+<!-- 9. Methods & references -->
+<section class="methods">
+  <h2>Methods &amp; reproducibility</h2>
+  <p>Presence-background MaxEnt (elapid {{ repro.package_versions.elapid }}) with feature
+    classes and regularisation selected from the Wallace/ENMeval default grid by spatially
+    block-cross-validated CBI. Occurrences were cleaned, de-duplicated to one per raster cell
+    and distance-thinned ({{ repro.training_config.thin_km }} km); background points were
+    sampled within a {{ repro.training_config.background_buffer_km | num }} km buffer of
+    presences. Predictors: {{ m.predictors | join(', ') | upper }} (global VIF &lt; 5 screen of
+    {{ repro.bioclim_version_used }}, {{ repro.bioclim_source }}). Native-range polygon:
+    {{ native_status }}.</p>
+  <p><strong>Severity index.</strong> {{ severity_footnote }}</p>
+  <table class="compact">
+    <tr><td>Bioclim version</td><td>{{ repro.bioclim_version_used }} (sha256 {{ (repro.bioclim_sha256 or 'n/a')[:12] }})</td></tr>
+    <tr><td>GBIF download</td><td>{{ repro.gbif_download_doi or repro.gbif_download_key or 'search API (no DOI)' }}</td></tr>
+    <tr><td>Packages</td><td>{% for k, v in repro.package_versions.items() %}{{ k }} {{ v }}{% if not loop.last %}, {% endif %}{% endfor %}</td></tr>
+    <tr><td>Random seeds</td><td>{% for k, v in repro.random_seeds.items() %}{{ k }}={{ v }}{% if not loop.last %}, {% endif %}{% endfor %}</td></tr>
+    <tr><td>MLflow run</td><td>{{ mv.mlflow_run_id or 'n/a' }}</td></tr>
+  </table>
+  <h3>References</h3>
+  <ol class="refs">
+    {% for r in references %}<li>{{ r }}</li>{% endfor %}
+  </ol>
+</section>
+
+</body>
+</html>
