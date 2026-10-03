@@ -360,3 +360,93 @@ def test_rate_limiting_honours_retry_after_and_retries_longer():
     client._sleep = waits.append
     assert client.search_occurrences(1) == []
     assert [w for w in waits if w > 1] == [7.0] * 5  # Retry-After respected on every 429
+
+
+# ------------------------------------------------------------- sampling effort (MVT)
+def _varint(n: int) -> bytes:
+    out = bytearray()
+    while True:
+        b, n = n & 0x7F, n >> 7
+        out.append(b | (0x80 if n else 0))
+        if not n:
+            return bytes(out)
+
+
+def _ld(field_no: int, payload: bytes) -> bytes:
+    return _varint(field_no << 3 | 2) + _varint(len(payload)) + payload
+
+
+def _zz(n: int) -> int:
+    return (n << 1) ^ (n >> 63)
+
+
+def encode_density_tile(points: list[tuple[int, int, int]], extent: int = 512) -> bytes:
+    """A GBIF-style density tile: layer 'occurrence', point features tagged total=<n>."""
+    layer = _ld(1, b"occurrence") + _ld(3, b"total")
+    for _, _, total in points:
+        layer += _ld(4, _varint(6 << 3 | 0) + _varint(_zz(total)))  # sint value
+    for i, (x, y, _) in enumerate(points):
+        geom = _varint(1 | 1 << 3) + _varint(_zz(x)) + _varint(_zz(y))  # MoveTo(1)
+        feat = _ld(2, _varint(0) + _varint(i)) + _varint(3 << 3) + _varint(1) + _ld(4, geom)
+        layer += _ld(2, feat)
+    layer += _varint(5 << 3) + _varint(extent) + _varint(15 << 3) + _varint(2)
+    return _ld(3, layer)
+
+
+def test_mvt_point_decoding_roundtrip():
+    from src.connectors.mvt import decode_points
+
+    extent, pts = decode_points(encode_density_tile([(10, 20, 5), (511, 0, 70000), (600, 1, 3)]))
+    assert extent == 512
+    # the third point lies in the tile buffer (x >= extent) and is dropped
+    assert [(p.x, p.y, p.properties["total"]) for p in pts] == [(10, 20, 5), (511, 0, 70000)]
+
+
+def test_effort_density_fetches_covering_tiles_and_georeferences_pixels(monkeypatch):
+    from src.connectors import gbif_client
+
+    requested: list[tuple[str, dict]] = []
+
+    def fake_get(url, params, timeout):
+        requested.append((url, dict(params)))
+        # one busy pixel at the tile's top-left corner
+        return encode_density_tile([(0, 0, 42)])
+
+    monkeypatch.setattr(gbif_client, "_http_get", fake_get)
+    client = _client_with(SimpleNamespace())
+    # 10' cells → zoom 2 (0.088° pixels, 45° tiles); lon -5..35 / lat 40..60 → x 3–4, y 0–1.
+    eff = client.fetch_effort_density(408, (-5.0, 40.0, 35.0, 60.0), max_pixel_deg=1 / 6)
+    assert eff.zoom == 2 and eff.n_tiles == len(requested) == 4
+    assert {u.rsplit("/", 2)[-2] + "/" + u.rsplit("/", 1)[-1] for u, _ in requested} == {
+        "3/0.mvt",
+        "3/1.mvt",
+        "4/0.mvt",
+        "4/1.mvt",
+    }
+    assert all(p["taxonKey"] == 408 and p["srs"] == "EPSG:4326" for _, p in requested)
+    assert all("FOSSIL_SPECIMEN" not in p["basisOfRecord"] for _, p in requested)
+    # Each tile's top-left pixel; only tile (4, 1) — 0°E, 45°N — lies inside the box.
+    assert eff.count == [42]
+    assert abs(eff.lon[0] - 0.044) < 1e-3 and abs(eff.lat[0] - 44.956) < 1e-3
+
+
+def test_effort_density_lowers_zoom_to_cap_tile_count(monkeypatch):
+    from src.connectors import gbif_client
+
+    calls = []
+    monkeypatch.setattr(
+        gbif_client, "_http_get", lambda url, params, timeout: calls.append(url) or b""
+    )
+    client = _client_with(SimpleNamespace())
+    eff = client.fetch_effort_density(1, (-180, -90, 180, 90), max_pixel_deg=1 / 120)  # 30″
+    assert eff.n_tiles <= gbif_client.MAX_EFFORT_TILES and len(calls) == eff.n_tiles
+    assert eff.lon == [] and eff.n_records == 0
+
+
+def test_taxon_exposes_higher_taxon_keys():
+    item = {"key": 7, "scientificName": "X y", "order": "Lamiales", "orderKey": 408}
+    client = _client_with(SimpleNamespace())
+    client._species = SimpleNamespace(name_usage=lambda key, timeout: item)
+    t = client.get_taxon(7)
+    assert t.higher_taxon("order") == (408, "Lamiales")
+    assert t.higher_taxon("family") is None

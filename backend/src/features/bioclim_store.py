@@ -7,6 +7,13 @@ predictor shortlist. Species runs only ever *read* this layer (via raster_sample
     python -m src.features.bioclim_store build --version bioclim_v1 --resolution 2.5m
     python -m src.features.bioclim_store add-scenario --version bioclim_v1 \
         --gcm ACCESS-CM2 --ssp ssp245 --period 2041-2060
+    python -m src.features.bioclim_store add-hires --version bioclim_v1 --resolution 30s
+    python -m src.features.bioclim_store build-chelsa --version chelsa_v1 --match bioclim_v1
+
+`add-hires` attaches a finer WorldClim stack to an existing version (regional high-resolution
+projection of that version's models). `build-chelsa` builds an independent CHELSA v2.1 stack
+in WorldClim units on the grid and land mask of `--match`, used by the climate-data
+cross-check (SDM_CROSSCHECK_BIOCLIM_VERSION).
 """
 
 from __future__ import annotations
@@ -22,9 +29,13 @@ import zipfile
 from datetime import UTC, datetime
 from pathlib import Path
 
+import numpy as np
 import rasterio
 import requests
+from rasterio.enums import Resampling
 from rasterio.shutil import copy as rio_copy
+from rasterio.warp import reproject
+from rasterio.windows import Window
 
 from src.config import get_settings
 from src.domain import BIOCLIM_BANDS
@@ -66,6 +77,20 @@ WORLDCLIM_CITATION = (
 # still satisfies VIF < 5 and keeps temperature level + seasonality (with BIO4) in the model.
 DEFAULT_CORE_PREDICTORS: tuple[str, ...] = ("bio1", "bio12")
 COG_OPTIONS = {"compress": "deflate", "predictor": "2", "blocksize": "512", "bigtiff": "IF_SAFER"}
+
+CHELSA_BASE = "https://os.zhdk.cloud.switch.ch/chelsav2/GLOBAL/climatologies/1981-2010/bio"
+CHELSA_FILE = "CHELSA_bio{i}_1981-2010_V.2.1.tif"
+CHELSA_CITATION = (
+    "Karger, D.N., Conrad, O., Böhner, J., Kawohl, T., Kreft, H., Soria-Auza, R.W., "
+    "Zimmermann, N.E., Linder, H.P. & Kessler, M. (2017). Climatologies at high resolution for "
+    "the earth's land surface areas. Scientific Data 4, 170122. CHELSA V2.1, "
+    "https://doi.org/10.16904/envidat.228"
+)
+# CHELSA V2.1 files declare their scale/offset (applied on read, giving °C and mm), which
+# brings every band into WorldClim units except BIO3: isothermality is a ratio in CHELSA
+# and a percentage in WorldClim.
+CHELSA_TO_WORLDCLIM_FACTOR: dict[str, float] = {"bio3": 100.0}
+_NODATA = -9999.0
 
 
 def sha256_file(path: Path, chunk: int = 1 << 20) -> str:
@@ -258,6 +283,148 @@ def install_local_stack(
     return root
 
 
+def add_hires(
+    version: str, resolution: str, bioclim_root: Path, src_tif: Path | None = None
+) -> str:
+    """Attach a finer stack of the *same* source (WorldClim) to an existing version, so its
+    models can be projected at high resolution over a region without retraining."""
+    root = bioclim_root / version
+    meta = BioclimMetadata.load(root / METADATA_FILENAME)
+    if resolution not in RESOLUTIONS:
+        raise ValueError(f"resolution must be one of {RESOLUTIONS}")
+    if meta.resolution in RESOLUTIONS and RESOLUTIONS.index(resolution) <= RESOLUTIONS.index(
+        meta.resolution
+    ):
+        raise ValueError(f"{resolution} is not finer than {version}'s {meta.resolution}")
+    if src_tif is None and not meta.source.startswith("WorldClim"):
+        raise ValueError(
+            f"{version} is not a WorldClim stack: pass --src with a {resolution} stack of the "
+            "same source, or predictors would change meaning at high resolution"
+        )
+    rel = f"hires/bioclim_{resolution}.tif"
+    out = root / rel
+    if out.exists():
+        raise FileExistsError(f"{out} already exists")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    if src_tif is not None:
+        with rasterio.open(src_tif) as src:
+            if src.count != len(BIOCLIM_BANDS):
+                raise ValueError(f"{src_tif} has {src.count} bands, expected 19 (BIO1–19)")
+        rio_copy(src_tif, out, driver="COG", **COG_OPTIONS)
+    else:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_p = Path(tmp)
+            zip_path = _download(f"{WORLDCLIM_BASE}/wc2.1_{resolution}_bio.zip", tmp_p / "bio.zip")
+            with zipfile.ZipFile(zip_path) as zf:
+                zf.extractall(tmp_p / "bio")
+            files = [
+                next((tmp_p / "bio").rglob(f"wc2.1_{resolution}_bio_{i}.tif")) for i in range(1, 20)
+            ]
+            stack_to_cog(files, out, BIOCLIM_BANDS)
+    write_metadata(
+        root, BioclimMetadata(**{**meta.__dict__, "hires": {**meta.hires, resolution: rel}})
+    )
+    log.info("Registered %s high-resolution stack for %s", resolution, version)
+    return rel
+
+
+def build_chelsa(
+    version: str,
+    match_version: str,
+    bioclim_root: Path,
+    seed: int = 42,
+    src_dir: Path | None = None,
+) -> Path:
+    """CHELSA V2.1 BIO1–19 (1981–2010) in WorldClim units, average-resampled onto the grid of
+    `match_version` and masked to its land cells, as an independent cross-check stack.
+
+    Files are downloaded one at a time (≈5 GB in total) unless `src_dir` holds them already.
+    """
+    root = bioclim_root / version
+    if (root / STACK_FILENAME).exists():
+        raise FileExistsError(f"{root} already exists — pick a new version tag")
+    target = BioclimStack.open_version(bioclim_root, match_version)
+    root.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_p = Path(tmp)
+        stack_tmp = tmp_p / "stack.tif"
+        profile = {
+            "driver": "GTiff",
+            "width": target.width,
+            "height": target.height,
+            "count": len(BIOCLIM_BANDS),
+            "dtype": "float32",
+            "crs": target.crs,
+            "transform": target.transform,
+            "nodata": _NODATA,
+            "tiled": True,
+            "blockxsize": 512,
+            "blockysize": 512,
+            "compress": "deflate",
+            "BIGTIFF": "IF_SAFER",
+        }
+        with rasterio.open(stack_tmp, "w", **profile) as dst:
+            for i, band in enumerate(BIOCLIM_BANDS, start=1):
+                fname = CHELSA_FILE.format(i=i)
+                src_path = (
+                    src_dir / fname
+                    if src_dir is not None
+                    else _download(f"{CHELSA_BASE}/{fname}", tmp_p / fname)
+                )
+                _resample_chelsa_band(src_path, band, target, dst, i)
+                dst.set_band_description(i, band)
+                if src_dir is None:
+                    src_path.unlink()
+        rio_copy(stack_tmp, root / STACK_FILENAME, driver="COG", **COG_OPTIONS)
+    meta = BioclimMetadata(
+        version=version,
+        source=(
+            f"CHELSA V2.1 1981–2010 ({CHELSA_BASE}), average-resampled to the {match_version} "
+            "grid and land mask, converted to WorldClim units"
+        ),
+        resolution=target.metadata.resolution,
+        crs="EPSG:4326",
+        bands=BIOCLIM_BANDS,
+        created=datetime.now(UTC).isoformat(),
+        sha256=sha256_file(root / STACK_FILENAME),
+        citation=CHELSA_CITATION,
+        aligned_to=match_version,
+    )
+    meta = compute_vif_shortlist(root, meta, seed=seed)
+    write_metadata(root, meta)
+    log.info("Built CHELSA cross-check stack %s on the %s grid", version, match_version)
+    return root
+
+
+def _resample_chelsa_band(
+    src_path: Path, band: str, target: BioclimStack, dst: rasterio.io.DatasetWriter, index: int
+) -> None:
+    factor = CHELSA_TO_WORLDCLIM_FACTOR.get(band, 1.0)
+    with rasterio.open(src_path) as src:
+        scale, offset = src.scales[0], src.offsets[0]
+        # The target's BIO1 defines the land mask (CHELSA also covers the oceans).
+        for block in target.iter_blocks(["bio1"]):
+            raw = np.full((block.height, block.width), np.nan, dtype="float32")
+            reproject(
+                source=rasterio.band(src, 1),
+                destination=raw,
+                src_transform=src.transform,
+                src_crs=src.crs,
+                src_nodata=src.nodata,
+                dst_transform=block.transform,
+                dst_crs=target.crs,
+                dst_nodata=np.nan,
+                resampling=Resampling.average,
+            )
+            vals = (raw * scale + offset) * factor
+            vals[np.isnan(block.data[0])] = np.nan
+            dst.write(
+                np.where(np.isnan(vals), _NODATA, vals).astype("float32"),
+                index,
+                window=Window(0, block.row_off, block.width, block.height),
+            )
+
+
 def main() -> None:
     logging.basicConfig(level=logging.INFO)
     settings = get_settings()
@@ -284,9 +451,23 @@ def main() -> None:
     i.add_argument("--version", required=True)
     i.add_argument("--source", required=True)
     i.add_argument("--resolution", required=True)
+    h = sub.add_parser("add-hires", help="attach a finer WorldClim stack to a version")
+    h.add_argument("--version", default=settings.bioclim_version)
+    h.add_argument("--resolution", default="30s", choices=RESOLUTIONS)
+    h.add_argument("--src", type=Path, help="local 19-band stack instead of downloading")
+    c = sub.add_parser("build-chelsa", help="CHELSA V2.1 cross-check stack on a version's grid")
+    c.add_argument("--version", required=True)
+    c.add_argument("--match", default=settings.bioclim_version)
+    c.add_argument("--src-dir", type=Path, help="directory with the CHELSA_bio*_V.2.1.tif files")
     args = p.parse_args()
     if args.cmd == "build":
         build(args.version, args.resolution, settings.bioclim_root, settings.random_seed)
+    elif args.cmd == "add-hires":
+        add_hires(args.version, args.resolution, settings.bioclim_root, args.src)
+    elif args.cmd == "build-chelsa":
+        build_chelsa(
+            args.version, args.match, settings.bioclim_root, settings.random_seed, args.src_dir
+        )
     elif args.cmd == "derive":
         core = tuple(c.strip() for c in args.core.split(",") if c.strip())
         derive(args.src_version, args.version, settings.bioclim_root, core, settings.random_seed)

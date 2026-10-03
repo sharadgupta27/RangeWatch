@@ -18,8 +18,10 @@ from src.api.deps import (
     inat_search_dep,
     queue_dep,
     repository_dep,
+    settings_dep,
 )
 from src.api.schemas import (
+    HiresRequest,
     JobOut,
     NativeRangeOut,
     NativeRangeUpdate,
@@ -36,7 +38,9 @@ from src.api.schemas import (
     Timeline,
     TimelineYear,
 )
+from src.config import Settings
 from src.domain import Job, JobKind
+from src.features.raster_sampler import METADATA_FILENAME, RESOLUTION_DEG, BioclimMetadata
 from src.modeling.severity_index import SeverityConfig
 from src.orchestration.registry_ops import recompute_severity, update_native_range
 from src.persistence.repository import Repository
@@ -157,6 +161,80 @@ def project_scenarios(taxon_key: int, repo: RepoDep, queue: QueueDep) -> JobOut:
         raise HTTPException(status.HTTP_409_CONFLICT, "No trained model yet")
     job = repo.create_job(Job(kind=JobKind.SCENARIOS, taxon_key=taxon_key, message="Queued"))
     queue.enqueue_scenarios(str(job.job_id), taxon_key)
+    return job_out(job)
+
+
+@router.post(
+    "/{taxon_key}/crosscheck",
+    response_model=JobOut,
+    status_code=status.HTTP_202_ACCEPTED,
+    operation_id="runClimateCrossCheck",
+)
+def run_crosscheck(
+    taxon_key: int,
+    repo: RepoDep,
+    queue: QueueDep,
+    settings: Settings = Depends(settings_dep),
+) -> JobOut:
+    """Refit the current model on the independent cross-check climate stack (e.g. CHELSA)."""
+    sp = _get_species_or_404(repo, taxon_key)
+    if not sp.model_version:
+        raise HTTPException(status.HTTP_409_CONFLICT, "No trained model yet")
+    alt = settings.crosscheck_bioclim_version
+    if not alt or not (settings.bioclim_root / alt / METADATA_FILENAME).exists():
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "No cross-check climate stack installed (bioclim_store build-chelsa, then set "
+            "SDM_CROSSCHECK_BIOCLIM_VERSION)",
+        )
+    job = repo.create_job(Job(kind=JobKind.CROSSCHECK, taxon_key=taxon_key, message="Queued"))
+    queue.enqueue_crosscheck(str(job.job_id), taxon_key)
+    return job_out(job)
+
+
+@router.post(
+    "/{taxon_key}/hires",
+    response_model=JobOut,
+    status_code=status.HTTP_202_ACCEPTED,
+    operation_id="projectHighResolution",
+)
+def project_hires(
+    taxon_key: int,
+    body: HiresRequest,
+    repo: RepoDep,
+    queue: QueueDep,
+    settings: Settings = Depends(settings_dep),
+) -> JobOut:
+    """Project the current model at high resolution (e.g. 30″) inside a region."""
+    sp = _get_species_or_404(repo, taxon_key)
+    if not sp.model_version:
+        raise HTTPException(status.HTTP_409_CONFLICT, "No trained model yet")
+    mv = repo.get_model_version(taxon_key, sp.model_version)
+    assert mv is not None
+    version = mv.metrics["reproducibility"]["bioclim_version_used"]
+    meta_path = settings.bioclim_root / version / METADATA_FILENAME
+    resolution = BioclimMetadata.load(meta_path).finest_hires() if meta_path.exists() else None
+    if resolution is None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"No high-resolution stack registered for {version} (bioclim_store add-hires)",
+        )
+    west, south, east, north = body.bbox
+    west, east = max(west, -180.0), min(east, 180.0)
+    south, north = max(south, -90.0), min(north, 90.0)
+    if not (west < east and south < north):
+        raise HTTPException(422, "bbox must be [west, south, east, north] inside the globe")
+    # The worker re-checks against the actual grid; this rejects oversize requests up front.
+    cell = RESOLUTION_DEG.get(resolution)
+    n_cells = round((east - west) / cell) * round((north - south) / cell) if cell else 0
+    if n_cells > settings.hires_max_cells:
+        raise HTTPException(
+            422,
+            f"Region too large: ~{n_cells:,} cells (max {settings.hires_max_cells:,}). "
+            "Zoom in or choose a smaller area.",
+        )
+    job = repo.create_job(Job(kind=JobKind.HIRES, taxon_key=taxon_key, message="Queued"))
+    queue.enqueue_hires(str(job.job_id), taxon_key, [west, south, east, north])
     return job_out(job)
 
 

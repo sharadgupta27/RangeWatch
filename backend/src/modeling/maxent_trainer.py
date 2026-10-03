@@ -59,6 +59,13 @@ class TrainingConfig:
     n_folds: int = 4
     n_background: int = 10_000
     background_buffer_km: float = 500.0
+    # "target_group" (preferred: background mirrors the observer bias of the presences, drawn
+    # from cells where GBIF holds records of the species' `target_group_rank`) or "buffer"
+    # (uniform inside the buffer). Target-group falls back to buffer when the effort data
+    # has fewer than `min_target_group_cells` occupied cells in the region.
+    background_method: str = "target_group"
+    target_group_rank: str = "order"
+    min_target_group_cells: int = 500
     thin_km: float = 10.0
     min_presences: int = 15
     importance_repeats: int = 5
@@ -73,6 +80,9 @@ class TrainingConfig:
             "n_folds": self.n_folds,
             "n_background": self.n_background,
             "background_buffer_km": self.background_buffer_km,
+            "background_method": self.background_method,
+            "target_group_rank": self.target_group_rank,
+            "min_target_group_cells": self.min_target_group_cells,
             "thin_km": self.thin_km,
             "min_presences": self.min_presences,
             "importance_repeats": self.importance_repeats,

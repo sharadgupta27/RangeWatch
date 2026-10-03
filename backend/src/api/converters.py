@@ -123,5 +123,6 @@ def model_version_detail(mv: ModelVersionRecord) -> ModelVersionDetail:
             "transferability_caveat": m["transferability_caveat"],
             "severity": mv.severity,
             "n_records_by_effective_label": m["n_records_by_effective_label"],
+            "crosschecks": list(mv.artifacts.get("crosschecks", {}).values()),
         }
     )

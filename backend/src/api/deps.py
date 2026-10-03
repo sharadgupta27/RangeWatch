@@ -19,6 +19,8 @@ class JobQueue(Protocol):
     def enqueue_validation(
         self, job_id: str, taxon_keys: list[int] | None, train: bool
     ) -> None: ...
+    def enqueue_crosscheck(self, job_id: str, taxon_key: int) -> None: ...
+    def enqueue_hires(self, job_id: str, taxon_key: int, bbox: list[float]) -> None: ...
 
 
 class CeleryJobQueue:
@@ -57,6 +59,16 @@ class CeleryJobQueue:
         self._app.send_task(
             "sdm.run_validation_suite",
             kwargs={"job_id": job_id, "taxon_keys": taxon_keys, "train": train},
+        )
+
+    def enqueue_crosscheck(self, job_id: str, taxon_key: int) -> None:
+        self._app.send_task(
+            "sdm.climate_crosscheck", kwargs={"job_id": job_id, "taxon_key": taxon_key}
+        )
+
+    def enqueue_hires(self, job_id: str, taxon_key: int, bbox: list[float]) -> None:
+        self._app.send_task(
+            "sdm.project_hires", kwargs={"job_id": job_id, "taxon_key": taxon_key, "bbox": bbox}
         )
 
 

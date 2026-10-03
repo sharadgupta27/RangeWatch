@@ -127,9 +127,20 @@
   <p>Presence-background MaxEnt (elapid {{ repro.package_versions.elapid }}) with feature
     classes and regularisation selected from the Wallace/ENMeval default grid by spatially
     block-cross-validated CBI. Occurrences were cleaned, de-duplicated to one per raster cell
-    and distance-thinned ({{ repro.training_config.thin_km }} km); background points were
-    sampled within a {{ repro.training_config.background_buffer_km | num }} km buffer of
-    presences. Predictors: {{ m.predictors | join(', ') | upper }} (global VIF &lt; 5 screen of
+    and distance-thinned ({{ repro.training_config.thin_km }} km);
+    {% set bgi = repro.background %}
+    {% if bgi and bgi.target_group and not bgi.fallback_reason %}
+    background points were drawn from raster cells holding GBIF records of the target group
+    ({{ bgi.target_group.rank }} {{ bgi.target_group.name }},
+    {{ bgi.target_group.n_records | num }} records) within a
+    {{ repro.training_config.background_buffer_km | num }} km buffer of presences, so that the
+    background shares the observer bias of the presences (target-group background).
+    {% else %}
+    background points were sampled uniformly within a
+    {{ repro.training_config.background_buffer_km | num }} km buffer of presences{% if bgi and bgi.fallback_reason %}
+    (target-group background not used: {{ bgi.fallback_reason }}){% endif %}.
+    {% endif %}
+    Predictors: {{ m.predictors | join(', ') | upper }} (global VIF &lt; 5 screen of
     {{ repro.bioclim_version_used }}, {{ repro.bioclim_source }}). Native-range polygon:
     {{ native_status }}.</p>
   <p><strong>Severity index.</strong> {{ severity_footnote }}</p>

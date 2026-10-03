@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from src.api.deps import artifacts_dep, repository_dep, settings_dep
 from src.api.schemas import (
+    HiresLayer,
     LayerCaveats,
     LayerSet,
     LegendEntry,
@@ -211,10 +212,35 @@ def get_layers(
             )
         )
     layers.scenarios = scenario_layers
+    hires = a.get("hires")
+    if hires:
+        res_label = hires["resolution"].replace("s", "″").replace("m", "′")
+        layers.hires = HiresLayer(
+            resolution=hires["resolution"],
+            bbox=hires["bbox"],
+            suitability=_suitability_layer(
+                settings,
+                artifacts,
+                hires["suitability"],
+                "hires",
+                f"Suitability — {res_label} detail",
+                "Same model projected at high resolution inside the selected region (no "
+                "retraining). Interpret together with this region's extrapolation mask.",
+            ),
+            extrapolation=extrapolation_layer(
+                hires["extrapolation"], "extrapolation:hires", f"Extrapolation — {res_label}"
+            ),
+            extrapolated_land_fraction=hires.get("extrapolated_land_fraction"),
+            created_ts=hires["created_ts"],
+        )
     bioclim_version = mv.metrics.get("reproducibility", {}).get("bioclim_version_used")
     meta_path = settings.bioclim_root / str(bioclim_version) / METADATA_FILENAME
     if bioclim_version and meta_path.exists():
-        layers.scenarios_available = list(BioclimMetadata.load(meta_path).scenarios)
+        meta = BioclimMetadata.load(meta_path)
+        layers.scenarios_available = list(meta.scenarios)
+        layers.hires_available = meta.finest_hires()
+        if layers.hires_available:
+            layers.hires_max_cells = settings.hires_max_cells
     layers.caveats = LayerCaveats(
         model_type=mv.model_type,
         confidence_label=mv.metrics["confidence_label"],

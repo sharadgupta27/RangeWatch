@@ -3,6 +3,8 @@
 * First-time species: DOI-backed `occurrences.download` (requires GBIF credentials via env).
   Falls back to paged `occurrences.search` when credentials are not configured.
 * Repeat species: incremental `occurrences.search` filtered on `lastInterpreted`.
+* Target-group sampling effort: GBIF map API density tiles of a higher taxon (MVT points
+  with per-pixel record counts), used for target-group background sampling.
 """
 
 from __future__ import annotations
@@ -19,6 +21,7 @@ from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 
+from src.connectors.mvt import decode_points
 from src.domain import OccurrenceRecord, RangeLabel
 
 log = logging.getLogger(__name__)
@@ -45,6 +48,22 @@ MIN_CALL_INTERVAL_S = 0.2
 
 ProgressCallback = Callable[[int, int], None]
 
+GBIF_MAP_DENSITY = "https://api.gbif.org/v2/map/occurrence/density/{z}/{x}/{y}.mvt"
+# EPSG:4326 map tiles are 512 px; zoom z has 2^(z+1) x 2^z tiles of 180/2^z degrees.
+MAP_TILE_PX = 512
+MAP_MAX_ZOOM = 6
+MAX_EFFORT_TILES = 64
+# Same record types as the presences (normalize_record drops fossil and living specimens).
+EFFORT_BASIS_OF_RECORD = (
+    "HUMAN_OBSERVATION",
+    "MACHINE_OBSERVATION",
+    "OBSERVATION",
+    "PRESERVED_SPECIMEN",
+    "MATERIAL_SAMPLE",
+    "MATERIAL_CITATION",
+    "OCCURRENCE",
+)
+
 
 @dataclass(frozen=True, slots=True)
 class TaxonSuggestion:
@@ -58,6 +77,38 @@ class TaxonSuggestion:
     order: str | None
     family: str | None
     genus: str | None
+    class_key: int | None = None
+    order_key: int | None = None
+    family_key: int | None = None
+    genus_key: int | None = None
+
+    def higher_taxon(self, rank: str) -> tuple[int, str] | None:
+        """(GBIF key, name) of the enclosing taxon at `rank` (class/order/family/genus)."""
+        key, name = {
+            "class": (self.class_key, self.class_),
+            "order": (self.order_key, self.order),
+            "family": (self.family_key, self.family),
+            "genus": (self.genus_key, self.genus),
+        }.get(rank.lower(), (None, None))
+        return (key, name or "") if key is not None else None
+
+
+@dataclass(frozen=True, slots=True)
+class EffortDensity:
+    """Observation effort of a target group: GBIF record counts per map-tile pixel."""
+
+    taxon_key: int
+    zoom: int
+    pixel_deg: float
+    n_tiles: int
+    lon: list[float]  # pixel centres
+    lat: list[float]
+    count: list[int]
+    query: str
+
+    @property
+    def n_records(self) -> int:
+        return sum(self.count)
 
 
 @dataclass(frozen=True, slots=True)
@@ -236,35 +287,78 @@ class GbifClient:
             key = item.get("key") or item.get("usageKey")
             if key is None:
                 continue
-            out.append(
-                TaxonSuggestion(
-                    taxon_key=int(key),
-                    scientific_name=item.get("scientificName") or item.get("canonicalName", ""),
-                    canonical_name=item.get("canonicalName"),
-                    rank=item.get("rank"),
-                    kingdom=item.get("kingdom"),
-                    phylum=item.get("phylum"),
-                    class_=item.get("class"),
-                    order=item.get("order"),
-                    family=item.get("family"),
-                    genus=item.get("genus"),
-                )
-            )
+            out.append(_taxon(item, int(key)))
         return out
 
     def get_taxon(self, taxon_key: int) -> TaxonSuggestion:
         item = self._call(self._species.name_usage, key=taxon_key)
-        return TaxonSuggestion(
-            taxon_key=int(item.get("key", taxon_key)),
-            scientific_name=item.get("scientificName") or item.get("canonicalName", ""),
-            canonical_name=item.get("canonicalName"),
-            rank=item.get("rank"),
-            kingdom=item.get("kingdom"),
-            phylum=item.get("phylum"),
-            class_=item.get("class"),
-            order=item.get("order"),
-            family=item.get("family"),
-            genus=item.get("genus"),
+        return _taxon(item, int(item.get("key", taxon_key)))
+
+    # ------------------------------------------------------- sampling effort
+    def fetch_effort_density(
+        self,
+        taxon_key: int,
+        bbox: tuple[float, float, float, float],
+        max_pixel_deg: float,
+    ) -> EffortDensity:
+        """Record counts of `taxon_key` (a target group, e.g. the species' order) per GBIF
+        map pixel inside `bbox` (west, south, east, north).
+
+        The zoom is the coarsest whose pixels are no larger than `max_pixel_deg` (the bioclim
+        cell size), lowered if the box would need more than MAX_EFFORT_TILES tiles.
+        """
+        west, south = max(bbox[0], -180.0), max(bbox[1], -90.0)
+        east, north = min(bbox[2], 180.0), min(bbox[3], 90.0)
+        z = 0
+        while z < MAP_MAX_ZOOM and 180.0 / 2**z / MAP_TILE_PX > max_pixel_deg:
+            z += 1
+        while True:
+            span = 180.0 / 2**z
+            xs = range(
+                max(0, math.floor((west + 180) / span)),
+                min(2 ** (z + 1), math.ceil((east + 180) / span)),
+            )
+            ys = range(
+                max(0, math.floor((90 - north) / span)), min(2**z, math.ceil((90 - south) / span))
+            )
+            if len(xs) * len(ys) <= MAX_EFFORT_TILES or z == 0:
+                break
+            z -= 1
+        params: dict[str, Any] = {
+            "srs": "EPSG:4326",
+            "taxonKey": taxon_key,
+            "basisOfRecord": list(EFFORT_BASIS_OF_RECORD),
+        }
+        lon: list[float] = []
+        lat: list[float] = []
+        count: list[int] = []
+        for x in xs:
+            for y in ys:
+                data = self._call(_http_get, GBIF_MAP_DENSITY.format(z=z, x=x, y=y), params=params)
+                if not data:
+                    continue
+                extent, points = decode_points(data, layer="occurrence")
+                for p in points:
+                    px_lon = -180.0 + (x + (p.x + 0.5) / extent) * span
+                    px_lat = 90.0 - (y + (p.y + 0.5) / extent) * span
+                    if west <= px_lon <= east and south <= px_lat <= north:
+                        lon.append(px_lon)
+                        lat.append(px_lat)
+                        count.append(int(p.properties.get("total", 1)))
+        template = GBIF_MAP_DENSITY.replace("{z}", str(z))
+        query = (
+            f"{template}?srs=EPSG:4326&taxonKey={taxon_key}"
+            f"&basisOfRecord={','.join(EFFORT_BASIS_OF_RECORD)}"
+        )
+        return EffortDensity(
+            taxon_key=taxon_key,
+            zoom=z,
+            pixel_deg=180.0 / 2**z / MAP_TILE_PX,
+            n_tiles=len(xs) * len(ys),
+            lon=lon,
+            lat=lat,
+            count=count,
+            query=query,
         )
 
     # --------------------------------------------------------- full download
@@ -426,6 +520,40 @@ class GbifClient:
             rec = normalize_record(row, taxon_key, self.max_uncertainty_m)
             if rec is not None:
                 yield rec
+
+
+def _taxon(item: Mapping[str, Any], key: int) -> TaxonSuggestion:
+    def opt_int(v: Any) -> int | None:
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            return None
+
+    return TaxonSuggestion(
+        taxon_key=key,
+        scientific_name=item.get("scientificName") or item.get("canonicalName", ""),
+        canonical_name=item.get("canonicalName"),
+        rank=item.get("rank"),
+        kingdom=item.get("kingdom"),
+        phylum=item.get("phylum"),
+        class_=item.get("class"),
+        order=item.get("order"),
+        family=item.get("family"),
+        genus=item.get("genus"),
+        class_key=opt_int(item.get("classKey")),
+        order_key=opt_int(item.get("orderKey")),
+        family_key=opt_int(item.get("familyKey")),
+        genus_key=opt_int(item.get("genusKey")),
+    )
+
+
+def _http_get(url: str, params: Mapping[str, Any], timeout: tuple[float, float]) -> bytes:
+    """GET returning the body (pygbif does not wrap the map API); raises on HTTP errors."""
+    import requests
+
+    resp = requests.get(url, params=params, timeout=timeout)
+    resp.raise_for_status()
+    return resp.content
 
 
 def _retry_after(resp: Any) -> float | None:

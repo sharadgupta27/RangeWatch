@@ -77,6 +77,55 @@ describe('model lineage table', () => {
     expect(screen.getByText('run-2')).toBeInTheDocument()
   })
 
+  it('renders the background-sampling record verbatim, including fallbacks', () => {
+    const base = version(1).reproducibility
+    render(
+      <ModelLineageTable
+        versions={[
+          version(1, { reproducibility: { ...base } }),
+          version(2, {
+            reproducibility: {
+              ...base,
+              background: {
+                method: 'target_group_order',
+                requested_method: 'target_group',
+                buffer_km: 500,
+                target_group: {
+                  rank: 'order',
+                  taxon_key: 408,
+                  name: 'Lamiales',
+                  n_records: 36011809,
+                  n_pixels: 70730,
+                  map_zoom: 2,
+                  pixel_deg: 0.087890625,
+                  n_tiles: 4,
+                  query: 'https://api.gbif.org/v2/map/occurrence/density/2/{x}/{y}.mvt?taxonKey=408',
+                  fetched_ts: '2026-10-03T14:00:00+00:00',
+                },
+              },
+            },
+          }),
+          version(3, {
+            reproducibility: {
+              ...base,
+              background: {
+                method: 'buffer_500km',
+                requested_method: 'target_group',
+                buffer_km: 500,
+                fallback_reason: 'only 120 cells with order Lamiales records',
+              },
+            },
+          }),
+        ]}
+      />,
+    )
+    expect(screen.getByText('target_group_order')).toBeInTheDocument()
+    expect(screen.getByText('target group order Lamiales (taxonKey 408)')).toBeInTheDocument()
+    expect(screen.getByText(/density\/2\/\{x\}\/\{y\}\.mvt\?taxonKey=408/)).toBeInTheDocument()
+    expect(screen.getByText('fallback: only 120 cells with order Lamiales records')).toBeInTheDocument()
+    expect(screen.getByText('not recorded (trained before background logging)')).toBeInTheDocument()
+  })
+
   it('shows an empty state', () => {
     render(<ModelLineageTable versions={[]} />)
     expect(screen.getByText('No model versions yet.')).toBeInTheDocument()

@@ -1,6 +1,7 @@
 import type { QueryClient } from '@tanstack/react-query'
 import { createRootRouteWithContext, Link, Outlet, useRouterState } from '@tanstack/react-router'
 import { Moon, RefreshCw, Sun } from 'lucide-react'
+import { z } from 'zod'
 
 import { useAppUpdateAvailable } from '@/api/appVersion'
 import { useBioclim } from '@/api/queries'
@@ -10,7 +11,11 @@ import { Button } from '@/components/ui/button'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { useTheme } from '@/lib/theme'
 
+/** `?q=` — the species search text, kept in the URL so searches survive reloads and links. */
+const rootSearchSchema = z.object({ q: z.string().max(100).optional().catch(undefined) })
+
 export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()({
+  validateSearch: (search) => rootSearchSchema.parse(search),
   component: RootLayout,
   notFoundComponent: () => (
     <div className="mx-auto max-w-md py-24 text-center">

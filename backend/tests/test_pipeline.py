@@ -279,8 +279,9 @@ def test_each_version_stores_a_hashed_training_snapshot(settings):
         assert man["n_rows"] == sum(mv.metrics["n_records_by_effective_label"].values())
 
     # Versions live in their own directories and are bit-for-bit reproducible.
-    assert v1.metrics["reproducibility"]["training_data"]["path"] != (
-        v2.metrics["reproducibility"]["training_data"]["path"]
+    assert (
+        v1.metrics["reproducibility"]["training_data"]["path"]
+        != (v2.metrics["reproducibility"]["training_data"]["path"])
     )
     assert (
         v1.metrics["reproducibility"]["training_data"]["sha256"]
@@ -468,3 +469,137 @@ def test_full_resync_with_credentials_uses_a_doi_backed_download(settings):
 
     p.run(TAXON_KEY)  # routine checks stay on the incremental search API
     assert gbif.downloads == 2 and len(gbif.calls) == 1
+
+
+def test_target_group_background_mirrors_effort_and_is_logged(settings):
+    """Background comes from cells with target-group (order) records only — the fake effort
+    has none north of 50°N — and the effort query is recorded with the model version."""
+    import pandas as pd
+
+    gbif = FakeGbif(initial=initial_records())
+    p = make_pipeline(settings, gbif)
+    p.run(TAXON_KEY)
+    confirm_native(p)
+    out = p.run(TAXON_KEY)
+    mv = p.repo.get_model_version(TAXON_KEY, out.model_version)
+
+    bg_info = mv.metrics["reproducibility"]["background"]
+    assert bg_info["method"] == "target_group_order" == mv.metrics["background_method"]
+    assert "fallback_reason" not in bg_info
+    tg = bg_info["target_group"]
+    assert (tg["rank"], tg["taxon_key"], tg["name"]) == ("order", 408, "Lamiales")
+    assert tg["query"] == "fake://density" and tg["n_records"] > 0
+    assert gbif.effort_calls and gbif.effort_calls[0][0] == 408
+
+    td = pd.read_parquet(
+        p.artifacts.local_path(mv.metrics["reproducibility"]["training_data"]["path"])
+    )
+    bg = td[td["role"] == "background"]
+    assert len(bg) >= FAST_TRAINING.min_target_group_cells
+    assert (bg["latitude"] < 50).all()
+
+
+def test_target_group_falls_back_to_buffer_when_effort_is_unavailable(settings):
+    gbif = FakeGbif(initial=initial_records(), effort_error=ConnectionError("GBIF maps down"))
+    p = make_pipeline(settings, gbif)
+    p.run(TAXON_KEY)
+    confirm_native(p)
+    mv = p.repo.get_model_version(TAXON_KEY, p.run(TAXON_KEY).model_version)
+    bg_info = mv.metrics["reproducibility"]["background"]
+    assert bg_info["requested_method"] == "target_group"
+    assert bg_info["method"] == "buffer_500km"
+    assert "GBIF maps down" in bg_info["fallback_reason"]
+
+
+def test_sparse_target_group_falls_back_to_buffer(settings):
+    p = make_pipeline(settings, FakeGbif(initial=initial_records()))
+    p.training_config = replace(FAST_TRAINING, min_target_group_cells=10**6)
+    p.run(TAXON_KEY)
+    confirm_native(p)
+    mv = p.repo.get_model_version(TAXON_KEY, p.run(TAXON_KEY).model_version)
+    bg_info = mv.metrics["reproducibility"]["background"]
+    assert bg_info["method"].startswith("buffer_")
+    assert "cells with order Lamiales records" in bg_info["fallback_reason"]
+    assert bg_info["target_group"]["taxon_key"] == 408  # what was tried is still logged
+
+
+@pytest.fixture(scope="module")
+def extended_data_root(tmp_path_factory):
+    """Static layer with a CHELSA cross-check stack and a finer ('30s') companion stack."""
+    from src.features.bioclim_store import add_hires, build_chelsa
+    from tests.conftest import BIOCLIM_VERSION, write_synthetic_chelsa, write_synthetic_stack_tif
+
+    root = tmp_path_factory.mktemp("extended")
+    build_stack(root / "bioclim")
+    (root / "native_range_polygons").mkdir()
+    build_chelsa(
+        "chelsa_t", BIOCLIM_VERSION, root / "bioclim", src_dir=write_synthetic_chelsa(root / "c")
+    )
+    add_hires(
+        BIOCLIM_VERSION, "30s", root / "bioclim", src_tif=write_synthetic_stack_tif(root / "f.tif")
+    )
+    return root
+
+
+def trained_pipeline(settings):
+    p = make_pipeline(settings, FakeGbif(initial=initial_records()))
+    p.run(TAXON_KEY)
+    confirm_native(p)
+    p.run(TAXON_KEY)
+    return p
+
+
+def test_climate_crosscheck_refits_the_exact_training_set_on_chelsa(settings, extended_data_root):
+    s = replace_settings(
+        settings, data_root=extended_data_root, crosscheck_bioclim_version="chelsa_t"
+    )
+    p = trained_pipeline(s)
+    out = p.crosscheck_climate(TAXON_KEY)
+    assert out["alt_bioclim_version"] == "chelsa_t" and out["model_version"] == 1
+
+    mv = p.repo.get_model_version(TAXON_KEY, 1)
+    report = mv.artifacts["crosschecks"]["chelsa_t"]
+    assert report["primary_bioclim_version"] == "bioclim_test"
+    assert report["n_presence"] == mv.metrics["n_presence"]
+    assert report["n_background"] + report["n_dropped"] >= mv.metrics["n_background"] - 1
+    assert report["feature_classes"] == mv.metrics["feature_classes"]
+    by_pred = {a["predictor"]: a for a in report["predictors"]}
+    assert set(by_pred) == set(mv.metrics["predictors"])
+    # bio1/bio4/bio12 are the same synthetic climate in both sources (units harmonized).
+    assert all(by_pred[p]["pearson_r"] > 0.95 and not by_pred[p]["units_suspect"] for p in by_pred)
+    assert report["suitability_rank_correlation"] > 0.8
+    assert report["verdict"] in {"consistent", "moderate"}
+    assert p.artifacts.local_path(report["path"]).exists()
+    # The model version itself is untouched (immutable metrics).
+    assert "crosschecks" not in mv.metrics
+
+
+def test_crosscheck_requires_a_configured_stack(settings):
+    p = trained_pipeline(settings)
+    with pytest.raises(ValueError, match="SDM_CROSSCHECK_BIOCLIM_VERSION"):
+        p.crosscheck_climate(TAXON_KEY)
+
+
+def test_hires_projection_covers_only_the_region_with_its_own_mess(settings, extended_data_root):
+    import rasterio
+
+    p = trained_pipeline(replace_settings(settings, data_root=extended_data_root))
+    out = p.project_hires(TAXON_KEY, (5.0, 38.0, 25.0, 52.0))
+    assert out["resolution"] == "30s" and out["bbox"] == [5.0, 38.0, 25.0, 52.0]
+    entry = p.repo.get_model_version(TAXON_KEY, 1).artifacts["hires"]
+    with rasterio.open(p.artifacts.local_path(entry["suitability"])) as src:
+        assert (src.width, src.height) == (40, 28) and src.res == (0.5, 0.5)
+        assert src.bounds.left == 5.0 and src.bounds.top == 52.0
+    with rasterio.open(p.artifacts.local_path(entry["extrapolation"])) as src:
+        assert (src.width, src.height) == (40, 28)
+    assert 0 <= entry["extrapolated_land_fraction"] <= 1
+
+    p.settings = replace_settings(p.settings, hires_max_cells=100)
+    with pytest.raises(ValueError, match="choose a smaller area"):
+        p.project_hires(TAXON_KEY, (5.0, 38.0, 25.0, 52.0))
+
+
+def test_hires_requires_a_registered_stack(settings):
+    p = trained_pipeline(settings)
+    with pytest.raises(ValueError, match="No high-resolution stack"):
+        p.project_hires(TAXON_KEY, (5.0, 38.0, 25.0, 52.0))

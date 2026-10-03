@@ -37,3 +37,8 @@ export function formatRelative(v: string | null | undefined): string {
   if (diff < 86400) return rtf.format(-Math.round(diff / 3600), 'hour')
   return rtf.format(-Math.round(diff / 86400), 'day')
 }
+
+/** WorldClim resolution code → display label ('30s' → 30″, '2.5m' → 2.5′). */
+export function resolutionLabel(code: string): string {
+  return code.replace(/s$/, '″').replace(/m$/, '′')
+}

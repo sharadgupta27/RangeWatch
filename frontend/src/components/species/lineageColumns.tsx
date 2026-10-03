@@ -95,6 +95,46 @@ export const lineageColumns = helper.columns([
       </span>
     ),
   }),
+  helper.accessor((row) => row.reproducibility.background?.method ?? '', {
+    id: 'background',
+    header: 'Background sampling',
+    sortFn: 'alphanumeric',
+    cell: (info) => {
+      const bg = info.row.original.reproducibility.background
+      if (!bg) {
+        return (
+          <span className="text-[11px] text-muted-foreground">
+            not recorded (trained before background logging)
+          </span>
+        )
+      }
+      const tg = bg.target_group
+      return (
+        <div className="min-w-56 max-w-72 font-mono text-[11px]">
+          <div>{bg.method}</div>
+          <div className="text-muted-foreground">
+            requested {bg.requested_method} · buffer {bg.buffer_km} km
+          </div>
+          {tg && (
+            <div className="mt-1 text-muted-foreground">
+              <div>
+                target group {tg.rank} {tg.name} (taxonKey {tg.taxon_key})
+              </div>
+              <div>
+                {tg.n_records.toLocaleString()} records · {tg.n_pixels.toLocaleString()} pixels ·
+                z{tg.map_zoom} ({tg.pixel_deg}°) · {tg.n_tiles} tiles
+              </div>
+              <div className="break-all">{tg.query}</div>
+              <div>fetched {tg.fetched_ts}</div>
+            </div>
+          )}
+          {bg.fallback_reason && (
+            <div className="mt-1 whitespace-normal text-warning">fallback: {bg.fallback_reason}</div>
+          )}
+        </div>
+      )
+    },
+  }),
   helper.accessor('severity_score', {
     header: 'Severity',
     sortFn: 'basic',

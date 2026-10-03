@@ -5,6 +5,7 @@ import type { LayerSet, RasterLayer, VectorLayer } from '@/api/types'
 import { resolveProjection } from './DualMapView'
 import {
   COLORS,
+  hiresLayers,
   occurrenceColor,
   occurrenceLayer,
   occurrenceRadius,
@@ -108,5 +109,29 @@ describe('native-range polygon helpers', () => {
     expect(fc.features).toHaveLength(2)
     expect(toMultiPolygon(fc)).toEqual(mp)
     expect(toMultiPolygon({ type: 'FeatureCollection', features: [] })).toBeNull()
+  })
+})
+
+describe('high-resolution region layers', () => {
+  const hires = {
+    resolution: '30s',
+    bbox: [5, 38, 25, 52],
+    suitability: raster('hires'),
+    extrapolation: raster('extrapolation:hires'),
+    extrapolated_land_fraction: 0.1,
+    created_ts: '2026-10-01T00:00:00Z',
+  }
+
+  it('draws the region with its own MESS mask, limited to the region, plus an outline', () => {
+    const layers = hiresLayers(hires, true)
+    expect(layers.map((l) => l.id)).toEqual(['hires-suitability', 'hires-extrapolation', 'hires-outline'])
+    expect(layers[0]!.props.data).toBe(hires.suitability.tile_url)
+    expect(layers[1]!.props.data).toBe(hires.extrapolation.tile_url)
+    expect((layers[0]!.props as { extent?: number[] }).extent).toEqual([5, 38, 25, 52])
+  })
+
+  it('drops only the MESS mask when the overlay is off, and nothing without a region', () => {
+    expect(hiresLayers(hires, false).map((l) => l.id)).toEqual(['hires-suitability', 'hires-outline'])
+    expect(hiresLayers(null, true)).toEqual([])
   })
 })

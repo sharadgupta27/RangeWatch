@@ -163,7 +163,7 @@ def project_model(
     occ_lat: Sequence[float],
     occupied_buffer_km: float = 50.0,
     scenario_stacks: dict[str, BioclimStack] | None = None,
-    block_rows: int = 256,
+    block_rows: int | None = None,
 ) -> ProjectionOutputs:
     out_dir.mkdir(parents=True, exist_ok=True)
     occupied = buffer_region(occ_lon, occ_lat, occupied_buffer_km) if len(occ_lon) else None
@@ -288,7 +288,11 @@ class ScenarioOutputs:
 
 
 def project_scenario(
-    result: Projectable, stack: BioclimStack, out_dir: Path, name: str, block_rows: int = 256
+    result: Projectable,
+    stack: BioclimStack,
+    out_dir: Path,
+    name: str,
+    block_rows: int | None = None,
 ) -> ScenarioOutputs:
     """Suitability under an alternative (e.g. CMIP6 future) climate — no retraining — always
     paired with that scenario's own MESS extrapolation mask (future climates extrapolate more

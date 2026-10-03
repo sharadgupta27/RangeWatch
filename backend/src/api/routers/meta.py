@@ -30,7 +30,13 @@ def bioclim(settings: Settings = Depends(settings_dep)) -> BioclimInfo:
             f"Bioclim layer {settings.bioclim_version} not built yet",
         )
     meta = BioclimMetadata.load(path)
+    alt = settings.crosscheck_bioclim_version
+    alt_path = settings.bioclim_root / alt / METADATA_FILENAME if alt else None
+    alt_meta = BioclimMetadata.load(alt_path) if alt_path and alt_path.exists() else None
     return BioclimInfo(
+        hires_resolutions=list(meta.hires),
+        crosscheck_version=alt_meta.version if alt_meta else None,
+        crosscheck_source=alt_meta.source if alt_meta else None,
         version=meta.version,
         source=meta.source,
         resolution=meta.resolution,

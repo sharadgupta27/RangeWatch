@@ -37,6 +37,18 @@ server {
         proxy_read_timeout 120s;
     }
 
+    # Live job progress (Server-Sent Events): pass events through unbuffered. The API sends a
+    # keepalive every 15 s and recycles the stream after 5 min (EventSource reconnects).
+    location = /api/jobs/events {
+        set $sdm_api ${SDM_UPSTREAM_API};
+        rewrite ^/api/(.*)$ /$1 break;
+        proxy_pass http://$sdm_api;
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 60s;
+        gzip off;
+    }
+
     # titiler: suitability / MESS / zones COG tiles.
     location /tiles/raster/ {
         set $sdm_titiler ${SDM_UPSTREAM_TITILER};

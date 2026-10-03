@@ -21,6 +21,11 @@ class Settings(BaseSettings):
 
     # --- global static layer ---
     bioclim_version: str = "bioclim_v1"
+    # Independent climate stack (e.g. CHELSA built with `bioclim_store build-chelsa`) that
+    # models can be refitted on for the climate-data cross-check; None disables it.
+    crosscheck_bioclim_version: str | None = None
+    # Upper bound on the cells of one regional high-resolution projection (~4000 × 4000).
+    hires_max_cells: int = 16_000_000
 
     # --- external APIs (credentials only via env) ---
     gbif_user: str | None = None
@@ -47,6 +52,10 @@ class Settings(BaseSettings):
 
     # --- modeling defaults ---
     random_seed: int = 42
+    # "target_group" (GBIF effort of the species' `target_group_rank`; falls back to buffer
+    # when too sparse) or "buffer". Changing either changes model results: log + review.
+    background_method: str = "target_group"
+    target_group_rank: str = "order"
 
     # --- storage growth: species without a user request for this long get their feature
     # table archived (zstd-recompressed); 0 disables. ---

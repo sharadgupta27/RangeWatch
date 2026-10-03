@@ -64,6 +64,20 @@ def project_scenarios(job_id: str, taxon_key: int) -> dict:
     return _run_job(job_id, scenarios_flow, taxon_key=taxon_key, job_id=job_id)
 
 
+@celery_app.task(name="sdm.climate_crosscheck")
+def climate_crosscheck(job_id: str, taxon_key: int) -> dict:
+    from src.orchestration.flows import crosscheck_flow
+
+    return _run_job(job_id, crosscheck_flow, taxon_key=taxon_key, job_id=job_id)
+
+
+@celery_app.task(name="sdm.project_hires")
+def project_hires(job_id: str, taxon_key: int, bbox: list[float]) -> dict:
+    from src.orchestration.flows import hires_flow
+
+    return _run_job(job_id, hires_flow, taxon_key=taxon_key, bbox=bbox, job_id=job_id)
+
+
 @celery_app.task(name="sdm.run_validation_suite")
 def run_validation_suite(
     job_id: str, taxon_keys: list[int] | None = None, train: bool = True

@@ -1,4 +1,4 @@
-import type { Layer, PickingInfo } from '@deck.gl/core'
+import { WebMercatorViewport, type Layer, type PickingInfo } from '@deck.gl/core'
 import DeckGL, { type DeckGLRef } from '@deck.gl/react'
 import { AlertTriangle, Minus, Plus, RefreshCw, RotateCcw } from 'lucide-react'
 import { setWorkerUrl, type StyleSpecification } from 'maplibre-gl'
@@ -11,7 +11,7 @@ import { Map as MapLibre, type ErrorEvent, type MapInstance } from 'react-map-gl
 import { Button } from '@/components/ui/button'
 import { basemapStyle, useTheme, type Theme } from '@/lib/theme'
 import { cn } from '@/lib/utils'
-import { INITIAL_VIEW, type ViewState } from '@/store/mapStore'
+import { INITIAL_VIEW, type Bounds, type ViewState } from '@/store/mapStore'
 
 import { constrainView, MAX_ZOOM } from './constrainView'
 
@@ -53,8 +53,20 @@ export interface DeckMapProps {
   getTooltip?: (info: PickingInfo) => string | null
   getCursor?: (state: { isDragging: boolean; isHovering: boolean }) => string
   doubleClickZoom?: boolean
+  /** Visible [west, south, east, north] whenever the view or the map size changes. */
+  onBoundsChange?: (bounds: Bounds) => void
   className?: string
   children?: ReactNode
+}
+
+/** Visible lon/lat box of a web-mercator view (clamped to the globe). */
+export function viewBounds(view: ViewState, width: number, height: number): Bounds {
+  const [west, south, east, north] = new WebMercatorViewport({
+    ...view,
+    width,
+    height,
+  }).getBounds()
+  return [Math.max(west, -180), Math.max(south, -85), Math.min(east, 180), Math.min(north, 85)]
 }
 
 const TOOLTIP_STYLE = {
@@ -107,6 +119,7 @@ function DeckMapInner({
   getTooltip,
   getCursor,
   doubleClickZoom = true,
+  onBoundsChange,
   children,
   onContextLost,
 }: DeckMapProps & { onContextLost: () => void }) {
@@ -121,6 +134,14 @@ function DeckMapInner({
   const view = constrain(viewState)
 
   useEffect(() => setStyleFailed(false), [styleUrl])
+
+  const { longitude, latitude, zoom } = view
+  useEffect(() => {
+    if (!onBoundsChange || size.width === 0 || size.height === 0) return
+    onBoundsChange(
+      viewBounds({ longitude, latitude, zoom, pitch: 0, bearing: 0 }, size.width, size.height),
+    )
+  }, [onBoundsChange, longitude, latitude, zoom, size.width, size.height])
 
   const watch = useCallback(
     (canvas: HTMLCanvasElement | undefined) => {

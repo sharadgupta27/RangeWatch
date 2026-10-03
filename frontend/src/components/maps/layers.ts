@@ -10,7 +10,7 @@ import { MVTLayer, TileLayer } from '@deck.gl/geo-layers'
 import { BitmapLayer, GeoJsonLayer } from '@deck.gl/layers'
 import type { Feature, MultiPolygon, Polygon } from 'geojson'
 
-import type { RasterLayer, VectorLayer } from '@/api/types'
+import type { HiresLayer, RasterLayer, VectorLayer } from '@/api/types'
 
 export type RGBA = [number, number, number, number]
 
@@ -84,12 +84,15 @@ export function rasterTileLayer(opts: {
   layer: RasterLayer
   opacity?: number
   visible?: boolean
+  /** Only request tiles inside [west, south, east, north] (regional rasters). */
+  extent?: [number, number, number, number]
 }): Layer {
   return new TileLayer({
     id: opts.id,
     data: opts.layer.tile_url,
     visible: opts.visible ?? true,
     opacity: opts.opacity ?? 0.85,
+    ...(opts.extent ? { extent: opts.extent } : {}),
     minZoom: 0,
     maxZoom: 10,
     tileSize: 256,
@@ -130,6 +133,45 @@ export function nativeRangeLayer(opts: {
     // Dashed look for unconfirmed drafts is conveyed via reduced opacity.
     opacity: opts.status === 'confirmed' ? 1 : 0.6,
   })
+}
+
+export const HIRES_OUTLINE: RGBA = [250, 204, 21, 230]
+
+/**
+ * Regional high-resolution suitability drawn over the global current-climate layer, with
+ * that region's own MESS mask (when the overlay is on) and an outline of the region.
+ */
+export function hiresLayers(hires: HiresLayer | null | undefined, messOverlay: boolean): Layer[] {
+  if (!hires) return []
+  const [west, south, east, north] = hires.bbox as [number, number, number, number]
+  const extent: [number, number, number, number] = [west, south, east, north]
+  const out: Layer[] = [
+    rasterTileLayer({ id: 'hires-suitability', layer: hires.suitability, extent, opacity: 0.95 }),
+  ]
+  if (messOverlay) {
+    out.push(
+      rasterTileLayer({ id: 'hires-extrapolation', layer: hires.extrapolation, extent, opacity: 0.75 }),
+    )
+  }
+  out.push(
+    new GeoJsonLayer({
+      id: 'hires-outline',
+      data: {
+        type: 'Feature',
+        properties: {},
+        geometry: {
+          type: 'Polygon',
+          coordinates: [[[west, south], [east, south], [east, north], [west, north], [west, south]]],
+        },
+      } as Feature,
+      stroked: true,
+      filled: false,
+      getLineColor: HIRES_OUTLINE,
+      getLineWidth: 1.5,
+      lineWidthUnits: 'pixels',
+    }),
+  )
+  return out
 }
 
 export interface ProjectionLayerConfig {

@@ -239,6 +239,29 @@ class TrainingSnapshotInfo(ApiModel):
     bytes: int
 
 
+class TargetGroupInfo(ApiModel):
+    rank: str
+    taxon_key: int = Field(description="GBIF key of the target group (e.g. the species' order)")
+    name: str
+    n_records: int = Field(description="GBIF records of the target group in the region")
+    n_pixels: int
+    map_zoom: int
+    pixel_deg: float
+    n_tiles: int
+    query: str = Field(description="GBIF map API density-tile query used as sampling effort")
+    fetched_ts: str
+
+
+class BackgroundInfo(ApiModel):
+    method: str = Field(description="Method actually used, e.g. target_group_order, buffer_500km")
+    requested_method: str
+    buffer_km: float
+    target_group: TargetGroupInfo | None = None
+    fallback_reason: str | None = Field(
+        None, description="Why target-group background was not used, if it was requested"
+    )
+
+
 class ReproducibilityInfo(ApiModel):
     bioclim_version_used: str
     bioclim_source: str | None = None
@@ -255,6 +278,9 @@ class ReproducibilityInfo(ApiModel):
     training_config: dict[str, Any]
     native_range_source: str
     native_range_confirmed_ts: str | None = None
+    background: BackgroundInfo | None = Field(
+        None, description="Background sampling record; absent for versions trained before it"
+    )
     training_data: TrainingSnapshotInfo | None = Field(
         None,
         description="Exact MaxEnt input (presences + background with predictors); "
@@ -312,6 +338,49 @@ class ProjectionSummaryOut(ApiModel):
     top_limiting_variables: list[dict[str, Any]]
 
 
+class PredictorAgreementOut(ApiModel):
+    predictor: str
+    pearson_r: float | None
+    mean_diff: float | None = Field(description="Mean of (alternative − primary)")
+    mean_abs_diff: float | None
+    scale_ratio: float | None = Field(
+        description="Median |alternative| / median |primary|; far from 1 suggests a unit mismatch"
+    )
+    units_suspect: bool
+
+
+class CrossCheckMetricsOut(ApiModel):
+    auc_mean: float | None = None
+    cbi_mean: float | None = None
+    tss_mean: float | None = None
+    threshold: float | None = None
+
+
+class ClimateCrossCheckOut(ApiModel):
+    """The model version refitted on an independent climate source (same training points,
+    feature classes, regularisation and CV seed) and compared with the original."""
+
+    alt_bioclim_version: str
+    alt_source: str
+    primary_bioclim_version: str
+    created_ts: str
+    n_presence: int
+    n_background: int
+    n_dropped: int = Field(description="Training points without data in the alternative stack")
+    feature_classes: str
+    beta_multiplier: float
+    predictors: list[PredictorAgreementOut]
+    primary: CrossCheckMetricsOut
+    alternative: CrossCheckMetricsOut
+    suitability_rank_correlation: float | None = Field(
+        description="Spearman ρ of the two models' suitability at the training points"
+    )
+    classification_agreement: float | None
+    classification_kappa: float | None
+    verdict: Literal["consistent", "moderate", "divergent"]
+    interpretation: str
+
+
 class ModelVersionDetail(ModelVersionOut):
     threshold: float
     threshold_rule: str
@@ -324,6 +393,7 @@ class ModelVersionDetail(ModelVersionOut):
     transferability_caveat: str
     severity: SeverityResult | None = None
     n_records_by_effective_label: dict[str, int]
+    crosschecks: list[ClimateCrossCheckOut] = Field(default_factory=list)
 
 
 # ------------------------------------------------------------------ layers
@@ -360,6 +430,17 @@ class ScenarioLayer(ApiModel):
     extrapolated_land_fraction: float | None = None
 
 
+class HiresLayer(ApiModel):
+    """Regional high-resolution projection of the same model (no retraining)."""
+
+    resolution: str
+    bbox: list[float] = Field(description="[west, south, east, north] of the projected region")
+    suitability: RasterLayer
+    extrapolation: RasterLayer = Field(description="This region's own MESS < 0 mask")
+    extrapolated_land_fraction: float | None = None
+    created_ts: str
+
+
 class LayerCaveats(ApiModel):
     model_type: ModelTypeT
     confidence_label: Literal["standard", "lower"]
@@ -383,6 +464,11 @@ class LayerSet(ApiModel):
         default_factory=list,
         description="Scenarios registered for the model's bioclim version (projected or not)",
     )
+    hires: HiresLayer | None = None
+    hires_available: str | None = Field(
+        None, description="Resolution of the model's high-resolution stack, if one is registered"
+    )
+    hires_max_cells: int | None = None
     caveats: LayerCaveats | None = None
 
 
@@ -404,6 +490,17 @@ class BioclimInfo(ApiModel):
     descriptions: dict[str, str]
     scenarios: list[str]
     citation: str | None = None
+    hires_resolutions: list[str] = Field(default_factory=list)
+    crosscheck_version: str | None = Field(
+        None, description="Independent climate stack used for the climate-data cross-check"
+    )
+    crosscheck_source: str | None = None
+
+
+class HiresRequest(ApiModel):
+    bbox: list[float] = Field(
+        min_length=4, max_length=4, description="[west, south, east, north] in degrees"
+    )
 
 
 class Health(ApiModel):

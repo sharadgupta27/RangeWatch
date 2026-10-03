@@ -2,7 +2,8 @@
  * TanStack Query hooks — the only way components talk to the backend.
  *
  * The retrain/refresh *decision* lives entirely in the backend pipeline; the frontend only
- * enqueues runs, polls job + registry state, and invalidates caches when jobs finish.
+ * enqueues runs, follows job + registry state (an SSE stream, with polling as the fallback),
+ * and invalidates caches when jobs finish.
  */
 import {
   keepPreviousData,
@@ -11,10 +12,15 @@ import {
   useQuery,
   useQueryClient,
 } from '@tanstack/react-query'
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
-import { api, unwrap } from './client'
+import { absoluteApiUrl, api, unwrap } from './client'
+import type { paths } from './schema'
 import type { JobOut, NativeRangeUpdate, SeverityConfigModel } from './types'
+
+/** Payload of one `jobs` event on GET /jobs/events (typed from the OpenAPI contract). */
+type JobEventPayload =
+  paths['/jobs/events']['get']['responses'][200]['content']['text/event-stream']
 
 export const qk = {
   search: (q: string) => ['species', 'search', q] as const,
@@ -96,13 +102,58 @@ export function useBioclim() {
 }
 
 // ------------------------------------------------------------------ jobs
+export const JOB_LIST_LIMIT = 10
+
+export function jobEventsUrl(taxonKey: number): string {
+  return absoluteApiUrl(`/jobs/events?taxon_key=${taxonKey}&limit=${JOB_LIST_LIMIT}`)
+}
+
+/**
+ * Live job list over Server-Sent Events: every `jobs` event replaces the cached list, so
+ * progress shows as soon as a worker reports it. Returns whether the stream is open; the
+ * browser's EventSource reconnects by itself after drops and server-side recycling.
+ */
+export function useJobStream(taxonKey: number): boolean {
+  const qc = useQueryClient()
+  const [connected, setConnected] = useState(false)
+  useEffect(() => {
+    if (typeof EventSource === 'undefined') return
+    const source = new EventSource(jobEventsUrl(taxonKey))
+    const onJobs = (e: MessageEvent<string>) => {
+      qc.setQueryData<JobOut[]>(qk.jobs(taxonKey), JSON.parse(e.data) as JobEventPayload)
+      setConnected(true)
+    }
+    const onOpen = () => setConnected(true)
+    const onError = () => setConnected(false)
+    source.addEventListener('jobs', onJobs)
+    source.addEventListener('open', onOpen)
+    source.addEventListener('error', onError)
+    return () => {
+      source.close()
+      setConnected(false)
+    }
+  }, [qc, taxonKey])
+  return connected
+}
+
+/** Poll interval for the job list: none while the live stream is up, else fast/slow. */
+export function jobPollInterval(live: boolean, jobs: JobOut[] | undefined): number | false {
+  if (live) return false
+  // Poll quickly while a job is active, slowly otherwise (catches scheduled runs).
+  return jobs?.some(isActiveJob) ? 2_000 : 30_000
+}
+
 export function useSpeciesJobs(taxonKey: number) {
+  const live = useJobStream(taxonKey)
   return useQuery({
     queryKey: qk.jobs(taxonKey),
     queryFn: async () =>
-      unwrap(await api.GET('/jobs', { params: { query: { taxon_key: taxonKey, limit: 10 } } })),
-    // Poll quickly while a job is active, slowly otherwise (catches scheduled runs).
-    refetchInterval: (query) => (query.state.data?.some(isActiveJob) ? 2_000 : 30_000),
+      unwrap(
+        await api.GET('/jobs', {
+          params: { query: { taxon_key: taxonKey, limit: JOB_LIST_LIMIT } },
+        }),
+      ),
+    refetchInterval: (query) => jobPollInterval(live, query.state.data),
   })
 }
 
@@ -235,7 +286,9 @@ export function useModelVersion(taxonKey: number, version: number | null | undef
         }),
       ),
     enabled: !!version,
-    staleTime: Infinity, // model versions are immutable
+    // Model versions are immutable; derived results (cross-checks) arrive via invalidation
+    // when their job finishes.
+    staleTime: Infinity,
   })
 }
 
@@ -304,6 +357,35 @@ export function useProjectScenarios(taxonKey: number) {
     mutationFn: async () =>
       unwrap(
         await api.POST('/species/{taxon_key}/scenarios', {
+          params: { path: { taxon_key: taxonKey } },
+        }),
+      ),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.jobs(taxonKey) }),
+  })
+}
+
+// ------------------------------------------------------------ high-resolution region
+export function useProjectHires(taxonKey: number) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (bbox: [number, number, number, number]) =>
+      unwrap(
+        await api.POST('/species/{taxon_key}/hires', {
+          params: { path: { taxon_key: taxonKey } },
+          body: { bbox },
+        }),
+      ),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.jobs(taxonKey) }),
+  })
+}
+
+// ------------------------------------------------------------ climate cross-check
+export function useRunCrossCheck(taxonKey: number) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async () =>
+      unwrap(
+        await api.POST('/species/{taxon_key}/crosscheck', {
           params: { path: { taxon_key: taxonKey } },
         }),
       ),

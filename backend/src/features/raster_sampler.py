@@ -5,6 +5,7 @@ The global bioclim stack is a versioned, 19-band Cloud-Optimized GeoTIFF:
     data/bioclim/<version>/bioclim.tif
     data/bioclim/<version>/metadata.json
     data/bioclim/<version>/scenarios/<name>.tif      (optional CMIP6 future stacks)
+    data/bioclim/<version>/hires/bioclim_<res>.tif   (optional finer stack, same source)
 """
 
 from __future__ import annotations
@@ -26,6 +27,10 @@ from src.domain import BIOCLIM_BANDS
 
 STACK_FILENAME = "bioclim.tif"
 METADATA_FILENAME = "metadata.json"
+# Cells per projection block: 256 global rows at 10' (2160 columns); fewer rows on finer grids.
+BLOCK_CELLS = 552_960
+# Cell size (degrees) of the WorldClim resolution codes.
+RESOLUTION_DEG = {"10m": 1 / 6, "5m": 1 / 12, "2.5m": 1 / 24, "30s": 1 / 120}
 
 
 @dataclass(frozen=True)
@@ -43,6 +48,12 @@ class BioclimMetadata:
     citation: str | None = None
     core_predictors: tuple[str, ...] = ()
     derived_from: str | None = None
+    # Finer-resolution stacks of the same source, e.g. {"30s": "hires/bioclim_30s.tif"}, for
+    # regional high-resolution projection of models trained on this version.
+    hires: dict[str, str] = field(default_factory=dict)
+    # Version whose grid and land mask this stack was resampled onto (e.g. a CHELSA
+    # cross-check stack aligned to the active WorldClim version).
+    aligned_to: str | None = None
 
     @classmethod
     def load(cls, path: Path) -> BioclimMetadata:
@@ -61,6 +72,8 @@ class BioclimMetadata:
             citation=raw.get("citation"),
             core_predictors=tuple(raw.get("core_predictors", ())),
             derived_from=raw.get("derived_from"),
+            hires=dict(raw.get("hires", {})),
+            aligned_to=raw.get("aligned_to"),
         )
 
     def to_json(self) -> dict[str, Any]:
@@ -78,7 +91,15 @@ class BioclimMetadata:
             "citation": self.citation,
             "core_predictors": list(self.core_predictors),
             "derived_from": self.derived_from,
+            "hires": self.hires,
+            "aligned_to": self.aligned_to,
         }
+
+    def finest_hires(self) -> str | None:
+        """Resolution code of the finest registered high-resolution stack, if any."""
+        if not self.hires:
+            return None
+        return min(self.hires, key=lambda r: RESOLUTION_DEG.get(r, float("inf")))
 
 
 @dataclass(frozen=True)
@@ -105,18 +126,41 @@ class BioclimStack:
             self.crs = src.crs
             self.nodata = src.nodata
             self.res: tuple[float, float] = src.res
+        # Grid offset of a regional subset within the file (None = the full grid).
+        self._window: Window | None = None
 
     @classmethod
     def open_version(
-        cls, bioclim_root: Path, version: str, scenario: str | None = None
+        cls,
+        bioclim_root: Path,
+        version: str,
+        scenario: str | None = None,
+        hires: str | None = None,
     ) -> BioclimStack:
         root = bioclim_root / version
         meta = BioclimMetadata.load(root / METADATA_FILENAME)
+        if hires is not None:
+            if hires not in meta.hires:
+                raise KeyError(f"No {hires} high-resolution stack registered for {version}")
+            return cls(root / meta.hires[hires], meta)
         if scenario is None:
             return cls(root / STACK_FILENAME, meta)
         if scenario not in meta.scenarios:
             raise KeyError(f"Scenario {scenario!r} not registered for {version}")
         return cls(root / meta.scenarios[scenario], meta, scenario=scenario)
+
+    def subset(self, bbox: tuple[float, float, float, float]) -> BioclimStack:
+        """View of the cells inside (west, south, east, north): projection over it writes a
+        regional raster. Point sampling is unaffected."""
+        win = rasterio.windows.from_bounds(*bbox, transform=self.transform)
+        win = win.round_offsets(op="floor").round_lengths(op="ceil")
+        win = win.intersection(Window(0, 0, self.width, self.height))
+        view = BioclimStack.__new__(BioclimStack)
+        view.__dict__.update(self.__dict__)
+        view._window = win
+        view.width, view.height = int(win.width), int(win.height)
+        view.transform = rasterio.windows.transform(win, self.transform)
+        return view
 
     @property
     def version(self) -> str:
@@ -160,15 +204,21 @@ class BioclimStack:
         return pd.DataFrame(out, columns=bands)
 
     # -------------------------------------------------------------- grids
-    def iter_blocks(self, bands: Sequence[str], block_rows: int = 256) -> Iterator[RasterBlock]:
-        """Row-block iterator over the full global grid (for projection)."""
+    def iter_blocks(
+        self, bands: Sequence[str], block_rows: int | None = None
+    ) -> Iterator[RasterBlock]:
+        """Row-block iterator over the grid (for projection). `row_off` is relative to this
+        view; by default blocks hold ~0.5M cells whatever the resolution."""
         idx = self.band_indexes(bands)
+        rows = block_rows or max(1, BLOCK_CELLS // max(self.width, 1))
+        col0 = int(self._window.col_off) if self._window is not None else 0
+        row0 = int(self._window.row_off) if self._window is not None else 0
         with rasterio.open(self.path) as src:
-            for row_off in range(0, src.height, block_rows):
-                h = min(block_rows, src.height - row_off)
-                win = Window(0, row_off, src.width, h)
+            for row_off in range(0, self.height, rows):
+                h = min(rows, self.height - row_off)
+                win = Window(col0, row0 + row_off, self.width, h)
                 data = self._masked(src.read(idx, window=win))
-                yield RasterBlock(row_off, h, src.width, src.window_transform(win), data)
+                yield RasterBlock(row_off, h, self.width, src.window_transform(win), data)
 
     def read_overview(
         self, bands: Sequence[str], max_width: int = 1440

@@ -9,10 +9,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Switch } from '@/components/ui/switch'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { resolutionLabel } from '@/lib/utils'
 import { mapActions, mapStore, type ProjectionLayerId } from '@/store/mapStore'
 
 import { DeckMap } from './DeckMap'
-import { nativeRangeLayer, occurrenceLayer, projectionLayers } from './layers'
+import { hiresLayers, nativeRangeLayer, occurrenceLayer, projectionLayers } from './layers'
 import { OccurrenceLegend, RasterLegend } from './Legend'
 import { TimeSlider } from './TimeSlider'
 
@@ -55,6 +56,7 @@ export function DualMapView({ layers, nativeRange, timeline }: Props) {
   const messOverlay = useSelector(mapStore, (s) => s.messOverlay)
   const maxYear = useSelector(mapStore, (s) => s.maxYear)
   const showNative = useSelector(mapStore, (s) => s.showNativeRange)
+  const hiresOverlay = useSelector(mapStore, (s) => s.hiresOverlay)
 
   // Separate instances per map — deck.gl layers cannot be shared between Deck instances.
   const makeNative = useMemo(
@@ -79,12 +81,15 @@ export function DualMapView({ layers, nativeRange, timeline }: Props) {
 
   const { base, extrapolation } = resolveProjection(layers, projection)
   const isScenario = projection.startsWith('scenario:')
+  // The high-resolution region refines current-climate suitability only.
+  const hires = projection === 'suitability' ? layers.hires : null
   const rightLayers = useMemo(
     () => [
       ...projectionLayers({ base, extrapolation }, messOverlay),
+      ...(hiresOverlay ? hiresLayers(hires, messOverlay) : []),
       ...makeNative('native-range-right'),
     ],
-    [base, extrapolation, messOverlay, makeNative],
+    [base, extrapolation, messOverlay, hires, hiresOverlay, makeNative],
   )
 
   const hasModel = !!layers.suitability
@@ -129,7 +134,12 @@ export function DualMapView({ layers, nativeRange, timeline }: Props) {
 
       {/* ---------------- Right: projection ---------------- */}
       <div className="relative overflow-hidden rounded-xl border">
-        <DeckMap layers={rightLayers} viewState={viewState} onViewStateChange={mapActions.setViewState}>
+        <DeckMap
+          layers={rightLayers}
+          viewState={viewState}
+          onViewStateChange={mapActions.setViewState}
+          onBoundsChange={mapActions.setViewBounds}
+        >
           {hasModel ? (
             <>
               <div className="absolute top-3 left-3 flex flex-wrap items-center gap-2 pr-14">
@@ -178,6 +188,21 @@ export function DualMapView({ layers, nativeRange, timeline }: Props) {
                       </label>
                     </TooltipTrigger>
                     <TooltipContent>{(extrapolation ?? layers.extrapolation)?.description}</TooltipContent>
+                  </Tooltip>
+                )}
+                {hires && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <label className="flex items-center gap-2 rounded-lg border bg-card/85 px-2.5 py-1 text-xs shadow-sm backdrop-blur">
+                        <Switch
+                          checked={hiresOverlay}
+                          onCheckedChange={mapActions.setHiresOverlay}
+                          aria-label="High-resolution detail"
+                        />
+                        {resolutionLabel(hires.resolution)} detail
+                      </label>
+                    </TooltipTrigger>
+                    <TooltipContent>{hires.suitability.description}</TooltipContent>
                   </Tooltip>
                 )}
               </div>

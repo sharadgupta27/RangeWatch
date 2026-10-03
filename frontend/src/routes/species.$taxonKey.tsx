@@ -39,6 +39,8 @@ import { DualMapView } from '@/components/maps/DualMapView'
 import { NativeRangeEditor } from '@/components/maps/NativeRangeEditor'
 import { BulletinCard } from '@/components/species/BulletinCard'
 import { CaveatBanner } from '@/components/species/CaveatBanner'
+import { CrossCheckCard } from '@/components/species/CrossCheckCard'
+import { HiresCard } from '@/components/species/HiresCard'
 import { JobStatusBar } from '@/components/species/JobStatusBar'
 import { MetricsCards } from '@/components/species/MetricsCards'
 import { ModelLineageTable } from '@/components/species/ModelLineageTable'
@@ -320,7 +322,10 @@ function SpeciesWorkspace() {
               )}
               <BulletinCard taxonKey={taxonKey} jobActive={job.active} />
               {layers.data && sp.model_version > 0 && (
-                <ScenariosCard taxonKey={taxonKey} layers={layers.data} jobActive={job.active} />
+                <>
+                  <ScenariosCard taxonKey={taxonKey} layers={layers.data} jobActive={job.active} />
+                  <HiresCard taxonKey={taxonKey} layers={layers.data} jobActive={job.active} />
+                </>
               )}
             </div>
           </div>
@@ -364,7 +369,7 @@ function SpeciesWorkspace() {
           )}
         </TabsContent>
 
-        <TabsContent value="lineage">
+        <TabsContent value="lineage" className="space-y-4">
           <Card>
             <CardHeader>
               <CardTitle>Model lineage</CardTitle>
@@ -377,6 +382,14 @@ function SpeciesWorkspace() {
               <ModelLineageTable versions={versions.data} />
             </CardContent>
           </Card>
+          {model.data && (
+            <CrossCheckCard
+              taxonKey={taxonKey}
+              model={model.data}
+              bioclim={bioclim.data}
+              jobActive={job.active}
+            />
+          )}
         </TabsContent>
 
         <TabsContent value="occurrences">

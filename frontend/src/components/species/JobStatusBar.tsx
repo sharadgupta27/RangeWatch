@@ -13,10 +13,21 @@ const STAGE_LABEL: Record<string, string> = {
   scenarios: 'Projecting climate scenarios',
   validation: 'Evaluating reference species',
   scenario_raster: 'Projecting climate scenarios',
+  hires_raster: 'Projecting high-resolution region',
+  crosscheck: 'Refitting on the cross-check climate data',
   done: 'Finishing',
 }
 
-/** Live progress for the latest job (polled via TanStack Query refetchInterval). */
+const KIND_LABEL: Record<JobOut['kind'], string> = {
+  pipeline: 'Pipeline run',
+  bulletin: 'Bulletin',
+  scenarios: 'Scenario projection',
+  validation: 'Validation suite',
+  crosscheck: 'Climate cross-check',
+  hires: 'High-resolution projection',
+}
+
+/** Live progress for the latest job (SSE stream, or polling while the stream is down). */
 export function JobStatusBar({ job }: { job: JobOut | undefined }) {
   if (!job) return null
   const active = job.status === 'queued' || job.status === 'running'
@@ -35,11 +46,7 @@ export function JobStatusBar({ job }: { job: JobOut | undefined }) {
           <AlertCircle className="size-4 text-destructive" />
         )}
         <span className="font-medium">
-          {job.kind === 'bulletin' ? 'Bulletin' : job.kind === 'scenarios'
-              ? 'Scenario projection'
-              : job.kind === 'validation'
-                ? 'Validation suite'
-                : 'Pipeline run'} ·{' '}
+          {KIND_LABEL[job.kind]} ·{' '}
           {active ? stage : job.status === 'succeeded' ? 'completed' : 'failed'}
         </span>
         <span className="ml-auto text-xs text-muted-foreground">
@@ -51,6 +58,7 @@ export function JobStatusBar({ job }: { job: JobOut | undefined }) {
         <p className={`mt-2 text-xs ${job.status === 'failed' ? 'text-destructive' : 'text-muted-foreground'}`}>
           {job.message}
           {job.result && typeof job.result.decision === 'string' && ` — ${job.result.decision.replaceAll('_', ' ')}`}
+          {job.result && typeof job.result.verdict === 'string' && ` — ${job.result.verdict}`}
         </p>
       )}
     </div>

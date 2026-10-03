@@ -197,12 +197,15 @@ uses same-origin relative URLs.
 python -m src.features.bioclim_store build --version bioclim_v1 --resolution 2.5m
 python -m src.features.bioclim_store derive --from bioclim_v1 --version bioclim_v2 --core bio1,bio12
 python -m src.features.bioclim_store add-scenario --version bioclim_v2 --gcm ACCESS-CM2 --ssp ssp245 --period 2041-2060
+python -m src.features.bioclim_store add-hires --version bioclim_v2 --resolution 30s   # optional, ≈10 GB download
+python -m src.features.bioclim_store build-chelsa --version chelsa_v1 --match bioclim_v2  # optional, ≈5 GB download
 ```
 
 `SDM_BIOCLIM_VERSION` selects the active version. A version is never modified once a model has
 used it — change the predictor screening or source by creating a new tag (`derive`), which the
-model lineage then records. Scenarios are the one additive exception: they are projection inputs
-only and never change what a model was trained on.
+model lineage then records. Scenarios and high-resolution companions (`add-hires`) are the
+additive exceptions: they are projection inputs only and never change what a model was trained
+on. `build-chelsa` creates a separate version (see *Climate-data cross-check*).
 
 ### Data versioning (DVC + per-model training snapshots)
 
@@ -252,6 +255,38 @@ After `add-scenario`, project existing models without retraining — from the sp
 the nightly sweep. Every scenario gets its **own** MESS extrapolation mask
 (`extrapolation_<scenario>.tif`); future climates leave the training range far more often, so the
 current-climate mask is never reused.
+
+### High-resolution regions (30″)
+
+`add-hires` attaches a finer stack of the **same** source (WorldClim 30″) to a version; it is
+refused for other sources, since predictors would change meaning. The species page's
+**High-resolution detail** card then projects the current model inside the area shown on the
+projection map (`POST /api/species/{taxon_key}/hires`, at most `SDM_HIRES_MAX_CELLS` cells,
+≈ 33° × 33° at 30″). This is regional and on demand, not global: a global 30″ projection is
+~0.9 billion cells per raster. The region gets its own suitability and MESS extrapolation COGs
+(`*_hires_30s.tif`), drawn over the global layer with an outline and a **30″ detail** toggle. A
+new region replaces the previous one. The model is still the one trained at the version's
+resolution; only the projection is finer.
+
+### Climate-data cross-check (CHELSA)
+
+`build-chelsa` downloads CHELSA V2.1 BIO1–19 (1981–2010), applies each file's declared
+scale/offset, converts BIO3 from a ratio to WorldClim's percent, average-resamples onto the
+`--match` version's grid and masks it to that version's land cells. Set
+`SDM_CROSSCHECK_BIOCLIM_VERSION=chelsa_v1`; the **Model lineage** tab then offers a cross-check
+(`POST /api/species/{taxon_key}/crosscheck`). It refits the current version on CHELSA predictors
+with the exact training set from its snapshot (same presences, background, feature classes,
+regularisation and CV seed), then reports:
+
+- per-predictor agreement, with a units-mismatch flag;
+- both sets of spatial-CV AUC/CBI/TSS;
+- Spearman ρ between the two suitability predictions;
+- κ for the thresholded maps.
+
+It ends with a verdict (`consistent` / `moderate` / `divergent`). The result is stored with the
+model version (`crosscheck_<version>.json`) but never changes it. Low agreement is an uncertainty
+to report next to MESS, mostly in complex terrain. It is not a reason to switch datasets
+automatically.
 
 ### Validation suite (workplan phase 11)
 
@@ -329,7 +364,8 @@ kubectl -n sdm port-forward svc/gateway 8088:80
    append-only), advance the watermark, and **retrain if new/total > 5 % or any new record falls
    in a cell the current model rates unsuitable**; else flag `minor_update_pending`.
 3. **Train & publish** → features → Model B (native + invaded) whenever introduced records exist,
-   else Model A (lower confidence) → Wallace/ENMeval feature-class × regularisation grid selected
+   else Model A (lower confidence) → **target-group background** (below) → Wallace/ENMeval
+   feature-class × regularisation grid selected
    by spatially block-cross-validated CBI → global suitability, MESS, extrapolation mask and zone
    COGs → severity → hashed training-data snapshot → MLflow run + `model_versions` row → bulletin.
    Runs are serialised per species (Postgres advisory lock): a second request for the same
@@ -337,8 +373,22 @@ kubectl -n sdm port-forward svc/gateway 8088:80
 
 Celery beat runs the nightly refresh of all tracked species, a stale-job reaper and a weekly
 storage-growth sweep. A retrain that fails keeps `retrain_needed` set, so the next run retries it
-even though its triggering records are already stored. The frontend only polls job/registry
-state; it never duplicates this decision logic.
+even though its triggering records are already stored. The frontend only follows job/registry
+state: a Server-Sent Events stream (`GET /api/jobs/events`) pushes the job list whenever a
+worker reports progress. If the stream drops, it falls back to polling. It never duplicates this
+decision logic.
+
+**Background (pseudo-absence) sampling.** By default (`SDM_BACKGROUND_METHOD=target_group`),
+background points come from raster cells where GBIF holds records of the species' **order**
+(`SDM_TARGET_GROUP_RANK`), within the same 500 km buffer around presences. The background then
+carries the same observer bias as the presences. Effort comes from GBIF's map API density tiles
+(record counts per pixel, at a zoom no coarser than the bioclim cells), not by paging records.
+Cells are de-duplicated, so each sampled cell counts once, following the unique-localities
+approach of Phillips et al. 2009. The pipeline falls back to the uniform buffered background,
+and records why, when the order is unknown, the effort data is unreachable, or fewer than 500
+cells have records. The method, target group, effort query and any fallback reason are logged
+per version, shown verbatim in the lineage table, and written into the bulletin's methods
+section.
 
 **Storage growth.** Species with no user request (no job) for `SDM_ARCHIVE_INACTIVE_AFTER_DAYS`
 (default 180; `0` disables) have their feature table moved to
@@ -374,6 +424,13 @@ SHA-256 is part of the lineage. The nightly sweep does not count as a request.
   artefacts disappeared.
 - **Seeded sampling.** `elapid.sample_geoseries` takes no seed and elapid 1.0.4 has no
   distance thinning, so both are implemented in `background_sampler.py` with logged seeds.
+- **Sampling effort from GBIF density tiles.** A higher taxon such as an order has tens of
+  millions of records, too many to page through the search API. The map API returns per-pixel
+  counts for a region in ≤ 64 tiles. A small decoder (`connectors/mvt.py`) reads them without
+  adding a vector-tile dependency. Across the 8 tracked species this adds 9–20 s per training
+  run and yields 9 000–9 900 background cells each.
+- **Search text in the URL.** The species search keeps its text in `?q=`, a root search
+  param, so a search survives reloads, back/forward navigation and shared links.
 - **Retrain threshold unchanged** (5 % delta or ≥ 1 new record outside the envelope,
   `SDM_RETRAIN_DELTA_FRACTION` / `SDM_ENVELOPE_MIN_OUTSIDE_POINTS`). Changing it is a
   reviewed decision per CLAUDE.md.

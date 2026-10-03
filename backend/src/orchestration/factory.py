@@ -58,7 +58,11 @@ def build_pipeline(
         settings=s,
         bulletin=BulletinGenerator(repo, artifacts, s),
         # SDM_RANDOM_SEED drives thinning, background sampling and CV folds (logged per version).
-        training_config=TrainingConfig(seed=s.random_seed),
+        training_config=TrainingConfig(
+            seed=s.random_seed,
+            background_method=s.background_method,
+            target_group_rank=s.target_group_rank,
+        ),
         step=step,
     )
     if progress is not None:

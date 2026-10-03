@@ -279,6 +279,102 @@
         }
       }
     },
+    "/species/{taxon_key}/crosscheck": {
+      "post": {
+        "tags": [
+          "species"
+        ],
+        "summary": "Run Crosscheck",
+        "description": "Refit the current model on the independent cross-check climate stack (e.g. CHELSA).",
+        "operationId": "runClimateCrossCheck",
+        "parameters": [
+          {
+            "name": "taxon_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Taxon Key"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/species/{taxon_key}/hires": {
+      "post": {
+        "tags": [
+          "species"
+        ],
+        "summary": "Project Hires",
+        "description": "Project the current model at high resolution (e.g. 30\u2033) inside a region.",
+        "operationId": "projectHighResolution",
+        "parameters": [
+          {
+            "name": "taxon_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Taxon Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HiresRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/species/{taxon_key}/native-range": {
       "get": {
         "tags": [
@@ -922,6 +1018,71 @@
         }
       }
     },
+    "/jobs/events": {
+      "get": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Stream Jobs",
+        "description": "Live job list for a species (or all jobs): replaces client polling while connected.",
+        "operationId": "streamJobs",
+        "parameters": [
+          {
+            "name": "taxon_key",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Taxon Key"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 10,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "text/event-stream of `jobs` events; each `data:` line is a JSON array of JobOut (newest first, same as GET /jobs), sent on connect and on change",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/JobOut"
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/jobs/{job_id}": {
       "get": {
         "tags": [
@@ -1102,6 +1263,52 @@
   },
   "components": {
     "schemas": {
+      "BackgroundInfo": {
+        "properties": {
+          "method": {
+            "type": "string",
+            "title": "Method",
+            "description": "Method actually used, e.g. target_group_order, buffer_500km"
+          },
+          "requested_method": {
+            "type": "string",
+            "title": "Requested Method"
+          },
+          "buffer_km": {
+            "type": "number",
+            "title": "Buffer Km"
+          },
+          "target_group": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TargetGroupInfo"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "fallback_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fallback Reason",
+            "description": "Why target-group background was not used, if it was requested"
+          }
+        },
+        "type": "object",
+        "required": [
+          "method",
+          "requested_method",
+          "buffer_km"
+        ],
+        "title": "BackgroundInfo"
+      },
       "BioclimInfo": {
         "properties": {
           "version": {
@@ -1154,6 +1361,36 @@
               }
             ],
             "title": "Citation"
+          },
+          "hires_resolutions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Hires Resolutions"
+          },
+          "crosscheck_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Crosscheck Version",
+            "description": "Independent climate stack used for the climate-data cross-check"
+          },
+          "crosscheck_source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Crosscheck Source"
           }
         },
         "type": "object",
@@ -1241,6 +1478,179 @@
           "html_available"
         ],
         "title": "BulletinStatus"
+      },
+      "ClimateCrossCheckOut": {
+        "properties": {
+          "alt_bioclim_version": {
+            "type": "string",
+            "title": "Alt Bioclim Version"
+          },
+          "alt_source": {
+            "type": "string",
+            "title": "Alt Source"
+          },
+          "primary_bioclim_version": {
+            "type": "string",
+            "title": "Primary Bioclim Version"
+          },
+          "created_ts": {
+            "type": "string",
+            "title": "Created Ts"
+          },
+          "n_presence": {
+            "type": "integer",
+            "title": "N Presence"
+          },
+          "n_background": {
+            "type": "integer",
+            "title": "N Background"
+          },
+          "n_dropped": {
+            "type": "integer",
+            "title": "N Dropped",
+            "description": "Training points without data in the alternative stack"
+          },
+          "feature_classes": {
+            "type": "string",
+            "title": "Feature Classes"
+          },
+          "beta_multiplier": {
+            "type": "number",
+            "title": "Beta Multiplier"
+          },
+          "predictors": {
+            "items": {
+              "$ref": "#/components/schemas/PredictorAgreementOut"
+            },
+            "type": "array",
+            "title": "Predictors"
+          },
+          "primary": {
+            "$ref": "#/components/schemas/CrossCheckMetricsOut"
+          },
+          "alternative": {
+            "$ref": "#/components/schemas/CrossCheckMetricsOut"
+          },
+          "suitability_rank_correlation": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Suitability Rank Correlation",
+            "description": "Spearman \u03c1 of the two models' suitability at the training points"
+          },
+          "classification_agreement": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Classification Agreement"
+          },
+          "classification_kappa": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Classification Kappa"
+          },
+          "verdict": {
+            "type": "string",
+            "enum": [
+              "consistent",
+              "moderate",
+              "divergent"
+            ],
+            "title": "Verdict"
+          },
+          "interpretation": {
+            "type": "string",
+            "title": "Interpretation"
+          }
+        },
+        "type": "object",
+        "required": [
+          "alt_bioclim_version",
+          "alt_source",
+          "primary_bioclim_version",
+          "created_ts",
+          "n_presence",
+          "n_background",
+          "n_dropped",
+          "feature_classes",
+          "beta_multiplier",
+          "predictors",
+          "primary",
+          "alternative",
+          "suitability_rank_correlation",
+          "classification_agreement",
+          "classification_kappa",
+          "verdict",
+          "interpretation"
+        ],
+        "title": "ClimateCrossCheckOut",
+        "description": "The model version refitted on an independent climate source (same training points,\nfeature classes, regularisation and CV seed) and compared with the original."
+      },
+      "CrossCheckMetricsOut": {
+        "properties": {
+          "auc_mean": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auc Mean"
+          },
+          "cbi_mean": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cbi Mean"
+          },
+          "tss_mean": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tss Mean"
+          },
+          "threshold": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Threshold"
+          }
+        },
+        "type": "object",
+        "title": "CrossCheckMetricsOut"
       },
       "FoldMetricsOut": {
         "properties": {
@@ -1402,13 +1812,82 @@
         ],
         "title": "Health"
       },
+      "HiresLayer": {
+        "properties": {
+          "resolution": {
+            "type": "string",
+            "title": "Resolution"
+          },
+          "bbox": {
+            "items": {
+              "type": "number"
+            },
+            "type": "array",
+            "title": "Bbox",
+            "description": "[west, south, east, north] of the projected region"
+          },
+          "suitability": {
+            "$ref": "#/components/schemas/RasterLayer"
+          },
+          "extrapolation": {
+            "$ref": "#/components/schemas/RasterLayer",
+            "description": "This region's own MESS < 0 mask"
+          },
+          "extrapolated_land_fraction": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Extrapolated Land Fraction"
+          },
+          "created_ts": {
+            "type": "string",
+            "title": "Created Ts"
+          }
+        },
+        "type": "object",
+        "required": [
+          "resolution",
+          "bbox",
+          "suitability",
+          "extrapolation",
+          "created_ts"
+        ],
+        "title": "HiresLayer",
+        "description": "Regional high-resolution projection of the same model (no retraining)."
+      },
+      "HiresRequest": {
+        "properties": {
+          "bbox": {
+            "items": {
+              "type": "number"
+            },
+            "type": "array",
+            "maxItems": 4,
+            "minItems": 4,
+            "title": "Bbox",
+            "description": "[west, south, east, north] in degrees"
+          }
+        },
+        "type": "object",
+        "required": [
+          "bbox"
+        ],
+        "title": "HiresRequest"
+      },
       "JobKind": {
         "type": "string",
         "enum": [
           "pipeline",
           "bulletin",
           "scenarios",
-          "validation"
+          "validation",
+          "crosscheck",
+          "hires"
         ],
         "title": "JobKind"
       },
@@ -1621,6 +2100,39 @@
             "type": "array",
             "title": "Scenarios Available",
             "description": "Scenarios registered for the model's bioclim version (projected or not)"
+          },
+          "hires": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HiresLayer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hires_available": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hires Available",
+            "description": "Resolution of the model's high-resolution stack, if one is registered"
+          },
+          "hires_max_cells": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hires Max Cells"
           },
           "caveats": {
             "anyOf": [
@@ -1961,6 +2473,13 @@
             },
             "type": "object",
             "title": "N Records By Effective Label"
+          },
+          "crosschecks": {
+            "items": {
+              "$ref": "#/components/schemas/ClimateCrossCheckOut"
+            },
+            "type": "array",
+            "title": "Crosschecks"
           }
         },
         "type": "object",
@@ -2443,6 +2962,74 @@
         "title": "OccurrenceSources",
         "description": "How the merged occurrence set was assembled (records are de-duplicated across sources)."
       },
+      "PredictorAgreementOut": {
+        "properties": {
+          "predictor": {
+            "type": "string",
+            "title": "Predictor"
+          },
+          "pearson_r": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pearson R"
+          },
+          "mean_diff": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mean Diff",
+            "description": "Mean of (alternative \u2212 primary)"
+          },
+          "mean_abs_diff": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mean Abs Diff"
+          },
+          "scale_ratio": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scale Ratio",
+            "description": "Median |alternative| / median |primary|; far from 1 suggests a unit mismatch"
+          },
+          "units_suspect": {
+            "type": "boolean",
+            "title": "Units Suspect"
+          }
+        },
+        "type": "object",
+        "required": [
+          "predictor",
+          "pearson_r",
+          "mean_diff",
+          "mean_abs_diff",
+          "scale_ratio",
+          "units_suspect"
+        ],
+        "title": "PredictorAgreementOut"
+      },
       "ProjectionSummaryOut": {
         "properties": {
           "land_area_km2": {
@@ -2675,6 +3262,17 @@
               }
             ],
             "title": "Native Range Confirmed Ts"
+          },
+          "background": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BackgroundInfo"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Background sampling record; absent for versions trained before it"
           },
           "training_data": {
             "anyOf": [
@@ -3329,6 +3927,67 @@
           "retrain_needed"
         ],
         "title": "SpeciesSummary"
+      },
+      "TargetGroupInfo": {
+        "properties": {
+          "rank": {
+            "type": "string",
+            "title": "Rank"
+          },
+          "taxon_key": {
+            "type": "integer",
+            "title": "Taxon Key",
+            "description": "GBIF key of the target group (e.g. the species' order)"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "n_records": {
+            "type": "integer",
+            "title": "N Records",
+            "description": "GBIF records of the target group in the region"
+          },
+          "n_pixels": {
+            "type": "integer",
+            "title": "N Pixels"
+          },
+          "map_zoom": {
+            "type": "integer",
+            "title": "Map Zoom"
+          },
+          "pixel_deg": {
+            "type": "number",
+            "title": "Pixel Deg"
+          },
+          "n_tiles": {
+            "type": "integer",
+            "title": "N Tiles"
+          },
+          "query": {
+            "type": "string",
+            "title": "Query",
+            "description": "GBIF map API density-tile query used as sampling effort"
+          },
+          "fetched_ts": {
+            "type": "string",
+            "title": "Fetched Ts"
+          }
+        },
+        "type": "object",
+        "required": [
+          "rank",
+          "taxon_key",
+          "name",
+          "n_records",
+          "n_pixels",
+          "map_zoom",
+          "pixel_deg",
+          "n_tiles",
+          "query",
+          "fetched_ts"
+        ],
+        "title": "TargetGroupInfo"
       },
       "TaxonSearchResult": {
         "properties": {

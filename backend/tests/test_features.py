@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -148,3 +150,94 @@ def test_dvc_pointer_md5_reads_the_version_directory_hash(tmp_path):
     )
     assert dvc_pointer_md5(tmp_path, "bioclim_v2") == "324497f047daf285857f2a1dbf02b8ca.dir"
     assert dvc_pointer_md5(tmp_path, "bioclim_v9") is None  # not tracked by DVC
+
+
+def test_subset_iterates_only_the_region_with_its_own_transform(stack):
+    sub = stack.subset((10.0, 40.0, 20.0, 45.0))
+    assert (sub.width, sub.height) == (10, 5)
+    assert (sub.transform.c, sub.transform.f) == (10.0, 45.0)
+    blocks = list(sub.iter_blocks(["bio1"], block_rows=2))
+    assert [b.row_off for b in blocks] == [0, 2, 4] and blocks[0].width == 10
+    data = np.concatenate([b.data[0] for b in blocks])
+    lon, lat = np.meshgrid(np.arange(10.5, 20), np.arange(44.5, 40, -1))
+    np.testing.assert_allclose(data, synthetic_bands(lon, lat)[0], rtol=1e-5)
+
+
+def test_default_blocks_scale_with_grid_width(stack):
+    from src.features.raster_sampler import BLOCK_CELLS
+
+    blocks = list(stack.iter_blocks(["bio1"]))
+    assert blocks[0].height == min(stack.height, BLOCK_CELLS // stack.width)
+    assert sum(b.height for b in blocks) == stack.height
+
+
+def test_build_chelsa_harmonizes_units_onto_the_target_grid_and_land_mask(tmp_path):
+    from src.features.bioclim_store import build_chelsa
+    from tests.conftest import build_stack, write_synthetic_chelsa
+
+    root = tmp_path / "bioclim"
+    build_stack(root)
+    src = write_synthetic_chelsa(tmp_path / "chelsa_src")
+    build_chelsa("chelsa_t", BIOCLIM_VERSION, root, src_dir=src)
+
+    target = BioclimStack.open_version(root, BIOCLIM_VERSION)
+    chelsa = BioclimStack.open_version(root, "chelsa_t")
+    assert chelsa.metadata.aligned_to == BIOCLIM_VERSION
+    assert (chelsa.width, chelsa.height, chelsa.transform) == (
+        target.width,
+        target.height,
+        target.transform,
+    )
+    assert "Karger" in (chelsa.metadata.citation or "")
+    rng = np.random.default_rng(3)
+    lon, lat = rng.uniform(-180, 180, 4000), rng.uniform(-55, 83, 4000)
+    a, b = target.sample(lon, lat), chelsa.sample(lon, lat)
+    # Same land mask: CHELSA's ocean values are dropped.
+    np.testing.assert_array_equal(a["bio1"].isna(), b["bio1"].isna())
+    land = a["bio1"].notna()
+    for band in ("bio1", "bio12"):  # Kelvin offset; plain scale
+        r = np.corrcoef(a.loc[land, band], b.loc[land, band])[0, 1]
+        ratio = np.median(np.abs(b.loc[land, band])) / np.median(np.abs(a.loc[land, band]))
+        assert r > 0.98 and 0.9 < ratio < 1.1, band
+    assert np.abs(a.loc[land, "bio1"] - b.loc[land, "bio1"]).max() < 0.6
+
+    # BIO3 ratio→percent: each 1° cell is the average of its four 0.5° source cells (the
+    # synthetic BIO3 has random coefficients per grid shape, so compare to the source grid).
+    src_lon, src_lat = np.meshgrid(
+        -180 + (np.arange(720) + 0.5) * 0.5, 84 - (np.arange(280) + 0.5) * 0.5
+    )
+    bio3 = synthetic_bands(src_lon, src_lat)[2].reshape(140, 2, 360, 2).mean(axis=(1, 3))
+    rows, cols = (84 - lat[land]).astype(int), (lon[land] + 180).astype(int)
+    np.testing.assert_allclose(b.loc[land, "bio3"], bio3[rows, cols], rtol=1e-3, atol=1e-2)
+
+
+def test_add_hires_registers_a_finer_stack_and_rejects_coarser(tmp_path):
+    from src.features.bioclim_store import add_hires
+    from tests.conftest import build_stack, write_synthetic_stack_tif
+
+    root = tmp_path / "bioclim"
+    build_stack(root)
+    src = write_synthetic_stack_tif(tmp_path / "fine.tif", res=0.5)
+    rel = add_hires(BIOCLIM_VERSION, "30s", root, src_tif=src)
+    meta = BioclimStack.open_version(root, BIOCLIM_VERSION).metadata
+    assert meta.hires == {"30s": rel} and meta.finest_hires() == "30s"
+    fine = BioclimStack.open_version(root, BIOCLIM_VERSION, hires="30s")
+    assert fine.res == (0.5, 0.5)
+    with pytest.raises(FileExistsError):
+        add_hires(BIOCLIM_VERSION, "30s", root, src_tif=src)
+
+    from src.features.bioclim_store import write_metadata
+
+    write_metadata(root / BIOCLIM_VERSION, replace(meta, resolution="30s", hires={}))
+    with pytest.raises(ValueError, match="not finer"):
+        add_hires(BIOCLIM_VERSION, "2.5m", root, src_tif=src)
+
+
+def test_hires_stacks_are_only_downloaded_for_worldclim(tmp_path):
+    from src.features.bioclim_store import add_hires
+    from tests.conftest import build_stack
+
+    root = tmp_path / "bioclim"
+    build_stack(root)  # source: "synthetic test stack"
+    with pytest.raises(ValueError, match="not a WorldClim stack"):
+        add_hires(BIOCLIM_VERSION, "30s", root)

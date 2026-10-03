@@ -164,3 +164,49 @@ def mess(reference: MessReference, target: np.ndarray) -> tuple[np.ndarray, np.n
         out[ok] = sims[ok].min(axis=1)
         mod[ok] = sims[ok].argmin(axis=1)
     return out.astype("float32"), mod
+
+
+# ---------------------------------------------------------------------------
+# Climate-data cross-check (same model fitted on two bioclim sources)
+# ---------------------------------------------------------------------------
+def predictor_agreement(primary: np.ndarray, alternative: np.ndarray) -> dict[str, float]:
+    """Agreement of one predictor between two climate datasets at the same locations.
+
+    `scale_ratio` (ratio of median absolute values) far from 1 flags a units mismatch rather
+    than a genuine climatological difference."""
+    a = np.asarray(primary, dtype="float64")
+    b = np.asarray(alternative, dtype="float64")
+    ok = np.isfinite(a) & np.isfinite(b)
+    a, b = a[ok], b[ok]
+    if a.size < 3:
+        nan = float("nan")
+        return {"pearson_r": nan, "mean_diff": nan, "mean_abs_diff": nan, "scale_ratio": nan}
+    r = float(np.corrcoef(a, b)[0, 1]) if a.std() > 0 and b.std() > 0 else float("nan")
+    med_a = float(np.median(np.abs(a)))
+    return {
+        "pearson_r": r,
+        "mean_diff": float(np.mean(b - a)),
+        "mean_abs_diff": float(np.mean(np.abs(b - a))),
+        "scale_ratio": float(np.median(np.abs(b)) / med_a) if med_a > 0 else float("nan"),
+    }
+
+
+def rank_correlation(a: np.ndarray, b: np.ndarray) -> float:
+    """Spearman correlation of two suitability surfaces sampled at the same points."""
+    a, b = np.asarray(a, dtype="float64"), np.asarray(b, dtype="float64")
+    ok = np.isfinite(a) & np.isfinite(b)
+    if ok.sum() < 3:
+        return float("nan")
+    rho = spearmanr(a[ok], b[ok]).statistic
+    return float(rho)
+
+
+def binary_agreement(a: np.ndarray, b: np.ndarray) -> dict[str, float]:
+    """Overall agreement and Cohen's kappa of two suitable/unsuitable classifications."""
+    a, b = np.asarray(a, dtype=bool), np.asarray(b, dtype=bool)
+    if a.size == 0:
+        return {"agreement": float("nan"), "kappa": float("nan")}
+    po = float(np.mean(a == b))
+    pe = float(a.mean() * b.mean() + (1 - a.mean()) * (1 - b.mean()))
+    kappa = (po - pe) / (1 - pe) if pe < 1 else 1.0
+    return {"agreement": po, "kappa": float(kappa)}

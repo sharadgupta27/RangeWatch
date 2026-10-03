@@ -1,4 +1,4 @@
-import { useNavigate } from '@tanstack/react-router'
+import { useNavigate, useSearch } from '@tanstack/react-router'
 import { ChevronRight, Leaf, Loader2, Search } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 
@@ -17,13 +17,46 @@ import { cn } from '@/lib/utils'
 import { useDebounced } from '@/lib/useDebounced'
 
 /**
+ * Keeps the search text in the URL (`?q=`, a root search param) so a search survives reloads,
+ * back/forward and shared links. The input stays local state for responsiveness; the URL is
+ * written once typing settles, and URL changes (back button) flow back into the input.
+ */
+function useUrlSearchText(debounced: string, setText: (v: string) => void) {
+  const urlQ = useSearch({ strict: false, select: (s) => s.q ?? '' })
+  const navigate = useNavigate()
+  const written = useRef(urlQ)
+
+  // Input → URL, after the debounce. Replace (not push) so history isn't one entry per word.
+  useEffect(() => {
+    const next = debounced.trim()
+    if (next === written.current) return
+    written.current = next
+    void navigate({
+      to: '.',
+      search: (prev: Record<string, unknown>) => ({ ...prev, q: next || undefined }),
+      replace: true,
+    })
+  }, [debounced]) // only typing writes the URL
+
+  // URL → input, for changes that did not come from typing (back/forward, links).
+  useEffect(() => {
+    if (urlQ === written.current) return
+    written.current = urlQ
+    setText(urlQ)
+  }, [urlQ]) // only URL changes overwrite the input
+}
+
+/**
  * Search-as-you-type over the GBIF backbone (via the backend), enriched with iNaturalist
  * thumbnails and common names. Selecting a result routes to /species/:taxonKey.
  */
 export function SpeciesSearch({ className, autoFocus }: { className?: string; autoFocus?: boolean }) {
-  const [q, setQ] = useState('')
-  const [open, setOpen] = useState(false)
+  const initialQ = useSearch({ strict: false, select: (s) => s.q ?? '' })
+  const [q, setQ] = useState(initialQ)
+  // A search restored from the URL shows its results straight away.
+  const [open, setOpen] = useState(initialQ.trim().length >= 2)
   const debounced = useDebounced(q, 250)
+  useUrlSearchText(debounced, setQ)
   const search = useSpeciesSearch(debounced)
   const navigate = useNavigate()
   const boxRef = useRef<HTMLDivElement>(null)

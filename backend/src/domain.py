@@ -72,6 +72,8 @@ class JobKind(StrEnum):
     BULLETIN = "bulletin"
     SCENARIOS = "scenarios"
     VALIDATION = "validation"
+    CROSSCHECK = "crosscheck"
+    HIRES = "hires"
 
 
 @dataclass(frozen=True, slots=True)

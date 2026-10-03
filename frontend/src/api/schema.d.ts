@@ -132,6 +132,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/species/{taxon_key}/crosscheck": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Run Crosscheck
+         * @description Refit the current model on the independent cross-check climate stack (e.g. CHELSA).
+         */
+        post: operations["runClimateCrossCheck"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/species/{taxon_key}/hires": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Project Hires
+         * @description Project the current model at high resolution (e.g. 30″) inside a region.
+         */
+        post: operations["projectHighResolution"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/species/{taxon_key}/native-range": {
         parameters: {
             query?: never;
@@ -300,6 +340,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/jobs/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Stream Jobs
+         * @description Live job list for a species (or all jobs): replaces client polling while connected.
+         */
+        get: operations["streamJobs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/jobs/{job_id}": {
         parameters: {
             query?: never;
@@ -372,6 +432,24 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** BackgroundInfo */
+        BackgroundInfo: {
+            /**
+             * Method
+             * @description Method actually used, e.g. target_group_order, buffer_500km
+             */
+            method: string;
+            /** Requested Method */
+            requested_method: string;
+            /** Buffer Km */
+            buffer_km: number;
+            target_group?: components["schemas"]["TargetGroupInfo"] | null;
+            /**
+             * Fallback Reason
+             * @description Why target-group background was not used, if it was requested
+             */
+            fallback_reason?: string | null;
+        };
         /** BioclimInfo */
         BioclimInfo: {
             /** Version */
@@ -394,6 +472,15 @@ export interface components {
             scenarios: string[];
             /** Citation */
             citation?: string | null;
+            /** Hires Resolutions */
+            hires_resolutions?: string[];
+            /**
+             * Crosscheck Version
+             * @description Independent climate stack used for the climate-data cross-check
+             */
+            crosscheck_version?: string | null;
+            /** Crosscheck Source */
+            crosscheck_source?: string | null;
         };
         /** BulletinRequest */
         BulletinRequest: {
@@ -414,6 +501,65 @@ export interface components {
             pdf_url?: string | null;
             /** Html Url */
             html_url?: string | null;
+        };
+        /**
+         * ClimateCrossCheckOut
+         * @description The model version refitted on an independent climate source (same training points,
+         *     feature classes, regularisation and CV seed) and compared with the original.
+         */
+        ClimateCrossCheckOut: {
+            /** Alt Bioclim Version */
+            alt_bioclim_version: string;
+            /** Alt Source */
+            alt_source: string;
+            /** Primary Bioclim Version */
+            primary_bioclim_version: string;
+            /** Created Ts */
+            created_ts: string;
+            /** N Presence */
+            n_presence: number;
+            /** N Background */
+            n_background: number;
+            /**
+             * N Dropped
+             * @description Training points without data in the alternative stack
+             */
+            n_dropped: number;
+            /** Feature Classes */
+            feature_classes: string;
+            /** Beta Multiplier */
+            beta_multiplier: number;
+            /** Predictors */
+            predictors: components["schemas"]["PredictorAgreementOut"][];
+            primary: components["schemas"]["CrossCheckMetricsOut"];
+            alternative: components["schemas"]["CrossCheckMetricsOut"];
+            /**
+             * Suitability Rank Correlation
+             * @description Spearman ρ of the two models' suitability at the training points
+             */
+            suitability_rank_correlation: number | null;
+            /** Classification Agreement */
+            classification_agreement: number | null;
+            /** Classification Kappa */
+            classification_kappa: number | null;
+            /**
+             * Verdict
+             * @enum {string}
+             */
+            verdict: "consistent" | "moderate" | "divergent";
+            /** Interpretation */
+            interpretation: string;
+        };
+        /** CrossCheckMetricsOut */
+        CrossCheckMetricsOut: {
+            /** Auc Mean */
+            auc_mean?: number | null;
+            /** Cbi Mean */
+            cbi_mean?: number | null;
+            /** Tss Mean */
+            tss_mean?: number | null;
+            /** Threshold */
+            threshold?: number | null;
         };
         /** FoldMetricsOut */
         FoldMetricsOut: {
@@ -470,10 +616,38 @@ export interface components {
             bioclim_available: boolean;
         };
         /**
+         * HiresLayer
+         * @description Regional high-resolution projection of the same model (no retraining).
+         */
+        HiresLayer: {
+            /** Resolution */
+            resolution: string;
+            /**
+             * Bbox
+             * @description [west, south, east, north] of the projected region
+             */
+            bbox: number[];
+            suitability: components["schemas"]["RasterLayer"];
+            /** @description This region's own MESS < 0 mask */
+            extrapolation: components["schemas"]["RasterLayer"];
+            /** Extrapolated Land Fraction */
+            extrapolated_land_fraction?: number | null;
+            /** Created Ts */
+            created_ts: string;
+        };
+        /** HiresRequest */
+        HiresRequest: {
+            /**
+             * Bbox
+             * @description [west, south, east, north] in degrees
+             */
+            bbox: number[];
+        };
+        /**
          * JobKind
          * @enum {string}
          */
-        JobKind: "pipeline" | "bulletin" | "scenarios" | "validation";
+        JobKind: "pipeline" | "bulletin" | "scenarios" | "validation" | "crosscheck" | "hires";
         /** JobOut */
         JobOut: {
             /**
@@ -551,6 +725,14 @@ export interface components {
              * @description Scenarios registered for the model's bioclim version (projected or not)
              */
             scenarios_available?: string[];
+            hires?: components["schemas"]["HiresLayer"] | null;
+            /**
+             * Hires Available
+             * @description Resolution of the model's high-resolution stack, if one is registered
+             */
+            hires_available?: string | null;
+            /** Hires Max Cells */
+            hires_max_cells?: number | null;
             caveats?: components["schemas"]["LayerCaveats"] | null;
         };
         /** LegendEntry */
@@ -667,6 +849,8 @@ export interface components {
             n_records_by_effective_label: {
                 [key: string]: number;
             };
+            /** Crosschecks */
+            crosschecks?: components["schemas"]["ClimateCrossCheckOut"][];
         };
         /** ModelVersionOut */
         ModelVersionOut: {
@@ -829,6 +1013,27 @@ export interface components {
             /** Last Inat Fetch Ts */
             last_inat_fetch_ts?: string | null;
         };
+        /** PredictorAgreementOut */
+        PredictorAgreementOut: {
+            /** Predictor */
+            predictor: string;
+            /** Pearson R */
+            pearson_r: number | null;
+            /**
+             * Mean Diff
+             * @description Mean of (alternative − primary)
+             */
+            mean_diff: number | null;
+            /** Mean Abs Diff */
+            mean_abs_diff: number | null;
+            /**
+             * Scale Ratio
+             * @description Median |alternative| / median |primary|; far from 1 suggests a unit mismatch
+             */
+            scale_ratio: number | null;
+            /** Units Suspect */
+            units_suspect: boolean;
+        };
         /** ProjectionSummaryOut */
         ProjectionSummaryOut: {
             /** Land Area Km2 */
@@ -918,6 +1123,8 @@ export interface components {
             native_range_source: string;
             /** Native Range Confirmed Ts */
             native_range_confirmed_ts?: string | null;
+            /** @description Background sampling record; absent for versions trained before it */
+            background?: components["schemas"]["BackgroundInfo"] | null;
             /** @description Exact MaxEnt input (presences + background with predictors); absent for versions trained before snapshots were introduced */
             training_data?: components["schemas"]["TrainingSnapshotInfo"] | null;
             /** @description All valid records considered, with ingested and effective labels */
@@ -1152,6 +1359,38 @@ export interface components {
             severity_score?: number | null;
             /** Model Type */
             model_type?: ("A" | "B") | null;
+        };
+        /** TargetGroupInfo */
+        TargetGroupInfo: {
+            /** Rank */
+            rank: string;
+            /**
+             * Taxon Key
+             * @description GBIF key of the target group (e.g. the species' order)
+             */
+            taxon_key: number;
+            /** Name */
+            name: string;
+            /**
+             * N Records
+             * @description GBIF records of the target group in the region
+             */
+            n_records: number;
+            /** N Pixels */
+            n_pixels: number;
+            /** Map Zoom */
+            map_zoom: number;
+            /** Pixel Deg */
+            pixel_deg: number;
+            /** N Tiles */
+            n_tiles: number;
+            /**
+             * Query
+             * @description GBIF map API density-tile query used as sampling effort
+             */
+            query: string;
+            /** Fetched Ts */
+            fetched_ts: string;
         };
         /** TaxonSearchResult */
         TaxonSearchResult: {
@@ -1565,6 +1804,72 @@ export interface operations {
             };
         };
     };
+    runClimateCrossCheck: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                taxon_key: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    projectHighResolution: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                taxon_key: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HiresRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     getNativeRange: {
         parameters: {
             query?: never;
@@ -1919,6 +2224,38 @@ export interface operations {
                 content: {
                     "application/pdf": unknown;
                     "text/html": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    streamJobs: {
+        parameters: {
+            query?: {
+                taxon_key?: number | null;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description text/event-stream of `jobs` events; each `data:` line is a JSON array of JobOut (newest first, same as GET /jobs), sent on connect and on change */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": components["schemas"]["JobOut"][];
                 };
             };
             /** @description Validation Error */

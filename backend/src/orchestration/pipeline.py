@@ -28,10 +28,11 @@ suitability_raster → bulletin.
 
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import Callable
 from contextlib import AbstractContextManager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from enum import StrEnum
 from importlib import metadata
@@ -56,12 +57,21 @@ from src.domain import (
     utcnow,
 )
 from src.features.background_sampler import (
+    BackgroundSample,
+    buffer_region,
     cell_dedupe,
     distance_thin,
     sample_buffered_background,
+    sample_target_group_background,
 )
 from src.features.bioclim_store import dvc_pointer_md5
-from src.features.raster_sampler import BioclimStack, sample_raster_file
+from src.features.raster_sampler import (
+    METADATA_FILENAME,
+    BioclimMetadata,
+    BioclimStack,
+    sample_raster_file,
+)
+from src.modeling.crosscheck import climate_crosscheck
 from src.modeling.maxent_trainer import (
     TRANSFERABILITY_CAVEAT,
     TrainingConfig,
@@ -120,6 +130,9 @@ class GbifLike(Protocol):
         until: datetime | None = None,
         on_progress: Callable[[int, int], None] | None = None,
     ) -> list[OccurrenceRecord]: ...
+    def fetch_effort_density(
+        self, taxon_key: int, bbox: tuple[float, float, float, float], max_pixel_deg: float
+    ) -> Any: ...
 
 
 class InatLike(Protocol):
@@ -246,8 +259,7 @@ class SpeciesPipeline:
             or self._needs_training(species, force_retrain)
         ):
             trigger = (
-                f"delta {n_new} records ({ratio:.1%} > "
-                f"{self.settings.retrain_delta_fraction:.0%})"
+                f"delta {n_new} records ({ratio:.1%} > {self.settings.retrain_delta_fraction:.0%})"
                 if ratio > self.settings.retrain_delta_fraction
                 else (
                     "new records outside suitability envelope"
@@ -629,15 +641,7 @@ class SpeciesPipeline:
         self.progress("model", 0.5, f"Model {model_type}: {len(pres)} thinned presences")
 
         bg_seed = cfg.seed + 1
-        bg = sample_buffered_background(
-            pres["longitude"],
-            pres["latitude"],
-            stack,
-            cfg.n_background,
-            cfg.background_buffer_km,
-            bg_seed,
-            predictors,
-        )
+        bg, background_info = self.sample_background(nr.taxon_key, pres, stack, predictors, bg_seed)
         data = TrainingData(
             predictors=predictors,
             presence_lon=pres["longitude"].to_numpy(),
@@ -663,8 +667,104 @@ class SpeciesPipeline:
                 "permutation_importance": cfg.seed,
             },
             "n_records_by_effective_label": labels.value_counts().to_dict(),
+            "background": background_info,
         }
         return result, info
+
+    def sample_background(
+        self,
+        taxon_key: int,
+        pres: pd.DataFrame,
+        stack: BioclimStack,
+        predictors: list[str],
+        seed: int,
+    ) -> tuple[BackgroundSample, dict[str, Any]]:
+        """Target-group background when configured and the effort data supports it, else
+        uniform buffered background. The returned record (method, target group, effort
+        query, any fallback reason) is logged with the model version."""
+        cfg = self.training_config
+        info: dict[str, Any] = {
+            "requested_method": cfg.background_method,
+            "buffer_km": cfg.background_buffer_km,
+        }
+        region = buffer_region(pres["longitude"], pres["latitude"], cfg.background_buffer_km)
+        if cfg.background_method == "target_group":
+            try:
+                bg = self._target_group_background(taxon_key, region, stack, predictors, seed, info)
+            except Exception as exc:  # effort data is an enhancement; never block training
+                log.warning("Target-group background unavailable: %s", exc)
+                info["fallback_reason"] = (
+                    f"GBIF sampling-effort data unavailable ({type(exc).__name__}: {exc})"
+                )
+                bg = None
+            if bg is not None:
+                info["method"] = bg.method
+                return bg, info
+            self.progress("model", 0.53, f"Buffered background: {info['fallback_reason']}")
+        bg = sample_buffered_background(
+            pres["longitude"],
+            pres["latitude"],
+            stack,
+            cfg.n_background,
+            cfg.background_buffer_km,
+            seed,
+            predictors,
+        )
+        info["method"] = bg.method
+        return bg, info
+
+    def _target_group_background(
+        self,
+        taxon_key: int,
+        region: Any,
+        stack: BioclimStack,
+        predictors: list[str],
+        seed: int,
+        info: dict[str, Any],
+    ) -> BackgroundSample | None:
+        cfg = self.training_config
+        rank = cfg.target_group_rank.lower()
+        group = self.gbif.get_taxon(taxon_key).higher_taxon(rank)
+        if group is None:
+            info["fallback_reason"] = f"taxon has no {rank} in the GBIF backbone"
+            return None
+        group_key, group_name = group
+        self.progress("model", 0.52, f"Fetching GBIF sampling effort for {rank} {group_name}")
+        effort = self.gbif.fetch_effort_density(
+            group_key, tuple(region.bounds), max_pixel_deg=abs(stack.res[0])
+        )
+        info["target_group"] = {
+            "rank": rank,
+            "taxon_key": group_key,
+            "name": group_name,
+            "n_records": effort.n_records,
+            "n_pixels": len(effort.lon),
+            "map_zoom": effort.zoom,
+            "pixel_deg": effort.pixel_deg,
+            "n_tiles": effort.n_tiles,
+            "query": effort.query,
+            "fetched_ts": utcnow().isoformat(),
+        }
+        if not effort.lon:
+            info["fallback_reason"] = f"no GBIF records of {rank} {group_name} in the region"
+            return None
+        bg = sample_target_group_background(
+            effort.lon,
+            effort.lat,
+            stack,
+            cfg.n_background,
+            seed,
+            predictors,
+            region=region,
+            method=f"target_group_{rank}",
+        )
+        if len(bg.lon) < cfg.min_target_group_cells:
+            info["fallback_reason"] = (
+                f"only {len(bg.lon)} cells with {rank} {group_name} records in the background "
+                f"region (< {cfg.min_target_group_cells})"
+            )
+            return None
+        return bg
 
     def publish_model(
         self,
@@ -781,6 +881,7 @@ class SpeciesPipeline:
             "package_versions": package_versions(),
             "random_seeds": info["seeds"],
             "training_config": self.training_config.as_dict(),
+            "background": info["background"],
             "native_range_source": nr.source,
             "native_range_confirmed_ts": nr.confirmed_ts.isoformat() if nr.confirmed_ts else None,
             "training_data": snapshot_meta["training_data"],
@@ -828,6 +929,7 @@ class SpeciesPipeline:
                 "feature_classes": result.feature_classes,
                 "beta_multiplier": result.beta_multiplier,
                 "predictors": ",".join(result.predictors),
+                "background_method": result.background_method,
                 "trigger": trigger,
                 **{f"seed_{k}": v for k, v in info["seeds"].items()},
                 "bioclim_version": stack.version,
@@ -942,6 +1044,141 @@ class SpeciesPipeline:
         )
         self.progress("done", 1.0, f"Projected {len(todo)} scenario(s)")
         return {"taxon_key": taxon_key, "model_version": mv.model_version, "projected": todo}
+
+    def _current_model(self, taxon_key: int) -> tuple[ModelVersionRecord, dict[str, Any]]:
+        species = self.repo.get_species(taxon_key)
+        if species is None or not species.model_version:
+            raise ValueError(f"No trained model for taxon {taxon_key}")
+        mv = self.repo.get_model_version(taxon_key, species.model_version)
+        assert mv is not None
+        saved = elapid.load_object(str(self.artifacts.local_path(mv.artifacts["model"])))
+        return mv, saved
+
+    # ======================================================== high-res region
+    def project_hires(
+        self, taxon_key: int, bbox: tuple[float, float, float, float]
+    ) -> dict[str, Any]:
+        """Project the current model at high resolution (e.g. 30″) inside `bbox`, with its
+        own MESS extrapolation mask — no retraining. Replaces the species' previous region."""
+        with self._exclusive(taxon_key):
+            return self._project_hires(taxon_key, bbox)
+
+    def _project_hires(
+        self, taxon_key: int, bbox: tuple[float, float, float, float]
+    ) -> dict[str, Any]:
+        mv, saved = self._current_model(taxon_key)
+        version = mv.metrics["reproducibility"]["bioclim_version_used"]
+        resolution = self.hires_resolution(version)
+        if resolution is None:
+            raise ValueError(f"No high-resolution stack registered for {version}")
+        stack = BioclimStack.open_version(
+            self.settings.bioclim_root, version, hires=resolution
+        ).subset(bbox)
+        n_cells = stack.width * stack.height
+        if n_cells == 0:
+            raise ValueError("The region does not overlap the climate grid")
+        if n_cells > self.settings.hires_max_cells:
+            raise ValueError(
+                f"Region has {n_cells:,} cells at {resolution} (max "
+                f"{self.settings.hires_max_cells:,}); choose a smaller area"
+            )
+        self.progress(
+            "hires_raster",
+            0.1,
+            f"Projecting v{mv.model_version} at {resolution} ({n_cells:,} cells)",
+        )
+        model = SimpleNamespace(
+            model=saved["model"],
+            predictors=saved["predictors"],
+            mess_reference=saved["mess_reference"],
+        )
+        vdir = self.artifacts.local_path(
+            str(self.artifacts.version_dir(taxon_key, mv.model_version))
+        )
+        out = self.step("hires_raster", project_scenario, model, stack, vdir, f"hires_{resolution}")
+        t = stack.transform
+        entry = {
+            "resolution": resolution,
+            "bbox": [t.c, t.f + stack.height * t.e, t.c + stack.width * t.a, t.f],
+            **self._scenario_artifacts(out),
+            "n_cells": n_cells,
+            "created_ts": utcnow().isoformat(),
+        }
+        self.repo.update_model_artifacts(
+            taxon_key, mv.model_version, {**mv.artifacts, "hires": entry}
+        )
+        self.progress("done", 1.0, f"High-resolution ({resolution}) region projected")
+        return {"taxon_key": taxon_key, "model_version": mv.model_version, **entry}
+
+    def hires_resolution(self, bioclim_version: str) -> str | None:
+        """Finest high-resolution stack registered for a bioclim version, if any."""
+        path = self.settings.bioclim_root / bioclim_version / METADATA_FILENAME
+        return BioclimMetadata.load(path).finest_hires() if path.exists() else None
+
+    # ======================================================== climate cross-check
+    def crosscheck_climate(self, taxon_key: int) -> dict[str, Any]:
+        """Refit the current model version's exact training set on the configured
+        cross-check climate source (e.g. CHELSA) and store the comparison with the version."""
+        with self._exclusive(taxon_key):
+            return self._crosscheck_climate(taxon_key)
+
+    def _crosscheck_climate(self, taxon_key: int) -> dict[str, Any]:
+        alt_version = self.settings.crosscheck_bioclim_version
+        if not alt_version:
+            raise ValueError(
+                "No cross-check climate stack configured (SDM_CROSSCHECK_BIOCLIM_VERSION)"
+            )
+        mv, saved = self._current_model(taxon_key)
+        repro = mv.metrics["reproducibility"]
+        if alt_version == repro["bioclim_version_used"]:
+            raise ValueError(f"v{mv.model_version} was trained on {alt_version} itself")
+        snapshot = repro.get("training_data")
+        if not snapshot:
+            raise ValueError(
+                f"v{mv.model_version} predates training snapshots; retrain before cross-checking"
+            )
+        training = pd.read_parquet(self.artifacts.local_path(snapshot["path"]))
+        alt_stack = BioclimStack.open_version(self.settings.bioclim_root, alt_version)
+        cfg = replace(
+            self.training_config,
+            tune=False,
+            feature_classes=mv.metrics["feature_classes"],
+            beta_multiplier=mv.metrics["beta_multiplier"],
+            seed=int(repro.get("training_config", {}).get("seed", self.training_config.seed)),
+        )
+        self.progress(
+            "crosscheck", 0.1, f"Refitting v{mv.model_version} on {alt_version} predictors"
+        )
+        report = self.step(
+            "crosscheck",
+            climate_crosscheck,
+            training,
+            saved["model"],
+            float(saved["threshold"]),
+            mv.metrics,
+            mv.model_type,
+            alt_stack,
+            cfg,
+        )
+        report["primary_bioclim_version"] = repro["bioclim_version_used"]
+        report["created_ts"] = utcnow().isoformat()
+        vdir = self.artifacts.local_path(
+            str(self.artifacts.version_dir(taxon_key, mv.model_version))
+        )
+        path = vdir / f"crosscheck_{alt_version}.json"
+        path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+        report["path"] = self.artifacts.relative_uri(path)
+        crosschecks = {**mv.artifacts.get("crosschecks", {}), alt_version: report}
+        self.repo.update_model_artifacts(
+            taxon_key, mv.model_version, {**mv.artifacts, "crosschecks": crosschecks}
+        )
+        self.progress("done", 1.0, f"Cross-check vs {alt_version}: {report['verdict']}")
+        return {
+            "taxon_key": taxon_key,
+            "model_version": mv.model_version,
+            "alt_bioclim_version": alt_version,
+            "verdict": report["verdict"],
+        }
 
 
 def _finite(v: Any) -> float | None:

@@ -124,13 +124,26 @@ def sample_target_group_background(
     n: int,
     seed: int,
     bands: Sequence[str],
+    region: shapely.Geometry | None = None,
+    method: str = "target_group",
 ) -> BackgroundSample:
     """Target-group background: draw from occurrences of related taxa sampled by the same
     observers/methods, which mirrors the sampling bias of the presences (preferred when a
-    target group is available)."""
-    idx = cell_dedupe(bias_lon, bias_lat, stack.transform)
-    lon_a = np.asarray(bias_lon)[idx]
-    lat_a = np.asarray(bias_lat)[idx]
+    target group is available).
+
+    Locations are de-duplicated to bioclim cells first, so every cell with recorded effort
+    is equally likely (unique localities, as in Phillips et al. 2009) and dense hotspots do
+    not swamp the background. `region` restricts the draw to the same area the buffered
+    alternative would use.
+    """
+    lon_in = np.asarray(bias_lon, dtype="float64")
+    lat_in = np.asarray(bias_lat, dtype="float64")
+    if region is not None:
+        inside = shapely.contains_xy(region, lon_in, lat_in)
+        lon_in, lat_in = lon_in[inside], lat_in[inside]
+    idx = cell_dedupe(lon_in, lat_in, stack.transform)
+    lon_a = lon_in[idx]
+    lat_a = lat_in[idx]
     rng = np.random.default_rng(seed)
     take = rng.choice(len(lon_a), size=min(n, len(lon_a)), replace=False)
     feats = stack.sample(lon_a[take], lat_a[take], bands)
@@ -139,6 +152,6 @@ def sample_target_group_background(
         lon_a[take][valid],
         lat_a[take][valid],
         feats[valid].reset_index(drop=True),
-        "target_group",
+        method,
         seed,
     )

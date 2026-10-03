@@ -16,7 +16,7 @@ import rasterio
 from rasterio.transform import from_origin
 
 from src.config import Settings
-from src.connectors.gbif_client import TaxonSuggestion
+from src.connectors.gbif_client import EffortDensity, TaxonSuggestion
 from src.domain import BIOCLIM_BANDS, OccurrenceRecord
 from src.features.raster_sampler import METADATA_FILENAME, STACK_FILENAME
 from src.modeling.maxent_trainer import TrainingConfig
@@ -177,6 +177,8 @@ class FakeGbif:
     deltas: list[list[OccurrenceRecord]] = field(default_factory=list)
     download_enabled: bool = False
     calls: list[datetime | None] = field(default_factory=list)
+    effort_error: Exception | None = None
+    effort_calls: list[tuple[int, tuple[float, ...]]] = field(default_factory=list)
 
     def get_taxon(self, taxon_key: int) -> TaxonSuggestion:
         return TaxonSuggestion(
@@ -190,6 +192,34 @@ class FakeGbif:
             "Lamiales",
             "Verbenaceae",
             "Testus",
+            class_key=220,
+            order_key=408,
+            family_key=6689,
+            genus_key=9_000,
+        )
+
+    def fetch_effort_density(
+        self, taxon_key: int, bbox: tuple[float, float, float, float], max_pixel_deg: float
+    ) -> EffortDensity:
+        """Synthetic observer bias: effort on every 0.5° pixel, but only south of 50°N."""
+        self.effort_calls.append((taxon_key, tuple(bbox)))
+        if self.effort_error is not None:
+            raise self.effort_error
+        west, south, east, north = bbox
+        lon, lat = np.meshgrid(
+            np.arange(np.floor(west) + 0.25, east, 0.5),
+            np.arange(np.floor(south) + 0.25, north, 0.5),
+        )
+        keep = lat.ravel() < 50
+        return EffortDensity(
+            taxon_key=taxon_key,
+            zoom=2,
+            pixel_deg=0.5,
+            n_tiles=1,
+            lon=lon.ravel()[keep].tolist(),
+            lat=lat.ravel()[keep].tolist(),
+            count=[3] * int(keep.sum()),
+            query="fake://density",
         )
 
     def suggest_species(self, query: str, limit: int = 10) -> list[TaxonSuggestion]:
@@ -247,3 +277,57 @@ def native_box_geojson() -> dict:
 
 def now_utc() -> datetime:
     return datetime.now(UTC)
+
+
+TEMPERATURE_BANDS = {1, 5, 6, 8, 9, 10, 11}
+
+
+def write_synthetic_chelsa(src_dir: Path, res: float = 0.5) -> Path:
+    """CHELSA-like files: own grid (84°N–56°S), values everywhere incl. oceans, packed with a
+    declared scale/offset (Kelvin for temperatures) and BIO3 as a ratio instead of percent."""
+    src_dir.mkdir(parents=True, exist_ok=True)
+    w, h = int(360 / res), int(140 / res)
+    lon = -180 + (np.arange(w) + 0.5) * res
+    lat = 84 - (np.arange(h) + 0.5) * res
+    data = synthetic_bands(*np.meshgrid(lon, lat))
+    for i in range(1, 20):
+        offset = -273.15 if i in TEMPERATURE_BANDS else 0.0
+        physical = data[i - 1] / (100.0 if i == 3 else 1.0)
+        raw = ((physical - offset) / 0.1).astype("float32")
+        with rasterio.open(
+            src_dir / f"CHELSA_bio{i}_1981-2010_V.2.1.tif",
+            "w",
+            driver="GTiff",
+            width=w,
+            height=h,
+            count=1,
+            dtype="float32",
+            crs="EPSG:4326",
+            transform=from_origin(-180, 84, res, res),
+        ) as dst:
+            dst.write(raw, 1)
+            dst.scales = (0.1,)
+            dst.offsets = (offset,)
+    return src_dir
+
+
+def write_synthetic_stack_tif(path: Path, res: float = 0.5) -> Path:
+    """A 19-band stack of the synthetic climate at a finer resolution (a 'high-res' layer)."""
+    w, h = int(360 / res), int(180 / res)
+    lon2, lat2 = np.meshgrid(-180 + (np.arange(w) + 0.5) * res, 90 - (np.arange(h) + 0.5) * res)
+    data = synthetic_bands(lon2, lat2)
+    data[:, ~is_land(lon2, lat2)] = NODATA
+    with rasterio.open(
+        path,
+        "w",
+        driver="GTiff",
+        width=w,
+        height=h,
+        count=19,
+        dtype="float32",
+        crs="EPSG:4326",
+        transform=from_origin(-180, 90, res, res),
+        nodata=NODATA,
+    ) as dst:
+        dst.write(data)
+    return path

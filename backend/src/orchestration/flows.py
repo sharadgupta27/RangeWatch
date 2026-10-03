@@ -67,6 +67,19 @@ def scenarios_flow(taxon_key: int, job_id: str | None = None) -> dict[str, Any]:
     return pipeline.project_scenarios(taxon_key)
 
 
+@flow(name="climate-crosscheck")
+def crosscheck_flow(taxon_key: int, job_id: str | None = None) -> dict[str, Any]:
+    pipeline = build_pipeline(progress=job_progress(job_id), step=prefect_step)
+    return pipeline.crosscheck_climate(taxon_key)
+
+
+@flow(name="project-hires")
+def hires_flow(taxon_key: int, bbox: list[float], job_id: str | None = None) -> dict[str, Any]:
+    pipeline = build_pipeline(progress=job_progress(job_id), step=prefect_step)
+    west, south, east, north = bbox
+    return pipeline.project_hires(taxon_key, (west, south, east, north))
+
+
 @flow(name="validation-suite")
 def validation_flow(
     taxon_keys: list[int] | None = None, train: bool = True, job_id: str | None = None

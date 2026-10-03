@@ -45,6 +45,12 @@ class RecordingQueue:
     def enqueue_validation(self, job_id: str, taxon_keys, train: bool) -> None:
         self.calls.append(("validation", job_id, taxon_keys, train))
 
+    def enqueue_crosscheck(self, job_id: str, taxon_key: int) -> None:
+        self.calls.append(("crosscheck", job_id, taxon_key))
+
+    def enqueue_hires(self, job_id: str, taxon_key: int, bbox: list[float]) -> None:
+        self.calls.append(("hires", job_id, taxon_key, bbox))
+
 
 @pytest.fixture(scope="module")
 def trained(tmp_path_factory, data_root):
@@ -275,3 +281,146 @@ def test_validation_endpoints(client, trained):
 def test_full_resync_flag_is_forwarded(client):
     r = client.post(f"/species/{TAXON_KEY}/runs", json={"full_resync": True})
     assert r.status_code == 202 and client.queue.last_full_resync is True
+
+
+def test_job_event_stream_sends_the_job_list(client, monkeypatch):
+    """SSE stream: a retry hint, then the same job list GET /jobs returns, as a `jobs` event."""
+    import json
+
+    from src.api.routers import jobs as jobs_router
+
+    monkeypatch.setattr(jobs_router, "SSE_MAX_SECONDS", 0)  # one snapshot, then close
+    job = client.post(f"/species/{TAXON_KEY}/runs", json={}).json()
+    with client.stream("GET", "/jobs/events", params={"taxon_key": TAXON_KEY}) as r:
+        assert r.status_code == 200
+        assert r.headers["content-type"].startswith("text/event-stream")
+        assert r.headers["x-accel-buffering"] == "no"
+        body = "".join(r.iter_text())
+    blocks = [b for b in body.split("\n\n") if b]
+    assert blocks[0].startswith("retry: ")
+    event, data = blocks[1].split("\n")
+    assert event == "event: jobs"
+    streamed = json.loads(data.removeprefix("data: "))
+    assert streamed == client.get("/jobs", params={"taxon_key": TAXON_KEY, "limit": 10}).json()
+    assert streamed[0]["job_id"] == job["job_id"]
+
+
+def test_job_event_stream_route_is_not_shadowed_by_job_id(client):
+    spec = client.get("/openapi.json").json()
+    op = spec["paths"]["/jobs/events"]["get"]
+    assert op["operationId"] == "streamJobs"
+    assert "text/event-stream" in op["responses"]["200"]["content"]
+
+
+@pytest.fixture
+def hires_settings(trained, tmp_path):
+    """Settings whose static layer has a '30s' companion stack and a CHELSA stack."""
+    from src.features.bioclim_store import add_hires, build_chelsa
+    from tests.conftest import build_stack, write_synthetic_chelsa, write_synthetic_stack_tif
+
+    settings, _, _ = trained
+    root = tmp_path / "data"
+    build_stack(root / "bioclim")
+    add_hires(
+        BIOCLIM_VERSION,
+        "30s",
+        root / "bioclim",
+        src_tif=write_synthetic_stack_tif(tmp_path / "f.tif"),
+    )
+    build_chelsa(
+        "chelsa_t",
+        BIOCLIM_VERSION,
+        root / "bioclim",
+        src_dir=write_synthetic_chelsa(tmp_path / "c"),
+    )
+    return settings.model_copy(update={"data_root": root, "crosscheck_bioclim_version": "chelsa_t"})
+
+
+def test_crosscheck_endpoint_needs_an_installed_stack(client, trained, hires_settings):
+    r = client.post(f"/species/{TAXON_KEY}/crosscheck")
+    assert r.status_code == 409 and "build-chelsa" in r.json()["detail"]
+    client.app.dependency_overrides[deps.settings_dep] = lambda: hires_settings
+    r = client.post(f"/species/{TAXON_KEY}/crosscheck")
+    assert r.status_code == 202 and r.json()["kind"] == "crosscheck"
+    assert client.queue.calls[-1] == ("crosscheck", r.json()["job_id"], TAXON_KEY)
+    info = client.get("/bioclim").json()
+    assert info["crosscheck_version"] == "chelsa_t" and info["hires_resolutions"] == ["30s"]
+
+
+def test_hires_endpoint_validates_region_and_enqueues(client, hires_settings):
+    body = {"bbox": [5, 38, 25, 52]}
+    assert client.post(f"/species/{TAXON_KEY}/hires", json=body).status_code == 409
+    client.app.dependency_overrides[deps.settings_dep] = lambda: hires_settings
+    r = client.post(f"/species/{TAXON_KEY}/hires", json=body)
+    assert r.status_code == 202 and r.json()["kind"] == "hires"
+    assert client.queue.calls[-1] == ("hires", r.json()["job_id"], TAXON_KEY, [5, 38, 25, 52])
+    too_big = client.post(f"/species/{TAXON_KEY}/hires", json={"bbox": [-180, -60, 180, 80]})
+    assert too_big.status_code == 422 and "too large" in too_big.json()["detail"]
+    inverted = client.post(f"/species/{TAXON_KEY}/hires", json={"bbox": [25, 38, 5, 52]})
+    assert inverted.status_code == 422
+    layers = client.get(f"/species/{TAXON_KEY}/layers").json()
+    assert layers["hires_available"] == "30s" and layers["hires"] is None
+
+
+def test_hires_and_crosscheck_results_are_exposed(client, trained):
+    _, repo, _ = trained
+    mv = repo.get_model_version(TAXON_KEY, 1)
+    report = {
+        "alt_bioclim_version": "chelsa_t",
+        "alt_source": "CHELSA",
+        "primary_bioclim_version": BIOCLIM_VERSION,
+        "created_ts": "2026-10-01T00:00:00+00:00",
+        "n_presence": 10,
+        "n_background": 100,
+        "n_dropped": 0,
+        "feature_classes": "LQ",
+        "beta_multiplier": 1.0,
+        "predictors": [
+            {
+                "predictor": "bio1",
+                "pearson_r": 0.97,
+                "mean_diff": 0.2,
+                "mean_abs_diff": 0.5,
+                "scale_ratio": 1.0,
+                "units_suspect": False,
+            }
+        ],
+        "primary": {"auc_mean": 0.8, "cbi_mean": 0.7, "tss_mean": 0.5},
+        "alternative": {"auc_mean": 0.79, "cbi_mean": 0.6, "tss_mean": 0.5, "threshold": 0.2},
+        "suitability_rank_correlation": 0.9,
+        "classification_agreement": 0.92,
+        "classification_kappa": 0.8,
+        "verdict": "consistent",
+        "interpretation": "robust",
+        "path": "species/x/v1/crosscheck_chelsa_t.json",
+    }
+    hires = {
+        "resolution": "30s",
+        "bbox": [5.0, 38.0, 25.0, 52.0],
+        "suitability": "species/x/v1/suitability_hires_30s.tif",
+        "extrapolation": "species/x/v1/extrapolation_hires_30s.tif",
+        "extrapolated_land_fraction": 0.1,
+        "n_cells": 1120,
+        "created_ts": "2026-10-01T00:00:00+00:00",
+    }
+    repo.update_model_artifacts(
+        TAXON_KEY, 1, {**mv.artifacts, "crosschecks": {"chelsa_t": report}, "hires": hires}
+    )
+    try:
+        detail = client.get(f"/species/{TAXON_KEY}/models/1").json()
+        assert detail["crosschecks"][0]["verdict"] == "consistent"
+        assert detail["crosschecks"][0]["predictors"][0]["pearson_r"] == 0.97
+        layer = client.get(f"/species/{TAXON_KEY}/layers").json()["hires"]
+        assert layer["bbox"] == [5.0, 38.0, 25.0, 52.0] and layer["resolution"] == "30s"
+        assert "suitability_hires_30s.tif" in layer["suitability"]["tile_url"]
+        assert "extrapolation_hires_30s.tif" in layer["extrapolation"]["tile_url"]
+    finally:
+        repo.update_model_artifacts(TAXON_KEY, 1, mv.artifacts)
+
+
+def test_lineage_exposes_background_record(client):
+    repro = client.get(f"/species/{TAXON_KEY}/models").json()[0]["reproducibility"]
+    bg = repro["background"]
+    assert bg["requested_method"] == "target_group"
+    assert bg["method"] == "target_group_order" and bg["fallback_reason"] is None
+    assert bg["target_group"]["name"] == "Lamiales" and bg["target_group"]["taxon_key"] == 408
