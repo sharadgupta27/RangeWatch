@@ -31,3 +31,5 @@ frontend/src/routeTree.gen.ts
 Thumbs.db
 .vscode/
 .idea/
+
+CLAUDE.md
