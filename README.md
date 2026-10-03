@@ -1,4 +1,4 @@
-# Invasion Risk — species distribution MLOps dashboard
+# Invasion Risk - species distribution MLOps dashboard
 
 Pick a species. Occurrences are pulled from GBIF (primary) and iNaturalist (supplementary), a
 MaxEnt model (`elapid`) is trained on a versioned WorldClim bioclim stack with spatial block
@@ -9,8 +9,7 @@ logged (MLflow + model-lineage table) for reproducibility.
 
 The science is standard (MaxEnt + bioclim + MESS); the contribution is the MLOps layer —
 persistence, incremental ingestion, conditional retraining, lineage, automated bulletins — and a
-React frontend. See [CLAUDE.md](CLAUDE.md) for the non-negotiable constraints and
-[SDM_Dashboard_Workplan.md](SDM_Dashboard_Workplan.md) for the full plan.
+React frontend.
 
 ```
 React SPA (TanStack Router/Query/Table/Form/Store, MapLibre + deck.gl, shadcn/ui)
@@ -25,6 +24,113 @@ FastAPI ──► Celery (Redis) ──► Prefect flows: raw_occurrences → fe
    ▼
 pg_tileserv (occurrence / native-range vector tiles) · titiler (suitability / MESS / zones COG tiles)
 ```
+
+## Screenshots
+
+Captured from the local Docker stack (WorldClim v2.1 at 10′, `bioclim_v2`) on 3 Oct 2026.
+
+**Species registry.** Every tracked species with its live pipeline status, severity, record count
+and current model version. Rows update as jobs run.
+
+![Species registry](docs/images/01-registry.webp)
+
+**Species page: observed vs. projected.** *Linepithema humile* (Argentine ant). Left: GBIF +
+iNaturalist occurrences coloured by range label, aggregated at low zoom, with a year slider and the
+confirmed native-range polygon. Right: MaxEnt suitability with the MESS extrapolation overlay on by
+default. The transferability caveat and model type (A/B) are always shown with the map.
+
+![Species page with dual maps](docs/images/02-species-maps.webp)
+
+**Model diagnostics.** Spatial-block-CV CBI/AUC/TSS, candidate invasion area, the share of that area
+inside the training climate, the documented severity composite, permutation importance, the invasion
+timeline and per-fold CV scores.
+
+![Model diagnostics](docs/images/03-diagnostics.webp)
+
+**Projection layers.** The right-hand map switches between suitability, range zones and the raw MESS
+surface, plus any future-climate scenarios. Top: range zones for *Lantana camara* (native range /
+established elsewhere / candidate expansion). Bottom: the MESS surface for *Vespa velutina*. Red
+cells lie outside the climate the model was trained on.
+
+![Range zones for Lantana camara](docs/images/04-lantana-zones.webp)
+![MESS extrapolation surface for Vespa velutina](docs/images/04-vespa-mess.webp)
+
+**Native-range review.** A draft polygon is proposed heuristically, but nothing is trained until a
+user edits and confirms it (vertex editing, move, multi-part areas).
+
+![Native-range editor](docs/images/05-native-range-editor.webp)
+
+**Severity settings.** The severity index is a documented weighted composite. Weights and priors
+are editable and re-score the current model immediately.
+
+![Severity settings](docs/images/06-severity-settings.webp)
+
+**Model lineage.** Every version with its retrain trigger, CV metrics and full reproducibility
+record (bioclim version + SHA-256, GBIF citation/DOI, package versions, seeds, MLflow run). The
+table scrolls horizontally to show every field.
+
+![Model lineage](docs/images/07-model-lineage.webp)
+
+**Validation suite.** Six reference invaders checked against documented invaded and control
+regions, plus the independent native-only → invaded transferability test.
+
+![Validation suite](docs/images/08-validation.webp)
+
+**PDF bulletin.** Server-rendered for every model version (Jinja2 → WeasyPrint): executive summary,
+transferability caveat, maps with MESS hatching, severity breakdown and methods/reproducibility
+pages. Shown here: the first two pages for *Lantana camara*.
+
+<p>
+  <img src="docs/images/bulletin-lantana-p1.webp" alt="Lantana camara bulletin, page 1" width="49%">
+  <img src="docs/images/bulletin-lantana-p2.webp" alt="Lantana camara bulletin, page 2" width="49%">
+</p>
+
+## Results
+
+Current model of each tracked species, from the same 10′ run (3 Oct 2026). All models are
+**Model B** (native + invaded records), since every species has documented introduced occurrences.
+Metrics are spatial-block-CV means (k = 4). *Candidate zone* means climatically suitable land
+outside the native range that is not yet known to be occupied. *In training climate* is the share
+of that zone with MESS ≥ 0. It sets the confidence label but never changes the severity score.
+
+| Species | Ver. | Records | CBI | AUC | TSS | Severity | Candidate zone | In training climate | Confidence |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---|
+| *Lantana camara* (common lantana) | v1 | 99,377 | 0.954 | 0.793 | 0.480 | **55** high | 22.6 M km² (16.2 %) | 99.9 % | high |
+| *Linepithema humile* (Argentine ant) | v4 | 21,948 | 0.878 | 0.840 | 0.595 | **47** moderate | 12.6 M km² (8.4 %) | 100 % | high |
+| *Vespa velutina* (yellow-legged hornet) | v1 | 117,299 | 0.293 | 0.675 | 0.369 | **44** moderate | 16.1 M km² (11.0 %) | 72.2 % | moderate |
+| *Ailanthus altissima* (tree-of-heaven) | v1 | 114,300 | 0.963 | 0.817 | 0.513 | **41** moderate | 6.0 M km² (4.0 %) | 100 % | high |
+| *Heterotheca subaxillaris* (camphorweed) | v2 | 23,593 | 0.016 | 0.653 | 0.424 | **41** moderate | 21.4 M km² (14.2 %) | 41.9 % | **low** |
+| *Carpobrotus edulis* (sea fig) | v3 | 42,431 | 0.926 | 0.859 | 0.600 | **37** moderate | 3.5 M km² (2.3 %) | 99.9 % | high |
+| *Pueraria montana* (kudzu) | v2 | 32,492 | 0.582 | 0.712 | 0.381 | **36** moderate | 6.8 M km² (4.5 %) | 99.7 % | high |
+| *Acacia saligna* (golden wreath wattle) | v2 | 29,589 | 0.966 | 0.890 | 0.662 | **34** moderate | 3.2 M km² (2.1 %) | 99.9 % | high |
+
+Percentages in *Candidate zone* are of non-native land. Higher versions were retrained by the
+incremental pipeline (new records outside the suitability envelope, or a manual retrain).
+
+**Global range zones** (from the generated bulletins). Teal: suitable within the confirmed native
+range (dashed). Orange: suitable and already occupied outside it. Red: candidate
+invasion/expansion zone. Hatched: MESS < 0 (extrapolation).
+
+| | |
+|---|---|
+| ![Lantana camara global zones](docs/images/zones-lantana-camara.webp) *Lantana camara*: the widest candidate zone in the registry, across sub-Saharan Africa, South/Southeast Asia and eastern Australia. | ![Linepithema humile global zones](docs/images/zones-linepithema-humile.webp) *Linepithema humile*: Mediterranean-climate belts on every continent, consistent with its known supercolonies. |
+| ![Ailanthus altissima global zones](docs/images/zones-ailanthus-altissima.webp) *Ailanthus altissima*: already occupies most of its suitable temperate range in Europe and the eastern USA (orange). | ![Acacia saligna global zones](docs/images/zones-acacia-saligna.webp) *Acacia saligna*: a narrow Mediterranean-climate niche, with the Mediterranean basin, South Africa and Chile/California as candidate zones. |
+| ![Vespa velutina global zones](docs/images/zones-vespa-velutina.webp) *Vespa velutina*: the Greenland "candidate zone" lies under MESS hatching. It is an extrapolation artefact, not a forecast. | ![Heterotheca subaxillaris global zones](docs/images/zones-heterotheca-subaxillaris.webp) *Heterotheca subaxillaris*: most of the candidate zone (Siberia, Canada) is extrapolated. The dashboard labels this model **low confidence**. |
+
+What the run shows:
+
+- **Strong fits** (CBI > 0.9): *Acacia saligna, Ailanthus altissima, Lantana camara* and
+  *Carpobrotus edulis*. Presences are concentrated where the model predicts high suitability.
+- **Weak fits are visible, not hidden.** *Vespa velutina* (CBI 0.29) is still spreading fast in
+  Europe and is far from climatic equilibrium. *Heterotheca subaxillaris* (CBI 0.02) has a
+  candidate zone that is mostly extrapolation (only 42 % within the training climate). In both
+  cases the severity score is unchanged, but the MESS-driven confidence label drops, and the
+  hatched extrapolation is shown in the UI and the bulletin. This is the behaviour CLAUDE.md
+  constraint 2 requires.
+- **Transferability matches the literature.** In the validation suite, native-only models scored
+  on introduced records averaged AUC **0.690** (0.565–0.843 per species) against the published
+  mean of ≈ 0.7. That is why every projection carries the transferability caveat. Five of six
+  reference invaders pass the known-range check; see [Validation suite](#validation-suite-workplan-phase-11).
 
 ## Quick start (Docker)
 
@@ -41,12 +147,12 @@ every other service binds to `127.0.0.1` only. Upstreams are re-resolved per req
 container's own nameserver, or `SDM_DNS_RESOLVER`), so recreating `api`, `titiler` or
 `pg_tileserv` never needs a gateway restart; on Kubernetes the upstreams are therefore FQDNs.
 
-| Path / service | URL |
-|---|---|
-| Dashboard | http://localhost:8080 |
-| API + OpenAPI docs | http://localhost:8080/api/docs |
-| Raster / vector tiles | `/tiles/raster/…` (titiler) · `/tiles/vector/…` (pg_tileserv) |
-| MLflow · Prefect UI (localhost only) | http://127.0.0.1:5000 · http://127.0.0.1:4200 |
+| Path / service                        | URL                                                                  |
+| ------------------------------------- | -------------------------------------------------------------------- |
+| Dashboard                             | http://localhost:8080                                                |
+| API + OpenAPI docs                    | http://localhost:8080/api/docs                                       |
+| Raster / vector tiles                 | `/tiles/raster/…` (titiler) · `/tiles/vector/…` (pg_tileserv) |
+| MLflow · Prefect UI (localhost only) | http://127.0.0.1:5000 · http://127.0.0.1:4200                       |
 
 **Authentication:** set `SDM_AUTH_USER` and `SDM_AUTH_PASSWORD` in `.env` to require HTTP Basic
 auth for the dashboard, API and tiles (the browser reuses the credentials for tile requests
@@ -102,12 +208,12 @@ only and never change what a model was trained on.
 
 Two kinds of data, versioned by the tool that fits each:
 
-| Data | Versioned by | Where |
-|---|---|---|
-| Global static layer (`data/bioclim/<version>/`: stack, metadata, scenario COGs) | **DVC** — `data/bioclim/<version>.dvc` pointers in git, content in an S3 remote | `dvc-remote` service (local) / S3 in production |
-| Occurrences | append-only PostGIS rows with `ingested_ts` | `occurrences` |
-| Exact training set of each model version | **immutable snapshot, SHA-256 in the lineage** | `artifacts/species/<taxon>/v<N>/training_data.parquet` + `occurrence_manifest.parquet`, also logged to MLflow |
-| Models and projections | `model_versions` + MLflow registry | `artifacts/species/<taxon>/v<N>/` |
+| Data                                                                              | Versioned by                                                                             | Where                                                                                                             |
+| --------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| Global static layer (`data/bioclim/<version>/`: stack, metadata, scenario COGs) | **DVC** — `data/bioclim/<version>.dvc` pointers in git, content in an S3 remote | `dvc-remote` service (local) / S3 in production                                                                 |
+| Occurrences                                                                       | append-only PostGIS rows with`ingested_ts`                                             | `occurrences`                                                                                                   |
+| Exact training set of each model version                                          | **immutable snapshot, SHA-256 in the lineage**                                     | `artifacts/species/<taxon>/v<N>/training_data.parquet` + `occurrence_manifest.parquet`, also logged to MLflow |
+| Models and projections                                                            | `model_versions` + MLflow registry                                                     | `artifacts/species/<taxon>/v<N>/`                                                                               |
 
 Per-species data is deliberately **not** in DVC: it is appended nightly by the service, is
 independently versioned per species, and PostGIS is its system of record — a git commit per
@@ -137,8 +243,7 @@ dvc add data/bioclim/bioclim_v3 && dvc push
 git add data/bioclim/bioclim_v3.dvc && git commit -m "bioclim_v3: <what changed>"
 ```
 
-For production, point the remote at real object storage (`dvc remote modify storage url
-s3://<bucket>/sdm-dvc` and drop `endpointurl`), with credentials from the environment.
+For production, point the remote at real object storage (`dvc remote modify storage url s3://<bucket>/sdm-dvc` and drop `endpointurl`), with credentials from the environment.
 
 ### Climate scenarios ("what-if")
 
@@ -243,15 +348,15 @@ SHA-256 is part of the lineage. The nightly sweep does not count as a request.
 
 ## Where the scientific constraints live
 
-| CLAUDE.md constraint | Implementation |
-|---|---|
-| Transferability caveat | `TRANSFERABILITY_CAVEAT` in every model's metrics → UI banner, map badge, bulletin |
-| MESS alongside projections | `evaluation.mess` → `mess.tif` + `extrapolation.tif`; layers endpoint always pairs them; MESS overlay on by default; hatched in the bulletin |
-| Prefer Model B | `maxent_trainer.select_model_type`; Model A labelled lower-confidence in API, UI, bulletin |
-| Spatial block CV | `elapid.GeographicKFold` (`maxent_trainer.spatial_block_cv`) |
-| CBI with AUC/TSS | `evaluation.continuous_boyce_index`; shown first in the UI |
-| Native range never automated | draft-only heuristics; training gated on confirmation; editable deck.gl layer |
-| Severity not a black box | `severity_index.py` documents each component; weights configurable in the UI and printed in the bulletin footnote; MESS affects *confidence*, never the score |
+| CLAUDE.md constraint         | Implementation                                                                                                                                                    |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Transferability caveat       | `TRANSFERABILITY_CAVEAT` in every model's metrics → UI banner, map badge, bulletin                                                                             |
+| MESS alongside projections   | `evaluation.mess` → `mess.tif` + `extrapolation.tif`; layers endpoint always pairs them; MESS overlay on by default; hatched in the bulletin               |
+| Prefer Model B               | `maxent_trainer.select_model_type`; Model A labelled lower-confidence in API, UI, bulletin                                                                      |
+| Spatial block CV             | `elapid.GeographicKFold` (`maxent_trainer.spatial_block_cv`)                                                                                                  |
+| CBI with AUC/TSS             | `evaluation.continuous_boyce_index`; shown first in the UI                                                                                                      |
+| Native range never automated | draft-only heuristics; training gated on confirmation; editable deck.gl layer                                                                                     |
+| Severity not a black box     | `severity_index.py` documents each component; weights configurable in the UI and printed in the bulletin footnote; MESS affects *confidence*, never the score |
 
 ## Design decisions beyond the workplan
 
