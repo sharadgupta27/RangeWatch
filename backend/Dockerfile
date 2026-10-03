@@ -17,7 +17,7 @@ COPY pyproject.toml ./
 # Dependencies in their own layer (rebuilt only when pyproject.toml changes): install against an
 # empty package stub, then add the real source without touching dependencies.
 RUN mkdir src && touch src/__init__.py \
-    && pip install ".[dev]" && pip uninstall -y sdm-dashboard-backend && rm -rf src build
+    && pip install ".[dev]" && pip uninstall -y rangewatch-backend && rm -rf src build
 COPY src ./src
 RUN pip install --no-deps ".[dev]" && rm -rf build
 

@@ -1,7 +1,7 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "SDM Invasion-Risk API",
+    "title": "RangeWatch API",
     "description": "Species-keyed MLOps service for MaxEnt species distribution models: incremental GBIF/iNaturalist ingestion, conditional retraining, model lineage, map-layer descriptors (titiler / pg_tileserv) and automated bulletins.",
     "version": "0.1.0"
   },

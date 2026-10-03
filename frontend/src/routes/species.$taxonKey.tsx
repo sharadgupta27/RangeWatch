@@ -108,7 +108,9 @@ function SpeciesWorkspace() {
   const { taxonKey } = Route.useParams()
   const tab: Tab = Route.useSearch().tab ?? 'overview'
   const navigate = useNavigate({ from: Route.fullPath })
-  const setTab = (t: Tab) => void navigate({ search: { tab: t }, replace: true })
+  // Tab switches only change ?tab=, so keep the scroll position instead of the
+  // router's default jump-to-top on navigation.
+  const setTab = (t: Tab) => void navigate({ search: { tab: t }, replace: true, resetScroll: false })
 
   const job = useLatestJob(taxonKey)
   const species = useQuery({

@@ -1,7 +1,7 @@
 @page {
   size: A4;
   margin: 16mm 15mm 18mm 15mm;
-  @bottom-left { content: "SDM invasion-risk bulletin"; font-size: 7pt; color: #6b7785; }
+  @bottom-left { content: "RangeWatch · species distribution bulletin"; font-size: 7pt; color: #6b7785; }
   @bottom-right { content: "Page " counter(page) " of " counter(pages); font-size: 7pt; color: #6b7785; }
 }
 

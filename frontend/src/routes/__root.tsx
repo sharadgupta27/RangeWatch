@@ -59,7 +59,7 @@ function RootLayout() {
             <Link to="/" className="flex items-center gap-2.5">
               <Logo />
               <span className="hidden leading-tight sm:block">
-                <span className="block text-sm font-semibold tracking-tight">Invasion Risk</span>
+                <span className="block text-sm font-semibold tracking-tight">RangeWatch</span>
                 <span className="block text-[11px] text-muted-foreground">
                   Species distribution MLOps
                 </span>

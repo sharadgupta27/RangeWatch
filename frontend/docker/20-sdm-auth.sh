@@ -9,7 +9,7 @@ if [ -n "${SDM_AUTH_USER:-}" ] && [ -n "${SDM_AUTH_PASSWORD:-}" ]; then
   # Readable by the nginx worker user, not world-readable.
   chown root:nginx /etc/nginx/sdm/htpasswd
   chmod 640 /etc/nginx/sdm/htpasswd
-  printf 'auth_basic "SDM dashboard";\nauth_basic_user_file /etc/nginx/sdm/htpasswd;\n' > /etc/nginx/sdm/auth.conf
+  printf 'auth_basic "RangeWatch";\nauth_basic_user_file /etc/nginx/sdm/htpasswd;\n' > /etc/nginx/sdm/auth.conf
   echo "sdm-auth: Basic auth enabled for user ${SDM_AUTH_USER}"
 else
   : > /etc/nginx/sdm/auth.conf

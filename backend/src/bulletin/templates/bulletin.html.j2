@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Invasion-risk bulletin — {{ species.scientific_name }} (v{{ mv.model_version }})</title>
+<title>RangeWatch bulletin — {{ species.scientific_name }} (v{{ mv.model_version }})</title>
 <link rel="stylesheet" href="bulletin.css">
 </head>
 <body>
@@ -10,7 +10,7 @@
 <!-- 1. Header -->
 <header class="masthead">
   <div class="masthead-text">
-    <p class="kicker">Species distribution &amp; invasion-risk bulletin</p>
+    <p class="kicker">RangeWatch · Species distribution bulletin</p>
     <h1><em>{{ species.scientific_name }}</em></h1>
     {% if species.common_name %}<p class="common">{{ species.common_name }}</p>{% endif %}
     <p class="meta">

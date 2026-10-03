@@ -14,7 +14,7 @@ from src.config import get_settings
 def create_app() -> FastAPI:
     settings = get_settings()
     app = FastAPI(
-        title="SDM Invasion-Risk API",
+        title="RangeWatch API",
         version="0.1.0",
         description=(
             "Species-keyed MLOps service for MaxEnt species distribution models: incremental "

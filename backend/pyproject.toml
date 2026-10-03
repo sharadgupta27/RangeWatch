@@ -1,7 +1,7 @@
 [project]
-name = "sdm-dashboard-backend"
+name = "rangewatch-backend"
 version = "0.1.0"
-description = "MLOps backend for species distribution modeling and invasion-risk bulletins"
+description = "RangeWatch: MLOps backend for living species distribution models, range projections and bulletins"
 requires-python = ">=3.11"
 # Versions of elapid / pygbif / pyinaturalist / rasterio are pinned exactly: they are
 # logged per model version for reproducibility (see CLAUDE.md "Reproducibility").

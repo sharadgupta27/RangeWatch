@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Guidance for Claude Code (or any AI coding agent) working in this repository. This project builds an **MLOps-driven species distribution modeling (SDM) and invasion-risk dashboard** with a **React frontend** and a **Python/FastAPI backend**. Read this file fully before making changes; it encodes architectural decisions, non-negotiable scientific constraints, and coding conventions that keep the project reproducible and consistent across sessions.
+Guidance for Claude Code (or any AI coding agent) working in this repository. This project, **RangeWatch**, builds an **MLOps-driven species distribution modeling (SDM) dashboard** — living, continuously updated range models covering native ranges, established introductions and candidate expansion/invasion zones — with a **React frontend** and a **Python/FastAPI backend**. Read this file fully before making changes; it encodes architectural decisions, non-negotiable scientific constraints, and coding conventions that keep the project reproducible and consistent across sessions.
 
 ---
 
@@ -42,7 +42,7 @@ Core separation of concerns, always preserve this:
 ## Repository Layout
 
 ```
-sdm-dashboard/
+rangewatch/
 ├── data/
 │   ├── bioclim/                # cached global COG rasters, versioned
 │   └── native_range_polygons/  # curated/editable reference polygons

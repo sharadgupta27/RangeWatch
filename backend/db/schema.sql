@@ -1,4 +1,4 @@
--- SDM dashboard schema (PostgreSQL 15+ / PostGIS 3.3+).
+-- RangeWatch schema (PostgreSQL 15+ / PostGIS 3.3+).
 -- Conventions (CLAUDE.md):
 --   * species_registry: one row per GBIF taxon_key; only metadata rows are updated in place.
 --   * occurrences: append-only, list-partitioned by taxon_key; bio1..bio19 nullable until extraction.

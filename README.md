@@ -1,6 +1,10 @@
-# Invasion Risk - species distribution MLOps dashboard
+# RangeWatch
 
-Pick a species. Occurrences are pulled from GBIF (primary) and iNaturalist (supplementary), a
+**Living species distribution models, continuously updated from GBIF & iNaturalist.**
+
+RangeWatch maps where a species lives, where it has already established outside its native
+range, and where the climate could support it next, and keeps those models current as new
+records arrive. Pick a species. Occurrences are pulled from GBIF (primary) and iNaturalist (supplementary), a
 MaxEnt model (`elapid`) is trained on a versioned WorldClim bioclim stack with spatial block
 cross-validation, and suitability, MESS extrapolation, range zones and a transparent severity
 index are projected globally and published as map tiles and a PDF bulletin. Tracked species are
