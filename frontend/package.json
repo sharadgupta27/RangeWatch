@@ -10,7 +10,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "gen:api": "openapi-typescript ./openapi.json -o ./src/api/schema.d.ts",
-    "gen:api:backend": "cd ../backend && python -m src.api.export_openapi ../frontend/openapi.json && cd ../frontend && npm run gen:api"
+    "gen:api:backend": "node scripts/export-openapi.mjs && npm run gen:api"
   },
   "dependencies": {
     "@deck.gl-community/editable-layers": "^9.4.1",

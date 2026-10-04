@@ -118,7 +118,10 @@ def data_root(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 @pytest.fixture
 def settings(tmp_path: Path, data_root: Path) -> Settings:
+    # Isolated from the developer's .env / exported SDM_* variables: explicit values win.
     return Settings(
+        _env_file=None,
+        crosscheck_bioclim_version=None,
         database_url="sqlite://",  # unused: tests use the in-memory repository
         data_root=data_root,
         artifact_root=tmp_path / "artifacts",
