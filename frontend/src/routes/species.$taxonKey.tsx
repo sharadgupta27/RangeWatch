@@ -40,6 +40,7 @@ import { NativeRangeEditor } from '@/components/maps/NativeRangeEditor'
 import { BulletinCard } from '@/components/species/BulletinCard'
 import { CaveatBanner } from '@/components/species/CaveatBanner'
 import { CrossCheckCard } from '@/components/species/CrossCheckCard'
+import { ExtrapolationCard } from '@/components/species/ExtrapolationCard'
 import { HiresCard } from '@/components/species/HiresCard'
 import { JobStatusBar } from '@/components/species/JobStatusBar'
 import { MetricsCards } from '@/components/species/MetricsCards'
@@ -286,6 +287,9 @@ function SpeciesWorkspace() {
                   </CardContent>
                 </Card>
               </div>
+              {model.data.projection.extrapolation && (
+                <ExtrapolationCard summary={model.data.projection.extrapolation} />
+              )}
             </>
           ) : (
             <Card>

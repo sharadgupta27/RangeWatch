@@ -67,7 +67,8 @@ def recompute_severity(
     mv = repo.get_model_version(taxon_key, species.model_version)
     if mv is None or not mv.severity:
         return None
-    inputs = SeverityInputs(**mv.severity["inputs"])
+    # Versions stored before the CBI floor existed take CBI from their own metrics.
+    inputs = SeverityInputs(**{"cbi_mean": mv.metrics.get("cbi_mean"), **mv.severity["inputs"]})
     # spread window may change the rate only via retraining; weights/priors apply instantly
     severity = compute_severity(inputs, cfg)
     repo.update_model_severity(taxon_key, species.model_version, severity)

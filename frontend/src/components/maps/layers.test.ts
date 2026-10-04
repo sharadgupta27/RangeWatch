@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import type { LayerSet, RasterLayer, VectorLayer } from '@/api/types'
 
-import { resolveProjection } from './DualMapView'
+import { diagnosticLayers, resolveProjection } from './DualMapView'
 import {
   COLORS,
   hiresLayers,
@@ -96,6 +96,70 @@ describe('projection layers (MESS pairing)', () => {
   })
 })
 
+describe('advanced extrapolation diagnostics', () => {
+  const layers = {
+    suitability: raster('suitability'),
+    zones: raster('zones'),
+    mess: raster('mess'),
+    extrapolation: raster('extrapolation'),
+    consensus_overlay: raster('consensus-overlay'),
+    diagnostics: ['exdet', 'mop', 'shape', 'aoa', 'consensus'].map(raster),
+    scenarios: [
+      {
+        id: 'scenario:ssp245',
+        name: 'ssp245',
+        label: 'ssp245',
+        suitability: raster('suit-ssp245'),
+        extrapolation: raster('extra-ssp245'),
+        consensus: raster('consensus:ssp245'),
+      },
+      {
+        id: 'scenario:legacy',
+        name: 'legacy',
+        label: 'legacy',
+        suitability: raster('suit-legacy'),
+        extrapolation: raster('extra-legacy'),
+        consensus: null,
+      },
+    ],
+  } as unknown as LayerSet
+
+  it('offers MESS and the advanced diagnostics, consensus first', () => {
+    expect(diagnosticLayers(layers).map((l) => l.id)).toEqual([
+      'consensus',
+      'mess',
+      'exdet',
+      'mop',
+      'shape',
+      'aoa',
+    ])
+    expect(diagnosticLayers({ mess: raster('mess') } as unknown as LayerSet).map((l) => l.id)).toEqual([
+      'mess',
+    ])
+  })
+
+  it('shows a diagnostic as its own view without any overlay on top', () => {
+    const r = resolveProjection(layers, 'aoa', 'consensus')
+    expect([r.base?.id, r.extrapolation]).toEqual(['aoa', null])
+    expect(projectionLayers(r, true).map((l) => l.id)).toEqual(['projection-aoa'])
+    const c = resolveProjection(layers, 'consensus')
+    expect(projectionLayers(c, true).map((l) => l.id)).toEqual(['projection-consensus'])
+  })
+
+  it('switches the overlay to the consensus, falling back to MESS where it is missing', () => {
+    expect(resolveProjection(layers, 'suitability', 'consensus').extrapolation?.id).toBe(
+      'consensus-overlay',
+    )
+    expect(resolveProjection(layers, 'suitability', 'mess').extrapolation?.id).toBe('extrapolation')
+    expect(resolveProjection(layers, 'scenario:ssp245', 'consensus').extrapolation?.id).toBe(
+      'consensus:ssp245',
+    )
+    expect(resolveProjection(layers, 'scenario:legacy', 'consensus').extrapolation?.id).toBe(
+      'extra-legacy',
+    )
+  })
+})
+
 describe('native-range polygon helpers', () => {
   it('round-trips MultiPolygon ↔ editable features', () => {
     const mp: GeoJSON.MultiPolygon = {
@@ -128,6 +192,14 @@ describe('high-resolution region layers', () => {
     expect(layers[0]!.props.data).toBe(hires.suitability.tile_url)
     expect(layers[1]!.props.data).toBe(hires.extrapolation.tile_url)
     expect((layers[0]!.props as { extent?: number[] }).extent).toEqual([5, 38, 25, 52])
+  })
+
+  it("uses the region's consensus overlay when chosen", () => {
+    const withConsensus = { ...hires, consensus: raster('consensus:hires') }
+    expect(hiresLayers(withConsensus, true, 'consensus')[1]!.props.data).toBe(
+      withConsensus.consensus.tile_url,
+    )
+    expect(hiresLayers(hires, true, 'consensus')[1]!.props.data).toBe(hires.extrapolation.tile_url)
   })
 
   it('drops only the MESS mask when the overlay is off, and nothing without a region', () => {

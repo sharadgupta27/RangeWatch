@@ -19,12 +19,42 @@ const DEFAULTS: FormValues = {
   suitability_saturation: 0.1,
   spread_half_saturation: 5,
   spread_window_years: 10,
+  confidence_low_extrapolated: 0.25,
+  confidence_moderate_extrapolated: 0.1,
+  confidence_min_analog: 0.6,
+  confidence_max_mess_extrapolated: 0.25,
+  confidence_min_cbi: 0.2,
 }
 
 const NUMERIC_FIELDS = [
   { name: 'suitability_saturation', label: 'Suitability saturation f_sat', step: 0.01 },
   { name: 'spread_half_saturation', label: 'Spread half-saturation k (cells/yr)', step: 0.5 },
   { name: 'spread_window_years', label: 'Spread window (years, applies on retrain)', step: 1 },
+  {
+    name: 'confidence_low_extrapolated',
+    label: 'Low confidence above (share of candidate zone flagged by ≥ 3 of 5 diagnostics)',
+    step: 0.05,
+  },
+  {
+    name: 'confidence_moderate_extrapolated',
+    label: 'Moderate confidence above (share flagged by ≥ 3 of 5)',
+    step: 0.05,
+  },
+  {
+    name: 'confidence_min_analog',
+    label: 'Moderate confidence below (share flagged by no diagnostic)',
+    step: 0.05,
+  },
+  {
+    name: 'confidence_max_mess_extrapolated',
+    label: 'MESS cap: at most moderate above (share with MESS < 0)',
+    step: 0.05,
+  },
+  {
+    name: 'confidence_min_cbi',
+    label: 'CBI floor: at most moderate below (spatial-CV CBI)',
+    step: 0.05,
+  },
 ] as const
 
 function toFormValues(cfg: SeverityConfigModel): FormValues {

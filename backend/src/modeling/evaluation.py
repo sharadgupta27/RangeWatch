@@ -1,4 +1,5 @@
-"""Model evaluation metrics: AUC, TSS, Continuous Boyce Index (CBI) and MESS.
+"""Model evaluation metrics: AUC, TSS, Continuous Boyce Index (CBI) and extrapolation
+diagnostics (MESS, exDet, MOP, Shape, AOA).
 
 Every evaluation metric lives here (CLAUDE.md) — maxent_trainer only calls into this module.
 Presence-background data has no true absences, so AUC/TSS treat background as pseudo-absence;
@@ -8,9 +9,12 @@ CBI is the presence-only-appropriate metric and must always be reported alongsid
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Any
 
 import numpy as np
+from scipy.spatial import cKDTree
+from scipy.spatial.distance import cdist
 from scipy.stats import spearmanr
 from sklearn.metrics import roc_auc_score, roc_curve
 
@@ -164,6 +168,376 @@ def mess(reference: MessReference, target: np.ndarray) -> tuple[np.ndarray, np.n
         out[ok] = sims[ok].min(axis=1)
         mod[ok] = sims[ok].argmin(axis=1)
     return out.astype("float32"), mod
+
+
+# ---------------------------------------------------------------------------
+# Advanced extrapolation diagnostics: exDet, MOP, Shape, AOA
+# ---------------------------------------------------------------------------
+# MESS asks only "is some predictor outside its training range?". These diagnostics add what
+# it misses: novel *combinations* of in-range values (exDet NT2), distance to the closest
+# analogous training conditions (MOP, Shape) and distance in the importance-weighted space the
+# model actually relies on (AOA). All share the MESS reference set (training presences +
+# background), so their verdicts are comparable cell by cell.
+EXTRAPOLATION_DIAGNOSTICS: tuple[str, ...] = ("mess", "exdet", "mop", "shape", "aoa")
+DIAGNOSTIC_INFO: dict[str, dict[str, str]] = {
+    "mess": {
+        "label": "MESS",
+        "name": "Multivariate Environmental Similarity Surface",
+        "reference": "Elith et al. 2010",
+    },
+    "exdet": {
+        "label": "exDet",
+        "name": "Extrapolation Detection (NT1 univariate / NT2 combinatorial novelty)",
+        "reference": "Mesgaran et al. 2014",
+    },
+    "mop": {
+        "label": "MOP",
+        "name": "Mobility-Oriented Parity",
+        "reference": "Owens et al. 2013; Cobos et al. 2024",
+    },
+    "shape": {
+        "label": "Shape",
+        "name": "Shape extrapolation degree",
+        "reference": "Velazco et al. 2024",
+    },
+    "aoa": {
+        "label": "AOA",
+        "name": "Area of Applicability (dissimilarity index)",
+        "reference": "Meyer & Pebesma 2021",
+    },
+}
+CV_THRESHOLD_RULE = (
+    "outlier-trimmed maximum (min(Q75 + 1.5·IQR, max)) of the training points' values "
+    "against the other spatial CV folds"
+)
+_KNN_CHUNK = 50_000
+
+
+def outlier_trimmed_max(values: np.ndarray) -> float:
+    """AOA threshold rule (CAST `.di_threshold`): Q75 + 1.5·IQR of the training values, capped
+    at their maximum — i.e. the largest training value that is not an outlier."""
+    v = np.asarray(values, dtype="float64")
+    v = v[np.isfinite(v)]
+    if v.size == 0:
+        return float("nan")
+    q25, q75 = np.percentile(v, [25, 75])
+    return float(min(q75 + 1.5 * (q75 - q25), v.max()))
+
+
+def _whitener(cov: np.ndarray) -> np.ndarray:
+    """W such that ||(x - y) @ W|| is the Mahalanobis distance under `cov` (pseudo-inverse, so
+    a constant or perfectly collinear predictor cannot make it singular)."""
+    vals, vecs = np.linalg.eigh(np.atleast_2d(cov))
+    keep = vals > max(float(vals.max()), 0.0) * 1e-10
+    return vecs[:, keep] / np.sqrt(vals[keep])
+
+
+def _cross_fold_knn(points: np.ndarray, folds: np.ndarray, k: int) -> np.ndarray:
+    """Distances from each point to its k nearest neighbours in the *other* CV folds (CAST's
+    cross-validated training DI). With a single fold the point itself is excluded instead."""
+    n = len(points)
+    out = np.full((n, k), np.nan)
+    groups = np.unique(folds)
+    if groups.size < 2:
+        kk = min(k + 1, n)
+        d, _ = cKDTree(points).query(points, k=kk)
+        d = np.asarray(d).reshape(n, kk)[:, 1:]
+        out[:, : d.shape[1]] = d
+        return out
+    for g in groups:
+        test = folds == g
+        other = points[~test]
+        kk = min(k, len(other))
+        d, _ = cKDTree(other).query(points[test], k=kk)
+        out[test, :kk] = np.asarray(d).reshape(int(test.sum()), kk)
+    return out
+
+
+def _mean_pairwise_distance(points: np.ndarray, chunk: int = 512) -> float:
+    """Mean Euclidean distance over all pairs of distinct points (CAST's trainDist_avrgmean)."""
+    n = len(points)
+    if n < 2:
+        return float("nan")
+    total = sum(float(cdist(points[s : s + chunk], points).sum()) for s in range(0, n, chunk))
+    return total / (n * (n - 1))
+
+
+def _knn(tree: cKDTree, x: np.ndarray, k: int) -> np.ndarray:
+    """(n, k) nearest-neighbour distances, queried in chunks to bound memory."""
+    k = min(k, tree.n)
+    out = np.empty((len(x), k))
+    for s in range(0, len(x), _KNN_CHUNK):
+        d, _ = tree.query(x[s : s + _KNN_CHUNK], k=k, workers=-1)
+        out[s : s + _KNN_CHUNK] = np.asarray(d).reshape(-1, k)
+    return out
+
+
+@dataclass(eq=False)
+class ExtrapolationReference:
+    """What exDet, MOP, Shape and AOA need from the training data, precomputed once per model
+    version and pickled into model.pkl next to the MESS reference.
+
+    exDet keeps its published cut-offs (NT1 < 0, NT2 > 1). MOP and Shape publish no fixed
+    threshold, so both use the AOA rule like the DI does: every training point is scored
+    against the training points of the *other spatial CV folds*, and the threshold is the
+    outlier-trimmed maximum of those scores. A cell is flagged when it lies farther from the
+    training data than one spatial block's training data lie from the rest.
+    """
+
+    variables: tuple[str, ...]
+    n_reference: int
+    n_folds: int
+    # exDet (its Mahalanobis geometry is shared with Shape)
+    mins: np.ndarray
+    maxs: np.ndarray
+    centroid: np.ndarray
+    whitener: np.ndarray
+    drop_whiteners: tuple[np.ndarray, ...]
+    nt2_max: float
+    # z-score scale shared by MOP and AOA
+    scale_std: np.ndarray
+    # MOP
+    mop_percentage: float
+    mop_k: int
+    mop_reference: np.ndarray
+    mop_threshold: float
+    # Shape
+    shape_reference: np.ndarray
+    shape_base: float
+    shape_threshold: float
+    # AOA
+    aoa_weights: np.ndarray
+    aoa_reference: np.ndarray
+    aoa_mean_distance: float
+    aoa_threshold: float
+    _trees: dict[str, cKDTree] = field(default_factory=dict, repr=False)
+
+    def __getstate__(self) -> dict[str, Any]:
+        return {**self.__dict__, "_trees": {}}  # KD-trees are rebuilt lazily after loading
+
+    @classmethod
+    def build(
+        cls,
+        variables: Sequence[str],
+        reference: np.ndarray,
+        folds: np.ndarray | None = None,
+        weights: Sequence[float] | None = None,
+        mop_percentage: float = 1.0,
+    ) -> ExtrapolationReference:
+        """`reference`: training presences + background (rows) × predictors; `folds`: spatial
+        CV fold of each row; `weights`: predictor importance for the AOA distance."""
+        ref = np.asarray(reference, dtype="float64")
+        ok = np.isfinite(ref).all(axis=1)
+        ref = ref[ok]
+        n, p = ref.shape
+        if n < 3:
+            raise ValueError("The extrapolation reference needs at least 3 complete rows")
+        fold_ids = np.zeros(n, dtype=int) if folds is None else np.asarray(folds)[ok]
+
+        # exDet (Mesgaran et al. 2014; dsmextra): NT2 = squared Mahalanobis distance to the
+        # reference centroid relative to the largest one within the reference.
+        centroid = ref.mean(axis=0)
+        cov = np.atleast_2d(np.cov(ref, rowvar=False))
+        whitener = _whitener(cov)
+        d_centroid = np.sqrt((((ref - centroid) @ whitener) ** 2).sum(axis=1))
+        drop = (
+            tuple(_whitener(np.delete(np.delete(cov, j, 0), j, 1)) for j in range(p))
+            if p > 1
+            else ()
+        )
+        std = ref.std(axis=0, ddof=1)
+        std = np.where(np.isfinite(std) & (std > 0), std, 1.0)
+        z = (ref - centroid) / std
+
+        # MOP (Owens et al. 2013; mop R package): mean Euclidean distance (z-scored, as the
+        # package recommends) to the closest `mop_percentage`% of reference points.
+        k = max(1, int(round(n * mop_percentage / 100)))
+        mop_train = np.nanmean(_cross_fold_knn(z, fold_ids, k), axis=1)
+
+        # Shape (Velazco et al. 2024; flexsdm::extra_eval): Mahalanobis distance to the nearest
+        # training point / mean Mahalanobis distance of training points to their centroid × 100.
+        shape_ref = ref @ whitener
+        shape_base = float(d_centroid.mean()) or float("nan")
+        shape_train = _cross_fold_knn(shape_ref, fold_ids, 1)[:, 0] / shape_base * 100
+
+        # AOA (Meyer & Pebesma 2021; CAST::trainDI): importance-weighted z-scores; DI = distance
+        # to the nearest training point / mean pairwise distance between training points.
+        w = (
+            np.ones(p)
+            if weights is None
+            else np.clip(np.asarray(weights, dtype="float64"), 0, None)
+        )
+        if w.shape != (p,) or not np.isfinite(w).all() or w.max() <= 0:
+            w = np.ones(p)
+        w = w / w.max()
+        aoa_ref = z * w
+        mean_dist = _mean_pairwise_distance(aoa_ref) or float("nan")
+        train_di = _cross_fold_knn(aoa_ref, fold_ids, 1)[:, 0] / mean_dist
+
+        return cls(
+            variables=tuple(variables),
+            n_reference=n,
+            n_folds=int(np.unique(fold_ids).size),
+            mins=ref.min(axis=0),
+            maxs=ref.max(axis=0),
+            centroid=centroid,
+            whitener=whitener,
+            drop_whiteners=drop,
+            nt2_max=float((d_centroid**2).max()) or float("nan"),
+            scale_std=std,
+            mop_percentage=float(mop_percentage),
+            mop_k=k,
+            mop_reference=z,
+            mop_threshold=outlier_trimmed_max(mop_train),
+            shape_reference=shape_ref,
+            shape_base=shape_base,
+            shape_threshold=outlier_trimmed_max(shape_train),
+            aoa_weights=w,
+            aoa_reference=aoa_ref,
+            aoa_mean_distance=mean_dist,
+            aoa_threshold=outlier_trimmed_max(train_di),
+        )
+
+    def _tree(self, name: str) -> cKDTree:
+        if name not in self._trees:
+            self._trees[name] = cKDTree(getattr(self, f"{name}_reference"))
+        return self._trees[name]
+
+    # ----------------------------------------------------------- per-cell metrics
+    def nt1(self, x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """exDet NT1 (≤ 0; < 0 = univariate novelty) and the most-deviating predictor index."""
+        rng = np.where(self.maxs > self.mins, self.maxs - self.mins, 1e-12)
+        ud = np.minimum(np.minimum(x - self.mins, self.maxs - x), 0.0) / rng
+        return ud.sum(axis=1), ud.argmin(axis=1)
+
+    def nt2(self, x: np.ndarray) -> np.ndarray:
+        """exDet NT2 (≥ 0; > 1 = combination of values never seen together in training)."""
+        return (((x - self.centroid) @ self.whitener) ** 2).sum(axis=1) / self.nt2_max
+
+    def nt2_mic(self, x: np.ndarray) -> np.ndarray:
+        """Most influential covariate for NT2: the predictor whose removal reduces the
+        Mahalanobis distance most (as in the ExDet tool / dsmextra)."""
+        if not self.drop_whiteners:
+            return np.zeros(len(x), dtype="int64")
+        xc = x - self.centroid
+        d_full = ((xc @ self.whitener) ** 2).sum(axis=1)
+        reduction = np.column_stack(
+            [
+                d_full - ((np.delete(xc, j, axis=1) @ w) ** 2).sum(axis=1)
+                for j, w in enumerate(self.drop_whiteners)
+            ]
+        )
+        return reduction.argmax(axis=1)
+
+    def mop(self, x: np.ndarray) -> np.ndarray:
+        z = (x - self.centroid) / self.scale_std
+        return _knn(self._tree("mop"), z, self.mop_k).mean(axis=1)
+
+    def shape(self, x: np.ndarray) -> np.ndarray:
+        return _knn(self._tree("shape"), x @ self.whitener, 1)[:, 0] / self.shape_base * 100
+
+    def aoa_di(self, x: np.ndarray) -> np.ndarray:
+        z = (x - self.centroid) / self.scale_std * self.aoa_weights
+        return _knn(self._tree("aoa"), z, 1)[:, 0] / self.aoa_mean_distance
+
+    def describe(self) -> dict[str, Any]:
+        """Configuration and thresholds, logged with the model version and shown in the UI."""
+        thresholds = {
+            "mess": (0.0, "MESS < 0", "a predictor lies outside its training range"),
+            "exdet": (
+                1.0,
+                "NT1 < 0 or NT2 > 1",
+                "published cut-offs: NT1 < 0 univariate, NT2 > 1 combinatorial novelty",
+            ),
+            "mop": (self.mop_threshold, "MOP distance > threshold", CV_THRESHOLD_RULE),
+            "shape": (self.shape_threshold, "Shape > threshold", CV_THRESHOLD_RULE),
+            "aoa": (
+                self.aoa_threshold,
+                "DI > threshold (outside the AOA)",
+                CV_THRESHOLD_RULE + " (Meyer & Pebesma 2021)",
+            ),
+        }
+        return {
+            "reference_set": "training presences + background (as for MESS)",
+            "n_reference": self.n_reference,
+            "n_cv_folds": self.n_folds,
+            "mop_percentage": self.mop_percentage,
+            "mop_k": self.mop_k,
+            "aoa_weights": {
+                v: round(float(w), 4) for v, w in zip(self.variables, self.aoa_weights, strict=True)
+            },
+            "thresholds": {
+                key: {
+                    "value": _finite_or_none(val),
+                    "flag_rule": flag,
+                    "rule": rule,
+                    **DIAGNOSTIC_INFO[key],
+                }
+                for key, (val, flag, rule) in thresholds.items()
+            },
+        }
+
+
+def _finite_or_none(v: float) -> float | None:
+    return round(float(v), 6) if np.isfinite(v) else None
+
+
+@dataclass
+class ExtrapolationDiagnostics:
+    """Per-cell diagnostics for a batch of complete target rows."""
+
+    exdet: np.ndarray  # NT1 where < 0 (univariate novelty), otherwise NT2 (> 1 = combinatorial)
+    exdet_mic: np.ndarray  # most influential covariate index; -1 where exDet finds no novelty
+    mop: np.ndarray
+    shape: np.ndarray
+    aoa_di: np.ndarray
+    flags: dict[str, np.ndarray]  # per diagnostic: True = extrapolation by that method's rule
+
+    @property
+    def univariate(self) -> np.ndarray:
+        return self.exdet < 0
+
+    @property
+    def combinatorial(self) -> np.ndarray:
+        return self.exdet > 1
+
+    @property
+    def consensus(self) -> np.ndarray:
+        """Number of the five diagnostics that flag each cell as extrapolation (0–5)."""
+        return np.sum([self.flags[k] for k in EXTRAPOLATION_DIAGNOSTICS], axis=0).astype("uint8")
+
+
+def extrapolation_diagnostics(
+    reference: ExtrapolationReference, target: np.ndarray, mess_values: np.ndarray
+) -> ExtrapolationDiagnostics:
+    """exDet, MOP, Shape and AOA for complete target rows, plus every method's verdict (with
+    the MESS values that `mess` computed for the same rows)."""
+    x = np.asarray(target, dtype="float64")
+    nt1, mic1 = reference.nt1(x)
+    nt2 = reference.nt2(x)
+    univariate = nt1 < 0
+    combinatorial = ~univariate & (nt2 > 1)
+    mic = np.full(len(x), -1, dtype="int16")
+    mic[univariate] = mic1[univariate]
+    if combinatorial.any():
+        mic[combinatorial] = reference.nt2_mic(x[combinatorial])
+    mop_d = reference.mop(x)
+    shape_v = reference.shape(x)
+    di = reference.aoa_di(x)
+    return ExtrapolationDiagnostics(
+        exdet=np.where(univariate, nt1, nt2).astype("float32"),
+        exdet_mic=mic,
+        mop=mop_d.astype("float32"),
+        shape=shape_v.astype("float32"),
+        aoa_di=di.astype("float32"),
+        flags={
+            "mess": np.asarray(mess_values) < 0,
+            "exdet": univariate | combinatorial,
+            "mop": mop_d > reference.mop_threshold,
+            "shape": shape_v > reference.shape_threshold,
+            "aoa": di > reference.aoa_threshold,
+        },
+    )
 
 
 # ---------------------------------------------------------------------------

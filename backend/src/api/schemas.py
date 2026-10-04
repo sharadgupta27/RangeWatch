@@ -66,11 +66,50 @@ class SeverityConfigModel(ApiModel):
     suitability_saturation: float = Field(0.10, gt=0, le=1)
     spread_half_saturation: float = Field(5.0, gt=0)
     spread_window_years: int = Field(10, ge=2, le=50)
+    confidence_low_extrapolated: float = Field(
+        0.25,
+        ge=0,
+        le=1,
+        description="Low confidence above this share of the candidate zone flagged by ≥ 3 of "
+        "the 5 extrapolation diagnostics (MESS share for models without them)",
+    )
+    confidence_moderate_extrapolated: float = Field(
+        0.10, ge=0, le=1, description="Moderate confidence above this extrapolated share"
+    )
+    confidence_min_analog: float = Field(
+        0.60,
+        ge=0,
+        le=1,
+        description="Moderate confidence below this share of the candidate zone flagged by "
+        "no diagnostic",
+    )
+    confidence_max_mess_extrapolated: float = Field(
+        0.25,
+        ge=0,
+        le=1,
+        description="MESS cap: at most moderate confidence above this share of the candidate "
+        "zone with MESS < 0",
+    )
+    confidence_min_cbi: float = Field(
+        0.20,
+        ge=-1,
+        le=1,
+        description="CBI floor: at most moderate confidence below this spatial-CV CBI",
+    )
 
 
 class SeverityConfidence(ApiModel):
     level: ConfidenceT
+    basis: Literal["consensus", "mess"] = Field(
+        "mess", description="consensus of the five diagnostics, or MESS for older models"
+    )
+    reasons: list[str] = Field(
+        default_factory=list, description="Every rule that lowered confidence (empty = high)"
+    )
+    cbi_mean: float | None = None
     mess_ok_fraction: float
+    consensus_ok_fraction: float | None = None
+    consensus_majority_fraction: float | None = None
     model_type: ModelTypeT
     note: str
 
@@ -323,6 +362,50 @@ class ModelVersionOut(ApiModel):
     reproducibility: ReproducibilityInfo
 
 
+ExtrapolationDiagnosticId = Literal["mess", "exdet", "mop", "shape", "aoa"]
+
+
+class ExtrapolationDiagnosticOut(ApiModel):
+    id: ExtrapolationDiagnosticId
+    label: str
+    name: str
+    reference: str
+    flag_rule: str = Field(description="When this diagnostic flags a cell as extrapolation")
+    threshold: float | None
+    threshold_rule: str = Field(description="How the threshold was derived")
+    land_area_km2: float
+    land_fraction: float
+    candidate_flagged_fraction: float = Field(
+        description="Share of the candidate invasion zone flagged by this diagnostic"
+    )
+
+
+class ExtrapolationSummaryOut(ApiModel):
+    reference_set: str
+    n_reference: int
+    n_cv_folds: int = Field(description="Spatial CV folds used for the MOP/Shape/AOA thresholds")
+    mop_percentage: float = Field(description="% of closest reference points averaged by MOP")
+    mop_k: int
+    aoa_weights: dict[str, float] = Field(
+        description="Predictor weights of the AOA distance (permutation importance, max = 1)"
+    )
+    diagnostics: list[ExtrapolationDiagnosticOut]
+    consensus_land_area_km2: list[float] = Field(
+        description="Land area flagged by exactly 0, 1, …, 5 of the diagnostics"
+    )
+    candidate_consensus_ok_fraction: float = Field(
+        description="Share of the candidate zone flagged by none of the diagnostics"
+    )
+    candidate_consensus_majority_fraction: float = Field(
+        description="Share of the candidate zone flagged by at least 3 of the 5 diagnostics"
+    )
+    exdet_univariate_area_km2: float
+    exdet_combinatorial_area_km2: float
+    top_combinatorial_variables: list[dict[str, Any]] = Field(
+        description="exDet most influential covariates where NT2 > 1 (novel combinations)"
+    )
+
+
 class ProjectionSummaryOut(ApiModel):
     land_area_km2: float
     nonnative_land_area_km2: float
@@ -336,6 +419,11 @@ class ProjectionSummaryOut(ApiModel):
     extrapolation_area_km2: float
     top_candidate_regions: list[dict[str, Any]]
     top_limiting_variables: list[dict[str, Any]]
+    extrapolation: ExtrapolationSummaryOut | None = Field(
+        None,
+        description="MESS, exDet, MOP, Shape and AOA verdicts (null for models trained before "
+        "the advanced diagnostics existed)",
+    )
 
 
 class PredictorAgreementOut(ApiModel):
@@ -428,6 +516,12 @@ class ScenarioLayer(ApiModel):
         None, description="This scenario's own MESS < 0 mask (null for legacy projections)"
     )
     extrapolated_land_fraction: float | None = None
+    consensus: RasterLayer | None = Field(
+        None, description="This scenario's own diagnostic-consensus overlay (null for legacy)"
+    )
+    diagnostics_land_fraction: dict[str, float] | None = Field(
+        None, description="Share of land flagged by each extrapolation diagnostic"
+    )
 
 
 class HiresLayer(ApiModel):
@@ -438,6 +532,10 @@ class HiresLayer(ApiModel):
     suitability: RasterLayer
     extrapolation: RasterLayer = Field(description="This region's own MESS < 0 mask")
     extrapolated_land_fraction: float | None = None
+    consensus: RasterLayer | None = Field(
+        None, description="This region's own diagnostic-consensus overlay (null for legacy)"
+    )
+    diagnostics_land_fraction: dict[str, float] | None = None
     created_ts: str
 
 
@@ -458,6 +556,16 @@ class LayerSet(ApiModel):
     zones: RasterLayer | None = None
     extrapolation: RasterLayer | None = Field(
         None, description="MESS < 0 mask; always offered as an overlay with any projection"
+    )
+    diagnostics: list[RasterLayer] = Field(
+        default_factory=list,
+        description="Advanced extrapolation diagnostics as map views: exdet, mop, shape, aoa "
+        "and consensus (empty for models trained before they existed)",
+    )
+    consensus_overlay: RasterLayer | None = Field(
+        None,
+        description="Haze overlay graded by how many diagnostics flag extrapolation; an "
+        "alternative to the MESS < 0 overlay",
     )
     scenarios: list[ScenarioLayer] = Field(default_factory=list)
     scenarios_available: list[str] = Field(

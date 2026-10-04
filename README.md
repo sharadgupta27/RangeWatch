@@ -59,6 +59,30 @@ cells lie outside the climate the model was trained on.
 ![Range zones for Lantana camara](docs/images/04-lantana-zones.webp)
 ![MESS extrapolation surface for Vespa velutina](docs/images/04-vespa-mess.webp)
 
+**Extrapolation diagnostics.** MESS only asks whether some predictor is outside its training
+range. Every model also gets four more diagnostics. **Extrapolation** on the projection map
+opens any of them, and the overview tab's *Extrapolation diagnostics* card lists each one's rule,
+threshold and how much land and candidate zone it flags:
+
+| Diagnostic | What it detects | Flags a cell when |
+| --- | --- | --- |
+| MESS (Elith et al. 2010) | a predictor outside its training range | MESS < 0 |
+| exDet (Mesgaran et al. 2014) | NT1: range overshoot; NT2: novel *combinations* of in-range values (broken correlations), which MESS misses | NT1 < 0 or NT2 > 1 |
+| MOP (Owens et al. 2013; `mop` R package) | mean z-scored distance to the closest 1% of training conditions | distance > threshold |
+| Shape (Velazco et al. 2024; `flexsdm`) | Mahalanobis distance to the nearest training point relative to the training spread | value > threshold |
+| AOA (Meyer & Pebesma 2021; `CAST`) | distance in the importance-weighted predictor space the model uses | DI > threshold |
+
+All five share the MESS reference set (training presences + background). exDet keeps its
+published cut-offs. The MOP and Shape papers publish no fixed threshold, so they use the AOA rule:
+score each training point against the other spatial CV folds and take the outlier-trimmed
+maximum, min(Q75 + 1.5·IQR, max). The **consensus** layer (`consensus.tif`) counts how many of
+the five flag each cell. The map overlay can show that graded haze instead of the MESS < 0 mask.
+The consensus also sets the severity **confidence** label (never the score). Defaults:
+low for Model A, or when more than 25% of the candidate zone is flagged by at least 3 of the 5
+methods; moderate when more than 10% is, or when less than 60% is flagged by none; otherwise
+high. All three thresholds can be changed in the Severity settings form. Models trained before
+the diagnostics existed fall back to the MESS-extrapolated share with the same thresholds.
+
 **Native-range review.** A draft polygon is proposed heuristically, but nothing is trained until a
 user edits and confirms it (vertex editing, move, multi-part areas).
 
@@ -91,25 +115,30 @@ pages. Shown here: the first two pages for *Lantana camara*.
 
 ## Results
 
-Current model of each tracked species, from the same 10′ run (3 Oct 2026). All models are
-**Model B** (native + invaded records), since every species has documented introduced occurrences.
-Metrics are spatial-block-CV means (k = 4). *Candidate zone* means climatically suitable land
-outside the native range that is not yet known to be occupied. *In training climate* is the share
-of that zone with MESS ≥ 0. It sets the confidence label but never changes the severity score.
+Current model of each tracked species, from the same 10′ run (4 Oct 2026, the first with the
+advanced extrapolation diagnostics). All models are **Model B** (native + invaded records),
+since every species has documented introduced occurrences. Metrics are spatial-block-CV means
+(k = 4). *Candidate zone* means climatically suitable land outside the native range that is not
+yet known to be occupied. *MESS ≥ 0* is the share of that zone inside the training ranges;
+*≥ 3 of 5* is the share flagged as extrapolation by at least three of the five diagnostics. The
+consensus sets the confidence label but never changes the severity score.
 
-| Species | Ver. | Records | CBI | AUC | TSS | Severity | Candidate zone | In training climate | Confidence |
-|---|---|---:|---:|---:|---:|---:|---:|---:|---|
-| *Lantana camara* (common lantana) | v1 | 99,377 | 0.954 | 0.793 | 0.480 | **55** high | 22.6 M km² (16.2 %) | 99.9 % | high |
-| *Linepithema humile* (Argentine ant) | v4 | 21,948 | 0.878 | 0.840 | 0.595 | **47** moderate | 12.6 M km² (8.4 %) | 100 % | high |
-| *Vespa velutina* (yellow-legged hornet) | v1 | 117,299 | 0.293 | 0.675 | 0.369 | **44** moderate | 16.1 M km² (11.0 %) | 72.2 % | moderate |
-| *Ailanthus altissima* (tree-of-heaven) | v1 | 114,300 | 0.963 | 0.817 | 0.513 | **41** moderate | 6.0 M km² (4.0 %) | 100 % | high |
-| *Heterotheca subaxillaris* (camphorweed) | v2 | 23,593 | 0.016 | 0.653 | 0.424 | **41** moderate | 21.4 M km² (14.2 %) | 41.9 % | **low** |
-| *Carpobrotus edulis* (sea fig) | v3 | 42,431 | 0.926 | 0.859 | 0.600 | **37** moderate | 3.5 M km² (2.3 %) | 99.9 % | high |
-| *Pueraria montana* (kudzu) | v2 | 32,492 | 0.582 | 0.712 | 0.381 | **36** moderate | 6.8 M km² (4.5 %) | 99.7 % | high |
-| *Acacia saligna* (golden wreath wattle) | v2 | 29,589 | 0.966 | 0.890 | 0.662 | **34** moderate | 3.2 M km² (2.1 %) | 99.9 % | high |
+| Species | Ver. | Records | CBI | AUC | TSS | Severity | Candidate zone | MESS ≥ 0 | ≥ 3 of 5 | Confidence |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| *Lantana camara* (common lantana) | v3 | 118,825 | 0.953 | 0.758 | 0.406 | **57** high | 42.2 M km² (30.3 %) | 48.4 % | 54.3 % | **low** |
+| *Linepithema humile* (Argentine ant) | v7 | 22,054 | 0.870 | 0.795 | 0.499 | **49** moderate | 15.2 M km² (10.1 %) | 100.0 % | 0.3 % | high |
+| *Carpobrotus edulis* (sea fig) | v4 | 42,440 | 0.949 | 0.771 | 0.454 | **48** moderate | 34.9 M km² (22.7 %) | 84.6 % | 14.1 % | **moderate** |
+| *Ailanthus altissima* (tree-of-heaven) | v3 | 152,870 | 0.986 | 0.746 | 0.381 | **42** moderate | 6.0 M km² (4.0 %) | 99.9 % | 0.2 % | high |
+| *Heterotheca subaxillaris* (camphorweed) | v3 | 23,607 | -0.022 | 0.640 | 0.435 | **41** moderate | 59.1 M km² (39.3 %) | 70.2 % | 9.8 % | high |
+| *Vespa velutina* (yellow-legged hornet) | v3 | 156,048 | 0.460 | 0.718 | 0.402 | **40** moderate | 7.6 M km² (5.2 %) | 98.5 % | 0.6 % | high |
+| *Pueraria montana* (kudzu) | v3 | 32,499 | 0.597 | 0.700 | 0.365 | **36** moderate | 5.2 M km² (3.5 %) | 99.6 % | 0.1 % | high |
+| *Acacia saligna* (golden wreath wattle) | v3 | 29,608 | 0.969 | 0.854 | 0.606 | **34** moderate | 4.0 M km² (2.6 %) | 99.9 % | 0.0 % | high |
 
 Percentages in *Candidate zone* are of non-native land. Higher versions were retrained by the
-incremental pipeline (new records outside the suitability envelope, or a manual retrain).
+incremental pipeline (new records outside the suitability envelope, or a manual retrain). This
+run was also the first with target-group background for every species except *Linepithema
+humile*, which changed several candidate zones substantially (e.g. *Lantana camara* 22.6 → 42.2 M
+km²). The zone maps below come from the earlier uniform-background run.
 
 **Global range zones** (from the generated bulletins). Teal: suitable within the confirmed native
 range (dashed). Orange: suitable and already occupied outside it. Red: candidate
@@ -119,18 +148,21 @@ invasion/expansion zone. Hatched: MESS < 0 (extrapolation).
 |---|---|
 | ![Lantana camara global zones](docs/images/zones-lantana-camara.webp) *Lantana camara*: the widest candidate zone in the registry, across sub-Saharan Africa, South/Southeast Asia and eastern Australia. | ![Linepithema humile global zones](docs/images/zones-linepithema-humile.webp) *Linepithema humile*: Mediterranean-climate belts on every continent, consistent with its known supercolonies. |
 | ![Ailanthus altissima global zones](docs/images/zones-ailanthus-altissima.webp) *Ailanthus altissima*: already occupies most of its suitable temperate range in Europe and the eastern USA (orange). | ![Acacia saligna global zones](docs/images/zones-acacia-saligna.webp) *Acacia saligna*: a narrow Mediterranean-climate niche, with the Mediterranean basin, South Africa and Chile/California as candidate zones. |
-| ![Vespa velutina global zones](docs/images/zones-vespa-velutina.webp) *Vespa velutina*: the Greenland "candidate zone" lies under MESS hatching. It is an extrapolation artefact, not a forecast. | ![Heterotheca subaxillaris global zones](docs/images/zones-heterotheca-subaxillaris.webp) *Heterotheca subaxillaris*: most of the candidate zone (Siberia, Canada) is extrapolated. The dashboard labels this model **low confidence**. |
+| ![Vespa velutina global zones](docs/images/zones-vespa-velutina.webp) *Vespa velutina*: the Greenland "candidate zone" lies under MESS hatching. It is an extrapolation artefact, not a forecast. | ![Heterotheca subaxillaris global zones](docs/images/zones-heterotheca-subaxillaris.webp) *Heterotheca subaxillaris* (earlier run): most of the candidate zone (Siberia, Canada) was MESS-extrapolated. |
 
 What the run shows:
 
 - **Strong fits** (CBI > 0.9): *Acacia saligna, Ailanthus altissima, Lantana camara* and
   *Carpobrotus edulis*. Presences are concentrated where the model predicts high suitability.
-- **Weak fits are visible, not hidden.** *Vespa velutina* (CBI 0.29) is still spreading fast in
-  Europe and is far from climatic equilibrium. *Heterotheca subaxillaris* (CBI 0.02) has a
-  candidate zone that is mostly extrapolation (only 42 % within the training climate). In both
-  cases the severity score is unchanged, but the MESS-driven confidence label drops, and the
-  hatched extrapolation is shown in the UI and the bulletin. This is the behaviour CLAUDE.md
-  constraint 2 requires.
+- **Weak fits are visible, not hidden.** *Vespa velutina* (CBI 0.46) is still spreading fast in
+  Europe and is far from climatic equilibrium. *Heterotheca subaxillaris* has a CBI of −0.02: the
+  model does no better than random at ranking its presences, whatever the confidence label says.
+- **Extrapolation drives confidence.** *Lantana camara*'s candidate zone is now 54 % robustly
+  extrapolated (≥ 3 of 5 diagnostics), so it is labelled **low** confidence; *Carpobrotus edulis*
+  (14 %) is **moderate**. Severity scores are unchanged by this, as CLAUDE.md constraint 2
+  requires. *Heterotheca subaxillaris* shows where the methods disagree: 30 % of its candidate
+  zone has MESS < 0, but the distance-based diagnostics (MOP, Shape, AOA) flag only 3–12 %,
+  so just 9.8 % reaches the ≥ 3-of-5 consensus and the label is high.
 - **Transferability matches the literature.** In the validation suite, native-only models scored
   on introduced records averaged AUC **0.690** (0.565–0.843 per species) against the published
   mean of ≈ 0.7. That is why every projection carries the transferability caveat. Five of six
@@ -257,8 +289,8 @@ For production, point the remote at real object storage (`dvc remote modify stor
 After `add-scenario`, project existing models without retraining — from the species page
 (**Climate scenarios** card), via `POST /api/species/{taxon_key}/scenarios`, or automatically in
 the nightly sweep. Every scenario gets its **own** MESS extrapolation mask
-(`extrapolation_<scenario>.tif`); future climates leave the training range far more often, so the
-current-climate mask is never reused.
+(`extrapolation_<scenario>.tif`) and diagnostic consensus (`consensus_<scenario>.tif`); future
+climates leave the training range far more often, so the current-climate masks are never reused.
 
 ### High-resolution regions (30″)
 
@@ -405,12 +437,12 @@ SHA-256 is part of the lineage. The nightly sweep does not count as a request.
 | CLAUDE.md constraint         | Implementation                                                                                                                                                    |
 | ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Transferability caveat       | `TRANSFERABILITY_CAVEAT` in every model's metrics → UI banner, map badge, bulletin                                                                             |
-| MESS alongside projections   | `evaluation.mess` → `mess.tif` + `extrapolation.tif`; layers endpoint always pairs them; MESS overlay on by default; hatched in the bulletin               |
+| MESS alongside projections   | `evaluation.mess` → `mess.tif` + `extrapolation.tif`; layers endpoint always pairs them; MESS overlay on by default; hatched in the bulletin. exDet / MOP / Shape / AOA (`evaluation.ExtrapolationReference`) → `exdet.tif`, `mop.tif`, `shape.tif`, `aoa_di.tif`, `consensus.tif`; map views, consensus overlay, bulletin table + map |
 | Prefer Model B               | `maxent_trainer.select_model_type`; Model A labelled lower-confidence in API, UI, bulletin                                                                      |
 | Spatial block CV             | `elapid.GeographicKFold` (`maxent_trainer.spatial_block_cv`)                                                                                                  |
 | CBI with AUC/TSS             | `evaluation.continuous_boyce_index`; shown first in the UI                                                                                                      |
 | Native range never automated | draft-only heuristics; training gated on confirmation; editable deck.gl layer                                                                                     |
-| Severity not a black box     | `severity_index.py` documents each component; weights configurable in the UI and printed in the bulletin footnote; MESS affects *confidence*, never the score |
+| Severity not a black box     | `severity_index.py` documents each component; weights and confidence thresholds configurable in the UI and printed in the bulletin footnote; the extrapolation consensus (MESS for older models) affects *confidence*, never the score |
 
 ## Design decisions beyond the workplan
 

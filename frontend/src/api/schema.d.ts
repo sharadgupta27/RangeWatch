@@ -561,6 +561,95 @@ export interface components {
             /** Threshold */
             threshold?: number | null;
         };
+        /** ExtrapolationDiagnosticOut */
+        ExtrapolationDiagnosticOut: {
+            /**
+             * Id
+             * @enum {string}
+             */
+            id: "mess" | "exdet" | "mop" | "shape" | "aoa";
+            /** Label */
+            label: string;
+            /** Name */
+            name: string;
+            /** Reference */
+            reference: string;
+            /**
+             * Flag Rule
+             * @description When this diagnostic flags a cell as extrapolation
+             */
+            flag_rule: string;
+            /** Threshold */
+            threshold: number | null;
+            /**
+             * Threshold Rule
+             * @description How the threshold was derived
+             */
+            threshold_rule: string;
+            /** Land Area Km2 */
+            land_area_km2: number;
+            /** Land Fraction */
+            land_fraction: number;
+            /**
+             * Candidate Flagged Fraction
+             * @description Share of the candidate invasion zone flagged by this diagnostic
+             */
+            candidate_flagged_fraction: number;
+        };
+        /** ExtrapolationSummaryOut */
+        ExtrapolationSummaryOut: {
+            /** Reference Set */
+            reference_set: string;
+            /** N Reference */
+            n_reference: number;
+            /**
+             * N Cv Folds
+             * @description Spatial CV folds used for the MOP/Shape/AOA thresholds
+             */
+            n_cv_folds: number;
+            /**
+             * Mop Percentage
+             * @description % of closest reference points averaged by MOP
+             */
+            mop_percentage: number;
+            /** Mop K */
+            mop_k: number;
+            /**
+             * Aoa Weights
+             * @description Predictor weights of the AOA distance (permutation importance, max = 1)
+             */
+            aoa_weights: {
+                [key: string]: number;
+            };
+            /** Diagnostics */
+            diagnostics: components["schemas"]["ExtrapolationDiagnosticOut"][];
+            /**
+             * Consensus Land Area Km2
+             * @description Land area flagged by exactly 0, 1, …, 5 of the diagnostics
+             */
+            consensus_land_area_km2: number[];
+            /**
+             * Candidate Consensus Ok Fraction
+             * @description Share of the candidate zone flagged by none of the diagnostics
+             */
+            candidate_consensus_ok_fraction: number;
+            /**
+             * Candidate Consensus Majority Fraction
+             * @description Share of the candidate zone flagged by at least 3 of the 5 diagnostics
+             */
+            candidate_consensus_majority_fraction: number;
+            /** Exdet Univariate Area Km2 */
+            exdet_univariate_area_km2: number;
+            /** Exdet Combinatorial Area Km2 */
+            exdet_combinatorial_area_km2: number;
+            /**
+             * Top Combinatorial Variables
+             * @description exDet most influential covariates where NT2 > 1 (novel combinations)
+             */
+            top_combinatorial_variables: {
+                [key: string]: unknown;
+            }[];
+        };
         /** FoldMetricsOut */
         FoldMetricsOut: {
             /** Fold */
@@ -632,6 +721,12 @@ export interface components {
             extrapolation: components["schemas"]["RasterLayer"];
             /** Extrapolated Land Fraction */
             extrapolated_land_fraction?: number | null;
+            /** @description This region's own diagnostic-consensus overlay (null for legacy) */
+            consensus?: components["schemas"]["RasterLayer"] | null;
+            /** Diagnostics Land Fraction */
+            diagnostics_land_fraction?: {
+                [key: string]: number;
+            } | null;
             /** Created Ts */
             created_ts: string;
         };
@@ -718,6 +813,13 @@ export interface components {
             zones?: components["schemas"]["RasterLayer"] | null;
             /** @description MESS < 0 mask; always offered as an overlay with any projection */
             extrapolation?: components["schemas"]["RasterLayer"] | null;
+            /**
+             * Diagnostics
+             * @description Advanced extrapolation diagnostics as map views: exdet, mop, shape, aoa and consensus (empty for models trained before they existed)
+             */
+            diagnostics?: components["schemas"]["RasterLayer"][];
+            /** @description Haze overlay graded by how many diagnostics flag extrapolation; an alternative to the MESS < 0 overlay */
+            consensus_overlay?: components["schemas"]["RasterLayer"] | null;
             /** Scenarios */
             scenarios?: components["schemas"]["ScenarioLayer"][];
             /**
@@ -1064,6 +1166,8 @@ export interface components {
             top_limiting_variables: {
                 [key: string]: unknown;
             }[];
+            /** @description MESS, exDet, MOP, Shape and AOA verdicts (null for models trained before the advanced diagnostics existed) */
+            extrapolation?: components["schemas"]["ExtrapolationSummaryOut"] | null;
         };
         /** RasterLayer */
         RasterLayer: {
@@ -1160,6 +1264,15 @@ export interface components {
             extrapolation?: components["schemas"]["RasterLayer"] | null;
             /** Extrapolated Land Fraction */
             extrapolated_land_fraction?: number | null;
+            /** @description This scenario's own diagnostic-consensus overlay (null for legacy) */
+            consensus?: components["schemas"]["RasterLayer"] | null;
+            /**
+             * Diagnostics Land Fraction
+             * @description Share of land flagged by each extrapolation diagnostic
+             */
+            diagnostics_land_fraction?: {
+                [key: string]: number;
+            } | null;
         };
         /** SeverityComponents */
         SeverityComponents: {
@@ -1179,8 +1292,26 @@ export interface components {
              * @enum {string}
              */
             level: "low" | "moderate" | "high";
+            /**
+             * Basis
+             * @description consensus of the five diagnostics, or MESS for older models
+             * @default mess
+             * @enum {string}
+             */
+            basis: "consensus" | "mess";
+            /**
+             * Reasons
+             * @description Every rule that lowered confidence (empty = high)
+             */
+            reasons?: string[];
+            /** Cbi Mean */
+            cbi_mean?: number | null;
             /** Mess Ok Fraction */
             mess_ok_fraction: number;
+            /** Consensus Ok Fraction */
+            consensus_ok_fraction?: number | null;
+            /** Consensus Majority Fraction */
+            consensus_majority_fraction?: number | null;
             /**
              * Model Type
              * @enum {string}
@@ -1217,6 +1348,36 @@ export interface components {
              * @default 10
              */
             spread_window_years: number;
+            /**
+             * Confidence Low Extrapolated
+             * @description Low confidence above this share of the candidate zone flagged by ≥ 3 of the 5 extrapolation diagnostics (MESS share for models without them)
+             * @default 0.25
+             */
+            confidence_low_extrapolated: number;
+            /**
+             * Confidence Moderate Extrapolated
+             * @description Moderate confidence above this extrapolated share
+             * @default 0.1
+             */
+            confidence_moderate_extrapolated: number;
+            /**
+             * Confidence Min Analog
+             * @description Moderate confidence below this share of the candidate zone flagged by no diagnostic
+             * @default 0.6
+             */
+            confidence_min_analog: number;
+            /**
+             * Confidence Max Mess Extrapolated
+             * @description MESS cap: at most moderate confidence above this share of the candidate zone with MESS < 0
+             * @default 0.25
+             */
+            confidence_max_mess_extrapolated: number;
+            /**
+             * Confidence Min Cbi
+             * @description CBI floor: at most moderate confidence below this spatial-CV CBI
+             * @default 0.2
+             */
+            confidence_min_cbi: number;
         };
         /** SeverityResult */
         SeverityResult: {

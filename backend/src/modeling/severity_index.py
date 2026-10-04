@@ -15,9 +15,29 @@ Component definitions (each in [0, 1]):
   (default 5 cells/yr). Sensitive to sampling-effort growth — disclosed in the bulletin.
 * S_impact_prior — user-supplied ecological impact prior (e.g. from GISD/EICAT); 0.5 = unknown.
 
-Confidence is reported *separately* and never scales the score (CLAUDE.md constraint 2): it
-is driven by MESS (share of candidate area without extrapolation) and by the model design
-(Model A native-only = lower confidence).
+Confidence is reported *separately* and never scales the score (CLAUDE.md constraint 2). It
+is driven by the model design (Model A native-only = low) and by extrapolation over the
+candidate zone, judged by the consensus of the five diagnostics (MESS, exDet, MOP, Shape, AOA):
+
+* low      — Model A, or more than `confidence_low_extrapolated` (default 25 %) of the candidate
+             area is flagged by at least 3 of the 5 diagnostics;
+* moderate — more than `confidence_moderate_extrapolated` (default 10 %) is flagged by at least
+             3 of 5, or less than `confidence_min_analog` (default 60 %) is flagged by none;
+* high     — otherwise,
+
+with two caps that hold confidence at moderate at best:
+
+* MESS cap — more than `confidence_max_mess_extrapolated` (default 25 %) of the candidate area
+             has MESS < 0. MESS and exDet NT1 are the same range test, so range-only
+             extrapolation can fall short of the 3-of-5 consensus; MESS alone still caps it.
+* CBI floor — the spatially cross-validated Continuous Boyce Index is below
+             `confidence_min_cbi` (default 0.2): the model ranks presences little better than
+             random, so its projection cannot be trusted whatever the extrapolation.
+
+Models trained before the diagnostics existed fall back to MESS alone: the MESS-extrapolated
+share takes the place of the ≥ 3-of-5 share, and the "flagged by none" test is skipped.
+Every rule that lowers confidence is reported in `confidence.reasons`. Changing these thresholds
+is a documented, reviewed decision (they are user-configurable).
 """
 
 from __future__ import annotations
@@ -69,6 +89,12 @@ class SeverityConfig:
     suitability_saturation: float = 0.10
     spread_half_saturation: float = 5.0
     spread_window_years: int = 10
+    # Confidence thresholds (shares of the candidate zone) — see the module docstring.
+    confidence_low_extrapolated: float = 0.25
+    confidence_moderate_extrapolated: float = 0.10
+    confidence_min_analog: float = 0.60
+    confidence_max_mess_extrapolated: float = 0.25
+    confidence_min_cbi: float = 0.20
 
     def __post_init__(self) -> None:
         missing = set(COMPONENTS) - set(self.weights)
@@ -84,6 +110,18 @@ class SeverityConfig:
             raise ValueError("suitability_saturation must be within (0, 1]")
         if self.spread_half_saturation <= 0 or self.spread_window_years < 2:
             raise ValueError("Invalid spread-rate parameters")
+        if not (
+            0 <= self.confidence_moderate_extrapolated <= self.confidence_low_extrapolated <= 1
+        ):
+            raise ValueError(
+                "Confidence thresholds must satisfy 0 ≤ moderate ≤ low ≤ 1 (extrapolated share)"
+            )
+        if not 0 <= self.confidence_min_analog <= 1:
+            raise ValueError("confidence_min_analog must be within [0, 1]")
+        if not 0 <= self.confidence_max_mess_extrapolated <= 1:
+            raise ValueError("confidence_max_mess_extrapolated must be within [0, 1]")
+        if not -1 <= self.confidence_min_cbi <= 1:
+            raise ValueError("confidence_min_cbi must be within [-1, 1]")
 
     @property
     def normalized_weights(self) -> dict[str, float]:
@@ -110,6 +148,11 @@ class SeverityInputs:
     candidate_mess_ok_fraction: float
     new_cells_per_year: float
     model_type: str
+    # Diagnostic consensus over the candidate zone (None for models without the diagnostics)
+    candidate_consensus_ok_fraction: float | None = None
+    candidate_consensus_majority_fraction: float | None = None
+    # Spatial-CV Continuous Boyce Index of the model (None if unavailable)
+    cbi_mean: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -137,12 +180,94 @@ def spread_rate_cells_per_year(
     return float(counts.mean())
 
 
-def confidence_level(model_type: str, mess_ok_fraction: float) -> str:
-    if model_type == "A" or mess_ok_fraction < 0.5:
-        return "low"
-    if mess_ok_fraction < 0.8:
-        return "moderate"
-    return "high"
+_LEVELS = ("low", "moderate", "high")
+
+
+def confidence_level(inputs: SeverityInputs, cfg: SeverityConfig) -> tuple[str, str, list[str]]:
+    """Confidence level, its basis ("consensus" of the five diagnostics, or "mess") and every
+    rule that lowered it (empty for high confidence)."""
+    mess_extrapolated = 1.0 - inputs.candidate_mess_ok_fraction
+    if inputs.candidate_consensus_majority_fraction is not None:
+        basis = "consensus"
+        extrapolated = inputs.candidate_consensus_majority_fraction
+        analog = inputs.candidate_consensus_ok_fraction
+        flagged = "flagged by ≥ 3 of 5 extrapolation diagnostics"
+    else:
+        basis, extrapolated, analog, flagged = "mess", mess_extrapolated, None, "with MESS < 0"
+    level = "high"
+    reasons: list[str] = []
+
+    def lower(to: str, reason: str) -> None:
+        nonlocal level
+        if _LEVELS.index(to) < _LEVELS.index(level):
+            level = to
+        reasons.append(reason)
+
+    if inputs.model_type == "A":
+        lower("low", "Model A: trained on native-range records only")
+    if extrapolated > cfg.confidence_low_extrapolated:
+        lower(
+            "low",
+            f"{extrapolated:.1%} of the candidate zone {flagged} "
+            f"(> {cfg.confidence_low_extrapolated:.0%})",
+        )
+    elif extrapolated > cfg.confidence_moderate_extrapolated:
+        lower(
+            "moderate",
+            f"{extrapolated:.1%} of the candidate zone {flagged} "
+            f"(> {cfg.confidence_moderate_extrapolated:.0%})",
+        )
+    if analog is not None and analog < cfg.confidence_min_analog:
+        lower(
+            "moderate",
+            f"only {analog:.1%} of the candidate zone is flagged by no diagnostic "
+            f"(< {cfg.confidence_min_analog:.0%})",
+        )
+    if basis == "consensus" and mess_extrapolated > cfg.confidence_max_mess_extrapolated:
+        lower(
+            "moderate",
+            f"MESS cap: {mess_extrapolated:.1%} of the candidate zone has MESS < 0 "
+            f"(> {cfg.confidence_max_mess_extrapolated:.0%})",
+        )
+    cbi = inputs.cbi_mean
+    if cbi is not None and np.isfinite(cbi) and cbi < cfg.confidence_min_cbi:
+        lower(
+            "moderate",
+            f"CBI floor: spatial-CV CBI {cbi:.2f} < {cfg.confidence_min_cbi:.2f} — the model "
+            "ranks presences little better than random",
+        )
+    return level, basis, reasons
+
+
+def _confidence(inputs: SeverityInputs, cfg: SeverityConfig) -> dict[str, Any]:
+    level, basis, reasons = confidence_level(inputs, cfg)
+    if basis == "consensus":
+        note = (
+            "Confidence reflects model design, extrapolation over the candidate zone as judged "
+            "by five diagnostics (MESS, exDet, MOP, Shape, AOA; MESS alone can cap it at "
+            "moderate) and model fit (CBI floor). It does not modify the severity score."
+        )
+    else:
+        note = (
+            "Confidence reflects model design, MESS extrapolation (this model predates the "
+            "exDet/MOP/Shape/AOA diagnostics) and model fit (CBI floor). It does not modify "
+            "the severity score."
+        )
+    return {
+        "level": level,
+        "basis": basis,
+        "reasons": reasons,
+        "cbi_mean": _round_or_none(inputs.cbi_mean),
+        "mess_ok_fraction": round(inputs.candidate_mess_ok_fraction, 4),
+        "consensus_ok_fraction": _round_or_none(inputs.candidate_consensus_ok_fraction),
+        "consensus_majority_fraction": _round_or_none(inputs.candidate_consensus_majority_fraction),
+        "model_type": inputs.model_type,
+        "note": note,
+    }
+
+
+def _round_or_none(v: float | None) -> float | None:
+    return None if v is None or not np.isfinite(v) else round(v, 4)
 
 
 def compute_severity(inputs: SeverityInputs, cfg: SeverityConfig) -> dict[str, Any]:
@@ -170,15 +295,7 @@ def compute_severity(inputs: SeverityInputs, cfg: SeverityConfig) -> dict[str, A
         "descriptions": COMPONENT_DESCRIPTIONS,
         "config": cfg.to_dict(),
         "inputs": inputs.to_dict(),
-        "confidence": {
-            "level": confidence_level(inputs.model_type, inputs.candidate_mess_ok_fraction),
-            "mess_ok_fraction": round(inputs.candidate_mess_ok_fraction, 4),
-            "model_type": inputs.model_type,
-            "note": (
-                "Confidence reflects extrapolation (MESS) and model design; it does not "
-                "modify the severity score."
-            ),
-        },
+        "confidence": _confidence(inputs, cfg),
         "formula": "Severity = Σ w_i · S_i  (weights normalised to sum to 1)",
     }
 
@@ -204,4 +321,25 @@ def methods_footnote(result: dict[str, Any]) -> str:
         f"{cfg['spread_window_years']} years; impact prior = {cfg['impact_prior']:.2f} "
         f"({cfg['impact_prior_source']}). "
         + " ".join(f"S_{c}: {COMPONENT_DESCRIPTIONS[c]}" for c in COMPONENTS)
+        + _confidence_footnote(cfg)
+    )
+
+
+def _confidence_footnote(cfg: dict[str, Any]) -> str:
+    low = cfg.get("confidence_low_extrapolated", SeverityConfig.confidence_low_extrapolated)
+    mod = cfg.get(
+        "confidence_moderate_extrapolated", SeverityConfig.confidence_moderate_extrapolated
+    )
+    analog = cfg.get("confidence_min_analog", SeverityConfig.confidence_min_analog)
+    mess_cap = cfg.get(
+        "confidence_max_mess_extrapolated", SeverityConfig.confidence_max_mess_extrapolated
+    )
+    min_cbi = cfg.get("confidence_min_cbi", SeverityConfig.confidence_min_cbi)
+    return (
+        " Confidence (reported separately, never applied to the score): low for Model A or "
+        f"when more than {low:.0%} of the candidate zone is flagged as extrapolation by at "
+        f"least 3 of the 5 diagnostics (MESS, exDet, MOP, Shape, AOA); moderate when more than "
+        f"{mod:.0%} is, or less than {analog:.0%} is flagged by none; otherwise high. It is "
+        f"capped at moderate when more than {mess_cap:.0%} of the candidate zone has MESS < 0, "
+        f"or when the spatial-CV CBI is below {min_cbi:.2f}."
     )

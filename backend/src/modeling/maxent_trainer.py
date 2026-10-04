@@ -20,6 +20,7 @@ import pandas as pd
 
 from src.domain import ModelType
 from src.modeling.evaluation import (
+    ExtrapolationReference,
     FoldMetrics,
     MessReference,
     auc,
@@ -46,7 +47,7 @@ TRANSFERABILITY_CAVEAT = (
     "Native-range-only MaxEnt models show only moderate transferability to invaded ranges "
     "(mean AUC ≈ 0.7 in cross-continental evaluations). Suitability outside the training "
     "range is an exploratory screening signal, not a confident invasion forecast; interpret "
-    "together with the MESS extrapolation layer."
+    "together with the MESS extrapolation layer and the exDet / MOP / Shape / AOA diagnostics."
 )
 
 
@@ -69,6 +70,8 @@ class TrainingConfig:
     thin_km: float = 10.0
     min_presences: int = 15
     importance_repeats: int = 5
+    # MOP: share (%) of the closest reference points averaged (mop R package default: 1).
+    mop_percentage: float = 1.0
     seed: int = 42
 
     def as_dict(self) -> dict[str, Any]:
@@ -86,6 +89,7 @@ class TrainingConfig:
             "thin_km": self.thin_km,
             "min_presences": self.min_presences,
             "importance_repeats": self.importance_repeats,
+            "mop_percentage": self.mop_percentage,
             "seed": self.seed,
         }
 
@@ -128,6 +132,8 @@ class TrainingResult:
     n_presence: int
     n_background: int
     background_method: str
+    # exDet / MOP / Shape / AOA reference (None only for models trained before it existed).
+    extrapolation_reference: ExtrapolationReference | None = None
     extra: dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -169,6 +175,15 @@ def _stack_xy(data: TrainingData) -> tuple[pd.DataFrame, np.ndarray, gpd.GeoSeri
         crs="EPSG:4326",
     )
     return x, y, pts
+
+
+def spatial_fold_ids(points: gpd.GeoSeries, n_folds: int, seed: int) -> np.ndarray:
+    """Spatial CV fold of every row — the same deterministic split `spatial_block_cv` uses."""
+    ids = np.zeros(len(points), dtype=int)
+    splitter = elapid.GeographicKFold(n_splits=n_folds, random_state=seed)
+    for i, (_, te) in enumerate(splitter.split(points)):
+        ids[te] = i
+    return ids
 
 
 def spatial_block_cv(
@@ -249,6 +264,13 @@ def train_maxent(data: TrainingData, model_type: ModelType, cfg: TrainingConfig)
         train_auc=auc(pres_pred, bg_pred),
         importance=importance,
         mess_reference=MessReference.from_array(data.predictors, x.to_numpy()),
+        extrapolation_reference=ExtrapolationReference.build(
+            data.predictors,
+            x.to_numpy(),
+            folds=spatial_fold_ids(pts, cfg.n_folds, cfg.seed),
+            weights=[importance[p] for p in data.predictors],
+            mop_percentage=cfg.mop_percentage,
+        ),
         presence_envelope=envelope,
         n_presence=data.n_presence,
         n_background=data.n_background,

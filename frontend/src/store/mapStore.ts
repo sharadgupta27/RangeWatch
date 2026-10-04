@@ -14,16 +14,34 @@ export interface ViewState {
 /** [west, south, east, north] in degrees. */
 export type Bounds = [number, number, number, number]
 
-/** 'suitability' | 'zones' | 'mess' | 'scenario:<name>' */
-export type ProjectionLayerId = 'suitability' | 'zones' | 'mess' | `scenario:${string}`
+/** Extrapolation diagnostics that can be shown as the projection map's own view. */
+export type DiagnosticLayerId = 'mess' | 'exdet' | 'mop' | 'shape' | 'aoa' | 'consensus'
+export const DIAGNOSTIC_LAYER_IDS: readonly DiagnosticLayerId[] = [
+  'consensus',
+  'mess',
+  'exdet',
+  'mop',
+  'shape',
+  'aoa',
+]
+export function isDiagnosticLayer(id: string): id is DiagnosticLayerId {
+  return (DIAGNOSTIC_LAYER_IDS as readonly string[]).includes(id)
+}
+
+/** 'suitability' | 'zones' | a diagnostic | 'scenario:<name>' */
+export type ProjectionLayerId = 'suitability' | 'zones' | DiagnosticLayerId | `scenario:${string}`
+
+/** What the extrapolation overlay draws: the MESS < 0 mask or the graded diagnostic consensus. */
+export type OverlaySource = 'mess' | 'consensus'
 
 export interface MapUiState {
   viewState: ViewState
   /** What the projection map currently shows (used to pick a high-resolution region). */
   viewBounds: Bounds | null
   projection: ProjectionLayerId
-  /** MESS extrapolation overlay on top of the projection (on by default — see CLAUDE.md). */
+  /** Extrapolation overlay on top of the projection (on by default — see CLAUDE.md). */
   messOverlay: boolean
+  overlaySource: OverlaySource
   /** Regional high-resolution suitability drawn over the global current-climate layer. */
   hiresOverlay: boolean
   showNativeRange: boolean
@@ -39,6 +57,7 @@ export const mapStore = createStore<MapUiState>({
   viewBounds: null,
   projection: 'suitability',
   messOverlay: true,
+  overlaySource: 'mess',
   hiresOverlay: true,
   showNativeRange: true,
   maxYear: null,
@@ -50,6 +69,8 @@ export const mapActions = {
   setViewBounds: (viewBounds: Bounds) => mapStore.setState((s) => ({ ...s, viewBounds })),
   setProjection: (projection: ProjectionLayerId) => mapStore.setState((s) => ({ ...s, projection })),
   setMessOverlay: (messOverlay: boolean) => mapStore.setState((s) => ({ ...s, messOverlay })),
+  setOverlaySource: (overlaySource: OverlaySource) =>
+    mapStore.setState((s) => ({ ...s, overlaySource })),
   setHiresOverlay: (hiresOverlay: boolean) => mapStore.setState((s) => ({ ...s, hiresOverlay })),
   setShowNativeRange: (showNativeRange: boolean) =>
     mapStore.setState((s) => ({ ...s, showNativeRange })),
@@ -61,6 +82,7 @@ export const mapActions = {
       viewState: INITIAL_VIEW,
       projection: 'suitability',
       messOverlay: true,
+      overlaySource: 'mess',
       hiresOverlay: true,
       maxYear: null,
       playing: false,

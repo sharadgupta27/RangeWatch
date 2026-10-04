@@ -90,11 +90,30 @@ def test_full_lifecycle_follows_retrain_contract(settings):
         "mess",
         "zones",
         "extrapolation",
+        "exdet",
+        "mop",
+        "shape",
+        "aoa",
+        "consensus",
         "model",
         "training_data",
         "occurrence_manifest",
     ):
         assert p.artifacts.local_path(mv.artifacts[key]).exists(), key
+    ext = mv.metrics["projection"]["extrapolation"]
+    assert [d["id"] for d in ext["diagnostics"]] == ["mess", "exdet", "mop", "shape", "aoa"]
+    for d in ext["diagnostics"]:
+        assert 0 <= d["land_fraction"] <= 1 and 0 <= d["candidate_flagged_fraction"] <= 1
+        assert d["threshold"] is not None and d["flag_rule"] and d["reference"]
+    mess_diag = ext["diagnostics"][0]
+    # MESS verdict of the advanced summary agrees with the legacy MESS area
+    assert mess_diag["land_area_km2"] == pytest.approx(
+        mv.metrics["projection"]["extrapolation_area_km2"], rel=1e-6, abs=0.2
+    )
+    assert sum(ext["consensus_land_area_km2"]) == pytest.approx(
+        mv.metrics["projection"]["land_area_km2"], rel=1e-6
+    )
+    assert ext["n_cv_folds"] >= 2 and set(ext["aoa_weights"]) == set(mv.metrics["predictors"])
 
     m = mv.metrics
     for k in ("auc_mean", "cbi_mean", "tss_mean"):
@@ -279,9 +298,8 @@ def test_each_version_stores_a_hashed_training_snapshot(settings):
         assert man["n_rows"] == sum(mv.metrics["n_records_by_effective_label"].values())
 
     # Versions live in their own directories and are bit-for-bit reproducible.
-    assert (
-        v1.metrics["reproducibility"]["training_data"]["path"]
-        != (v2.metrics["reproducibility"]["training_data"]["path"])
+    assert v1.metrics["reproducibility"]["training_data"]["path"] != (
+        v2.metrics["reproducibility"]["training_data"]["path"]
     )
     assert (
         v1.metrics["reproducibility"]["training_data"]["sha256"]
@@ -385,10 +403,16 @@ def test_scenarios_projected_from_stored_model_with_own_mess(tmp_path, settings)
     assert out["projected"] == ["warm_2050"] and out["model_version"] == 1
     mv = p.repo.get_model_version(TAXON_KEY, 1)
     sc = mv.artifacts["scenarios"]["warm_2050"]
-    for key in ("suitability", "extrapolation"):
+    for key in ("suitability", "extrapolation", "consensus"):
         assert p.artifacts.local_path(sc[key]).exists()
     # Warming pushes BIO1 outside the training range somewhere → more extrapolation.
     assert sc["extrapolated_land_fraction"] > 0
+    assert sc["diagnostics_land_fraction"]["mess"] == sc["extrapolated_land_fraction"]
+    current = {
+        d["id"]: d["land_fraction"]
+        for d in mv.metrics["projection"]["extrapolation"]["diagnostics"]
+    }
+    assert sc["diagnostics_land_fraction"]["exdet"] >= current["exdet"]
     assert p.repo.get_species(TAXON_KEY).model_version == 1  # no retraining
     assert p.project_scenarios(TAXON_KEY)["projected"] == []  # idempotent
 
@@ -590,9 +614,11 @@ def test_hires_projection_covers_only_the_region_with_its_own_mess(settings, ext
     with rasterio.open(p.artifacts.local_path(entry["suitability"])) as src:
         assert (src.width, src.height) == (40, 28) and src.res == (0.5, 0.5)
         assert src.bounds.left == 5.0 and src.bounds.top == 52.0
-    with rasterio.open(p.artifacts.local_path(entry["extrapolation"])) as src:
-        assert (src.width, src.height) == (40, 28)
+    for key in ("extrapolation", "consensus"):
+        with rasterio.open(p.artifacts.local_path(entry[key])) as src:
+            assert (src.width, src.height) == (40, 28)
     assert 0 <= entry["extrapolated_land_fraction"] <= 1
+    assert set(entry["diagnostics_land_fraction"]) == {"mess", "exdet", "mop", "shape", "aoa"}
 
     p.settings = replace_settings(p.settings, hires_max_cells=100)
     with pytest.raises(ValueError, match="choose a smaller area"):

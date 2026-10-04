@@ -1,7 +1,16 @@
 import type { RasterLayer } from '@/api/types'
 import { cn } from '@/lib/utils'
 
-export function RasterLegend({ layer, className }: { layer: RasterLayer; className?: string }) {
+export function RasterLegend({
+  layer,
+  className,
+  showDescription = false,
+}: {
+  layer: RasterLayer
+  className?: string
+  /** Print what the layer measures under the legend (diagnostics must not be black boxes). */
+  showDescription?: boolean
+}) {
   return (
     <div
       className={cn(
@@ -32,6 +41,9 @@ export function RasterLegend({ layer, className }: { layer: RasterLayer; classNa
             </li>
           ))}
         </ul>
+      )}
+      {showDescription && (
+        <p className="mt-1.5 max-w-64 leading-snug text-muted-foreground">{layer.description}</p>
       )}
     </div>
   )

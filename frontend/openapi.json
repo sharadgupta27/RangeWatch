@@ -1652,6 +1652,174 @@
         "type": "object",
         "title": "CrossCheckMetricsOut"
       },
+      "ExtrapolationDiagnosticOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "enum": [
+              "mess",
+              "exdet",
+              "mop",
+              "shape",
+              "aoa"
+            ],
+            "title": "Id"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "reference": {
+            "type": "string",
+            "title": "Reference"
+          },
+          "flag_rule": {
+            "type": "string",
+            "title": "Flag Rule",
+            "description": "When this diagnostic flags a cell as extrapolation"
+          },
+          "threshold": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Threshold"
+          },
+          "threshold_rule": {
+            "type": "string",
+            "title": "Threshold Rule",
+            "description": "How the threshold was derived"
+          },
+          "land_area_km2": {
+            "type": "number",
+            "title": "Land Area Km2"
+          },
+          "land_fraction": {
+            "type": "number",
+            "title": "Land Fraction"
+          },
+          "candidate_flagged_fraction": {
+            "type": "number",
+            "title": "Candidate Flagged Fraction",
+            "description": "Share of the candidate invasion zone flagged by this diagnostic"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "label",
+          "name",
+          "reference",
+          "flag_rule",
+          "threshold",
+          "threshold_rule",
+          "land_area_km2",
+          "land_fraction",
+          "candidate_flagged_fraction"
+        ],
+        "title": "ExtrapolationDiagnosticOut"
+      },
+      "ExtrapolationSummaryOut": {
+        "properties": {
+          "reference_set": {
+            "type": "string",
+            "title": "Reference Set"
+          },
+          "n_reference": {
+            "type": "integer",
+            "title": "N Reference"
+          },
+          "n_cv_folds": {
+            "type": "integer",
+            "title": "N Cv Folds",
+            "description": "Spatial CV folds used for the MOP/Shape/AOA thresholds"
+          },
+          "mop_percentage": {
+            "type": "number",
+            "title": "Mop Percentage",
+            "description": "% of closest reference points averaged by MOP"
+          },
+          "mop_k": {
+            "type": "integer",
+            "title": "Mop K"
+          },
+          "aoa_weights": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "type": "object",
+            "title": "Aoa Weights",
+            "description": "Predictor weights of the AOA distance (permutation importance, max = 1)"
+          },
+          "diagnostics": {
+            "items": {
+              "$ref": "#/components/schemas/ExtrapolationDiagnosticOut"
+            },
+            "type": "array",
+            "title": "Diagnostics"
+          },
+          "consensus_land_area_km2": {
+            "items": {
+              "type": "number"
+            },
+            "type": "array",
+            "title": "Consensus Land Area Km2",
+            "description": "Land area flagged by exactly 0, 1, \u2026, 5 of the diagnostics"
+          },
+          "candidate_consensus_ok_fraction": {
+            "type": "number",
+            "title": "Candidate Consensus Ok Fraction",
+            "description": "Share of the candidate zone flagged by none of the diagnostics"
+          },
+          "candidate_consensus_majority_fraction": {
+            "type": "number",
+            "title": "Candidate Consensus Majority Fraction",
+            "description": "Share of the candidate zone flagged by at least 3 of the 5 diagnostics"
+          },
+          "exdet_univariate_area_km2": {
+            "type": "number",
+            "title": "Exdet Univariate Area Km2"
+          },
+          "exdet_combinatorial_area_km2": {
+            "type": "number",
+            "title": "Exdet Combinatorial Area Km2"
+          },
+          "top_combinatorial_variables": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Top Combinatorial Variables",
+            "description": "exDet most influential covariates where NT2 > 1 (novel combinations)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "reference_set",
+          "n_reference",
+          "n_cv_folds",
+          "mop_percentage",
+          "mop_k",
+          "aoa_weights",
+          "diagnostics",
+          "consensus_land_area_km2",
+          "candidate_consensus_ok_fraction",
+          "candidate_consensus_majority_fraction",
+          "exdet_univariate_area_km2",
+          "exdet_combinatorial_area_km2",
+          "top_combinatorial_variables"
+        ],
+        "title": "ExtrapolationSummaryOut"
+      },
       "FoldMetricsOut": {
         "properties": {
           "fold": {
@@ -1843,6 +2011,31 @@
               }
             ],
             "title": "Extrapolated Land Fraction"
+          },
+          "consensus": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RasterLayer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "This region's own diagnostic-consensus overlay (null for legacy)"
+          },
+          "diagnostics_land_fraction": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "number"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Diagnostics Land Fraction"
           },
           "created_ts": {
             "type": "string",
@@ -2085,6 +2278,25 @@
               }
             ],
             "description": "MESS < 0 mask; always offered as an overlay with any projection"
+          },
+          "diagnostics": {
+            "items": {
+              "$ref": "#/components/schemas/RasterLayer"
+            },
+            "type": "array",
+            "title": "Diagnostics",
+            "description": "Advanced extrapolation diagnostics as map views: exdet, mop, shape, aoa and consensus (empty for models trained before they existed)"
+          },
+          "consensus_overlay": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RasterLayer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Haze overlay graded by how many diagnostics flag extrapolation; an alternative to the MESS < 0 overlay"
           },
           "scenarios": {
             "items": {
@@ -3087,6 +3299,17 @@
             },
             "type": "array",
             "title": "Top Limiting Variables"
+          },
+          "extrapolation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExtrapolationSummaryOut"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "MESS, exDet, MOP, Shape and AOA verdicts (null for models trained before the advanced diagnostics existed)"
           }
         },
         "type": "object",
@@ -3364,6 +3587,32 @@
               }
             ],
             "title": "Extrapolated Land Fraction"
+          },
+          "consensus": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RasterLayer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "This scenario's own diagnostic-consensus overlay (null for legacy)"
+          },
+          "diagnostics_land_fraction": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "number"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Diagnostics Land Fraction",
+            "description": "Share of land flagged by each extrapolation diagnostic"
           }
         },
         "type": "object",
@@ -3414,9 +3663,60 @@
             ],
             "title": "Level"
           },
+          "basis": {
+            "type": "string",
+            "enum": [
+              "consensus",
+              "mess"
+            ],
+            "title": "Basis",
+            "description": "consensus of the five diagnostics, or MESS for older models",
+            "default": "mess"
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Reasons",
+            "description": "Every rule that lowered confidence (empty = high)"
+          },
+          "cbi_mean": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cbi Mean"
+          },
           "mess_ok_fraction": {
             "type": "number",
             "title": "Mess Ok Fraction"
+          },
+          "consensus_ok_fraction": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Consensus Ok Fraction"
+          },
+          "consensus_majority_fraction": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Consensus Majority Fraction"
           },
           "model_type": {
             "type": "string",
@@ -3476,6 +3776,46 @@
             "minimum": 2.0,
             "title": "Spread Window Years",
             "default": 10
+          },
+          "confidence_low_extrapolated": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Confidence Low Extrapolated",
+            "description": "Low confidence above this share of the candidate zone flagged by \u2265 3 of the 5 extrapolation diagnostics (MESS share for models without them)",
+            "default": 0.25
+          },
+          "confidence_moderate_extrapolated": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Confidence Moderate Extrapolated",
+            "description": "Moderate confidence above this extrapolated share",
+            "default": 0.1
+          },
+          "confidence_min_analog": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Confidence Min Analog",
+            "description": "Moderate confidence below this share of the candidate zone flagged by no diagnostic",
+            "default": 0.6
+          },
+          "confidence_max_mess_extrapolated": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Confidence Max Mess Extrapolated",
+            "description": "MESS cap: at most moderate confidence above this share of the candidate zone with MESS < 0",
+            "default": 0.25
+          },
+          "confidence_min_cbi": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": -1.0,
+            "title": "Confidence Min Cbi",
+            "description": "CBI floor: at most moderate confidence below this spatial-CV CBI",
+            "default": 0.2
           }
         },
         "type": "object",

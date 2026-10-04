@@ -33,6 +33,20 @@ REFERENCES = [
     "surfaces for global land areas. International Journal of Climatology 37: 4302–4315.",
     "Elith, J., Kearney, M. & Phillips, S. (2010). The art of modelling range-shifting "
     "species. Methods in Ecology and Evolution 1: 330–342 (MESS).",
+    "Mesgaran, M.B., Cousens, R.D. & Webber, B.L. (2014). Here be dragons: a tool for "
+    "quantifying novelty due to covariate range and correlation change when projecting species "
+    "distribution models. Diversity and Distributions 20: 1147–1159 (exDet).",
+    "Owens, H.L. et al. (2013). Constraints on interpretation of ecological niche models by "
+    "limited environmental ranges on calibration areas. Ecological Modelling 263: 10–18 (MOP).",
+    "Cobos, M.E., Owens, H.L., Soberón, J. & Peterson, A.T. (2024). Detailed multivariate "
+    "comparisons of environments with mobility oriented parity. Frontiers of Biogeography 17: "
+    "e132916 (mop).",
+    "Velazco, S.J.E., Rose, M.B., De Marco Jr., P., Regan, H.M. & Franklin, J. (2024). How far "
+    "can I extrapolate my species distribution model? Exploring Shape, a novel method. "
+    "Ecography 2024: e06992 (Shape).",
+    "Meyer, H. & Pebesma, E. (2021). Predicting into unknown space? Estimating the area of "
+    "applicability of spatial prediction models. Methods in Ecology and Evolution 12: "
+    "1620–1633 (AOA).",
     "Hirzel, A.H. et al. (2006). Evaluating the ability of habitat suitability models to "
     "predict species presences. Ecological Modelling 199: 142–152 (Continuous Boyce Index).",
     "Broennimann, O. et al. (2015). Ecological niche transferability using invasive species "
@@ -113,9 +127,19 @@ class BulletinGenerator:
         mess_arr, _ = read_raster_overview(
             self.artifacts.local_path(mv.artifacts["mess"]), max_width=1800
         )
+        consensus_fig = None
+        if "consensus" in mv.artifacts:
+            consensus, t_cons = read_raster_overview(
+                self.artifacts.local_path(mv.artifacts["consensus"]),
+                max_width=1800,
+                mask_fn=lambda a: a,
+                resampling=Resampling.nearest,
+            )
+            consensus_fig = charts.consensus_map(consensus, t_cons, nr.geometry)
         figures = {
             "native_map": charts.native_range_map(suit, t_suit, m["threshold"], occ, nr.geometry),
             "global_map": charts.global_projection_map(zones, mess_arr, t_zones, nr.geometry),
+            "consensus_map": consensus_fig,
             "gauge": charts.severity_gauge(sev) if sev else None,
             "importance": charts.variable_importance_chart(m["variable_importance"]),
             "timeline": charts.timeline_chart(timeline),
@@ -131,6 +155,7 @@ class BulletinGenerator:
             "figures": figures,
             "summary": self.executive_summary(species, mv),
             "outlook": self.expansion_outlook(species, mv, timeline),
+            "extrapolation": extrapolation_context(m["projection"].get("extrapolation")),
             "caveat": TRANSFERABILITY_CAVEAT,
             "severity_footnote": methods_footnote(sev) if sev else "",
             "severity_components": COMPONENTS,
@@ -163,7 +188,19 @@ class BulletinGenerator:
             f"invasion/expansion zones), plus {p['established_outside_area_km2']:,.0f} km² "
             f"suitable and already occupied outside the native range. "
             f"{100 * p['candidate_mess_ok_fraction']:.0f}% of the candidate area lies within the "
-            f"training climate space (MESS ≥ 0). Top contributing predictors: {top_txt}."
+            f"training climate space (MESS ≥ 0)"
+            f"{self._consensus_phrase(p.get('extrapolation'))}. "
+            f"Top contributing predictors: {top_txt}."
+        )
+
+    @staticmethod
+    def _consensus_phrase(ext: dict[str, Any] | None) -> str:
+        if not ext:
+            return ""
+        return (
+            f"; {100 * ext['candidate_consensus_ok_fraction']:.0f}% is flagged by none of the "
+            f"five extrapolation diagnostics (MESS, exDet, MOP, Shape, AOA) and "
+            f"{100 * ext['candidate_consensus_majority_fraction']:.0f}% by at least three"
         )
 
     def expansion_outlook(
@@ -197,6 +234,20 @@ class BulletinGenerator:
             ],
             "spread_rate": (mv.severity or {}).get("inputs", {}).get("new_cells_per_year"),
         }
+
+
+def extrapolation_context(ext: dict[str, Any] | None) -> dict[str, Any] | None:
+    """The advanced-diagnostics section: per-method verdicts plus the variables driving novel
+    combinations (None for models trained before the diagnostics existed)."""
+    if not ext:
+        return None
+    return {
+        **ext,
+        "combinatorial": [
+            {**d, "name": BIOCLIM_DESCRIPTIONS.get(d["variable"], d["variable"])}
+            for d in ext.get("top_combinatorial_variables", [])
+        ],
+    }
 
 
 def native_range_status_text(nr: NativeRange) -> str:

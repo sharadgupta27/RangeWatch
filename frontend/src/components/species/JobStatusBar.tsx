@@ -8,7 +8,7 @@ const STAGE_LABEL: Record<string, string> = {
   raw_occurrences: 'Fetching occurrences',
   features: 'Extracting bioclim features',
   model: 'Training MaxEnt (spatial block CV)',
-  suitability_raster: 'Projecting suitability + MESS',
+  suitability_raster: 'Projecting suitability + extrapolation diagnostics',
   bulletin: 'Rendering bulletin',
   scenarios: 'Projecting climate scenarios',
   validation: 'Evaluating reference species',

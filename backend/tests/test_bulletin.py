@@ -18,6 +18,7 @@ def test_bulletin_html_contains_all_sections(trained):  # noqa: F811
         "Executive summary",
         "Native range and suitability",
         "Global projection, candidate invasion zones and extrapolation",
+        "Extrapolation diagnostics",
         "Severity index",
         "Variable importance",
         "Model diagnostics",
@@ -30,7 +31,10 @@ def test_bulletin_html_contains_all_sections(trained):  # noqa: F811
     assert "MESS &lt; 0" in html  # uncertainty layer always explained
     assert "Severity index = " in html  # weights documented, not a black box
     assert "GBIF.org" in html  # citation
-    assert html.count("data:image/png;base64,") == 5  # all figures embedded
+    for method in ("exDet", "MOP", "Shape", "AOA", "Mesgaran", "Meyer &amp; Pebesma"):
+        assert method in html, method  # every diagnostic listed with its reference
+    assert "NT1 &lt; 0 or NT2 &gt; 1" in html  # flag rules documented
+    assert html.count("data:image/png;base64,") == 6  # all figures embedded (+ consensus map)
     order = [
         html.index(f"<td>{c}</td>")
         for c in ("suitability", "climate analogy", "spread rate", "ecological impact prior")

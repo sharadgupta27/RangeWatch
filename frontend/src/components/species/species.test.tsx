@@ -39,6 +39,11 @@ describe('severity config schema', () => {
     suitability_saturation: 0.1,
     spread_half_saturation: 5,
     spread_window_years: 10,
+    confidence_low_extrapolated: 0.25,
+    confidence_moderate_extrapolated: 0.1,
+    confidence_min_analog: 0.6,
+    confidence_max_mess_extrapolated: 0.25,
+    confidence_min_cbi: 0.2,
   }
 
   it('accepts valid configs and rejects invalid ones', () => {
@@ -55,6 +60,15 @@ describe('severity config schema', () => {
       severityConfigSchema.safeParse({ ...valid, weights: { ...valid.weights, spread_rate: -1 } })
         .success,
     ).toBe(false)
+  })
+
+  it('keeps the confidence thresholds ordered (moderate ≤ low)', () => {
+    const bad = severityConfigSchema.safeParse({ ...valid, confidence_moderate_extrapolated: 0.4 })
+    expect(bad.success).toBe(false)
+    expect(bad.error?.issues[0]?.path).toEqual(['confidence_moderate_extrapolated'])
+    expect(severityConfigSchema.safeParse({ ...valid, confidence_min_analog: 1.5 }).success).toBe(false)
+    expect(severityConfigSchema.safeParse({ ...valid, confidence_min_cbi: -0.5 }).success).toBe(true)
+    expect(severityConfigSchema.safeParse({ ...valid, confidence_min_cbi: 1.5 }).success).toBe(false)
   })
 
   it('normalises weights for display', () => {

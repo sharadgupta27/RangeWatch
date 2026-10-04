@@ -76,6 +76,11 @@ def test_weights_are_normalised_and_configurable():
         {"weights": {"suitability": 1}},
         {"impact_prior": 1.5},
         {"suitability_saturation": 0},
+        {"confidence_low_extrapolated": 0.05, "confidence_moderate_extrapolated": 0.1},
+        {"confidence_low_extrapolated": 1.2},
+        {"confidence_min_analog": -0.1},
+        {"confidence_max_mess_extrapolated": 1.5},
+        {"confidence_min_cbi": -2},
     ],
 )
 def test_invalid_config_rejected(kw):
@@ -90,6 +95,86 @@ def test_mess_changes_confidence_not_score():
     assert hi["score"] == lo["score"]
     assert hi["confidence"]["level"] == "high"
     assert lo["confidence"]["level"] == "low"
+
+
+def test_consensus_drives_confidence_with_configurable_thresholds():
+    """Confidence uses the five-diagnostic consensus when the model has it — never the score."""
+
+    def conf(ok: float, majority: float, cfg: SeverityConfig | None = None) -> dict:
+        res = compute_severity(
+            _inputs(
+                candidate_mess_ok_fraction=0.99,  # MESS alone would say "high"
+                candidate_consensus_ok_fraction=ok,
+                candidate_consensus_majority_fraction=majority,
+            ),
+            cfg or SeverityConfig(),
+        )
+        return res
+
+    high, mod, low = conf(0.9, 0.05), conf(0.7, 0.15), conf(0.5, 0.4)
+    assert high["score"] == mod["score"] == low["score"]
+    assert [r["confidence"]["level"] for r in (high, mod, low)] == ["high", "moderate", "low"]
+    assert high["confidence"]["basis"] == "consensus"
+    assert high["confidence"]["consensus_majority_fraction"] == 0.05
+    # few cells robustly extrapolated, but too few fully analogous → moderate
+    assert conf(0.5, 0.05)["confidence"]["level"] == "moderate"
+    # thresholds are user-configurable
+    lenient = SeverityConfig(
+        confidence_low_extrapolated=0.5,
+        confidence_moderate_extrapolated=0.45,
+        confidence_min_analog=0.3,
+    )
+    assert conf(0.5, 0.4, lenient)["confidence"]["level"] == "high"
+    assert "25%" in methods_footnote(high) and "3 of the 5" in methods_footnote(high)
+
+
+def test_mess_cap_holds_confidence_at_moderate_when_consensus_is_lenient():
+    """Range-only extrapolation (MESS & exDet NT1 agree, distance methods do not) can miss the
+    3-of-5 consensus; MESS alone still caps confidence."""
+    inputs = _inputs(
+        candidate_mess_ok_fraction=0.70,
+        candidate_consensus_ok_fraction=0.67,
+        candidate_consensus_majority_fraction=0.098,
+    )
+    res = compute_severity(inputs, SeverityConfig())
+    assert res["confidence"]["level"] == "moderate"
+    assert res["confidence"]["reasons"] == [
+        "MESS cap: 30.0% of the candidate zone has MESS < 0 (> 25%)"
+    ]
+    relaxed = SeverityConfig(confidence_max_mess_extrapolated=0.5)
+    assert compute_severity(inputs, relaxed)["confidence"]["level"] == "high"
+
+
+def test_cbi_floor_holds_confidence_at_moderate_without_touching_the_score():
+    good = compute_severity(
+        _inputs(candidate_mess_ok_fraction=0.99, cbi_mean=0.9), SeverityConfig()
+    )
+    poor = compute_severity(
+        _inputs(candidate_mess_ok_fraction=0.99, cbi_mean=-0.02), SeverityConfig()
+    )
+    assert good["score"] == poor["score"]
+    assert good["confidence"]["level"] == "high" and good["confidence"]["reasons"] == []
+    assert poor["confidence"]["level"] == "moderate"
+    assert poor["confidence"]["reasons"][0].startswith("CBI floor: spatial-CV CBI -0.02 < 0.20")
+    assert poor["confidence"]["cbi_mean"] == -0.02
+    # a cap never raises confidence, and low stays low
+    low = compute_severity(
+        _inputs(candidate_mess_ok_fraction=0.1, cbi_mean=-0.02), SeverityConfig()
+    )
+    assert low["confidence"]["level"] == "low" and len(low["confidence"]["reasons"]) == 2
+    # unknown CBI does not cap
+    nan = compute_severity(
+        _inputs(candidate_mess_ok_fraction=0.99, cbi_mean=float("nan")), SeverityConfig()
+    )
+    assert nan["confidence"]["level"] == "high" and nan["confidence"]["cbi_mean"] is None
+    assert "CBI is below 0.20" in methods_footnote(poor)
+
+
+def test_models_without_diagnostics_fall_back_to_mess_with_the_same_thresholds():
+    res = compute_severity(_inputs(candidate_mess_ok_fraction=0.85), SeverityConfig())
+    assert res["confidence"]["basis"] == "mess"
+    assert res["confidence"]["level"] == "moderate"  # 15 % MESS-extrapolated > 10 %
+    assert res["confidence"]["consensus_ok_fraction"] is None
 
 
 def test_model_a_is_low_confidence():

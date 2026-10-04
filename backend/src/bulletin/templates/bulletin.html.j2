@@ -58,6 +58,42 @@
     confidence. {{ m.projection.extrapolation_area_km2 | num }} km² of land is extrapolated.</p>
 </section>
 
+{% if extrapolation %}
+<!-- 4b. Advanced extrapolation diagnostics -->
+<section class="figure">
+  <h2>Extrapolation diagnostics</h2>
+  {% if figures.consensus_map %}<img src="{{ figures.consensus_map }}" alt="Extrapolation consensus map">{% endif %}
+  <p class="caption">Number of the five diagnostics that flag each land cell as extrapolation.
+    They test different things: MESS and exDet NT1 check predictor ranges, exDet NT2 detects
+    novel combinations of in-range values, MOP and Shape measure distance to the closest
+    analogous training conditions, and AOA measures distance in the importance-weighted
+    predictor space the model relies on. Where several agree, suitability is least reliable.
+    {{ (extrapolation.candidate_consensus_ok_fraction * 100) | num }}% of the candidate zone is
+    flagged by none and {{ (extrapolation.candidate_consensus_majority_fraction * 100) | num }}%
+    by at least three.</p>
+  <table class="compact">
+    <tr><th>Diagnostic</th><th>Flags extrapolation when</th><th>Threshold</th>
+        <th>Land flagged</th><th>Candidate zone flagged</th></tr>
+    {% for d in extrapolation.diagnostics %}
+    <tr><td>{{ d.label }} <span class="small">({{ d.reference }})</span></td>
+        <td>{{ d.flag_rule }}</td>
+        <td>{{ d.threshold | num(3) }}</td>
+        <td>{{ (d.land_fraction * 100) | num(1) }}%</td>
+        <td>{{ (d.candidate_flagged_fraction * 100) | num(1) }}%</td></tr>
+    {% endfor %}
+  </table>
+  <p class="small">Reference set: {{ extrapolation.reference_set }}
+    (n = {{ extrapolation.n_reference | num }}). exDet uses its published cut-offs (NT1 &lt; 0,
+    NT2 &gt; 1). MOP (mean distance to the closest {{ extrapolation.mop_percentage }}% of
+    reference points, z-scored), Shape and AOA (importance-weighted) thresholds are the
+    outlier-trimmed maximum, min(Q75 + 1.5·IQR, max), of the training points' values against
+    the other {{ extrapolation.n_cv_folds - 1 }} spatial CV folds (Meyer &amp; Pebesma 2021).
+    {% if extrapolation.combinatorial %}Novel combinations (exDet NT2 &gt; 1,
+    {{ extrapolation.exdet_combinatorial_area_km2 | num }} km²) are driven mainly by
+    {% for d in extrapolation.combinatorial %}{{ d.name }}{% if not loop.last %}, {% endif %}{% endfor %}.{% endif %}</p>
+</section>
+{% endif %}
+
 <div class="two-col">
   <!-- 5. Severity gauge -->
   <section>
@@ -73,8 +109,11 @@
       <tr class="total"><td>Severity</td><td></td><td></td><td>{{ sev.score | num(3) }}</td></tr>
     </table>
     <p class="small">Confidence: <strong>{{ sev.confidence.level }}</strong>
-      ({{ (sev.confidence.mess_ok_fraction * 100) | num }}% of candidate area with MESS ≥ 0;
-      {{ sev.confidence.note }})</p>
+      ({% if sev.confidence.basis == "consensus" %}{{ (sev.confidence.consensus_majority_fraction * 100) | num }}%
+      of candidate area flagged by ≥ 3 of 5 extrapolation diagnostics,
+      {{ (sev.confidence.consensus_ok_fraction * 100) | num }}% by none; {% endif %}{{ (sev.confidence.mess_ok_fraction * 100) | num }}%
+      with MESS ≥ 0. {{ sev.confidence.note }})
+      {% if sev.confidence.reasons %}Lowered by: {{ sev.confidence.reasons | join('; ') }}.{% endif %}</p>
   </section>
 
   <!-- 6. Variable importance -->

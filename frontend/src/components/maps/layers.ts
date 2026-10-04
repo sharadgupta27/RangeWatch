@@ -11,6 +11,7 @@ import { BitmapLayer, GeoJsonLayer } from '@deck.gl/layers'
 import type { Feature, MultiPolygon, Polygon } from 'geojson'
 
 import type { HiresLayer, RasterLayer, VectorLayer } from '@/api/types'
+import { isDiagnosticLayer, type OverlaySource } from '@/store/mapStore'
 
 export type RGBA = [number, number, number, number]
 
@@ -139,9 +140,14 @@ export const HIRES_OUTLINE: RGBA = [250, 204, 21, 230]
 
 /**
  * Regional high-resolution suitability drawn over the global current-climate layer, with
- * that region's own MESS mask (when the overlay is on) and an outline of the region.
+ * that region's own extrapolation overlay (MESS mask, or the diagnostic consensus when chosen
+ * and available) and an outline of the region.
  */
-export function hiresLayers(hires: HiresLayer | null | undefined, messOverlay: boolean): Layer[] {
+export function hiresLayers(
+  hires: HiresLayer | null | undefined,
+  messOverlay: boolean,
+  overlaySource: OverlaySource = 'mess',
+): Layer[] {
   if (!hires) return []
   const [west, south, east, north] = hires.bbox as [number, number, number, number]
   const extent: [number, number, number, number] = [west, south, east, north]
@@ -149,9 +155,8 @@ export function hiresLayers(hires: HiresLayer | null | undefined, messOverlay: b
     rasterTileLayer({ id: 'hires-suitability', layer: hires.suitability, extent, opacity: 0.95 }),
   ]
   if (messOverlay) {
-    out.push(
-      rasterTileLayer({ id: 'hires-extrapolation', layer: hires.extrapolation, extent, opacity: 0.75 }),
-    )
+    const overlay = (overlaySource === 'consensus' && hires.consensus) || hires.extrapolation
+    out.push(rasterTileLayer({ id: 'hires-extrapolation', layer: overlay, extent, opacity: 0.75 }))
   }
   out.push(
     new GeoJsonLayer({
@@ -181,12 +186,13 @@ export interface ProjectionLayerConfig {
 
 /**
  * The projection stack for the right-hand map: the chosen projection plus — whenever that
- * projection is a suitability/zones view — the MESS extrapolation overlay when enabled.
+ * projection is a suitability/zones view — the extrapolation overlay when enabled. Diagnostic
+ * views (MESS, exDet, MOP, Shape, AOA, consensus) are the uncertainty itself: no overlay.
  */
 export function projectionLayers(cfg: ProjectionLayerConfig, messOverlay: boolean): Layer[] {
   const out: Layer[] = []
   if (cfg.base) out.push(rasterTileLayer({ id: `projection-${cfg.base.id}`, layer: cfg.base }))
-  const showsSuitability = cfg.base !== null && cfg.base.id !== 'mess'
+  const showsSuitability = cfg.base !== null && !isDiagnosticLayer(cfg.base.id)
   if (cfg.extrapolation && messOverlay && showsSuitability) {
     out.push(
       rasterTileLayer({ id: 'extrapolation-overlay', layer: cfg.extrapolation, opacity: 0.75 }),

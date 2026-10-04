@@ -139,6 +139,44 @@ def global_projection_map(
     return _to_data_uri(fig)
 
 
+CONSENSUS_COLORS = ["#4393c3", "#fee5d9", "#fcae91", "#fb6a4a", "#de2d26", "#a50f15"]
+
+
+def consensus_map(consensus: np.ndarray, transform: Affine, native_geojson: dict[str, Any]) -> str:
+    """How many of the five extrapolation diagnostics flag each land cell (0–5)."""
+    fig, ax = plt.subplots(figsize=(7.2, 3.6))
+    ext = _extent(consensus, transform)
+    c = np.where(consensus == 255, np.nan, consensus.astype("float32"))
+    ax.set_facecolor("#dbe9f4")
+    ax.imshow(
+        c,
+        extent=ext,
+        cmap=ListedColormap(CONSENSUS_COLORS),
+        vmin=-0.5,
+        vmax=5.5,
+        interpolation="nearest",
+    )
+    _plot_polygon(ax, native_geojson, color=INK, lw=0.8, ls="--")
+    ax.set_xlim(-180, 180)
+    ax.set_ylim(-60, 85)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    handles = [
+        Patch(color=col, label="none" if n == 0 else f"{n} of 5")
+        for n, col in enumerate(CONSENSUS_COLORS)
+    ]
+    ax.legend(
+        handles=handles,
+        title="Diagnostics flagging extrapolation",
+        title_fontsize=6,
+        loc="lower left",
+        fontsize=6,
+        frameon=True,
+        ncol=2,
+    )
+    return _to_data_uri(fig)
+
+
 def severity_gauge(severity: dict[str, Any]) -> str:
     """Radial gauge: the arc is split into weighted component contributions."""
     fig, ax = plt.subplots(figsize=(3.6, 2.2))

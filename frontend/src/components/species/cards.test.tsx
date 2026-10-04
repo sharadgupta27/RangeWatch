@@ -1,12 +1,20 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 
-import type { BioclimInfo, ClimateCrossCheckOut, LayerSet, ModelVersionDetail } from '@/api/types'
-import { mapActions } from '@/store/mapStore'
+import type {
+  BioclimInfo,
+  ClimateCrossCheckOut,
+  ExtrapolationSummaryOut,
+  LayerSet,
+  ModelVersionDetail,
+} from '@/api/types'
+import { TooltipProvider } from '@/components/ui/tooltip'
+import { mapActions, mapStore } from '@/store/mapStore'
 
 import { CrossCheckCard } from './CrossCheckCard'
+import { ExtrapolationCard } from './ExtrapolationCard'
 import { estimateCells, HiresCard } from './HiresCard'
 
 // The generated API client is mocked: unit tests never call the real backend.
@@ -134,5 +142,75 @@ describe('climate cross-check card', () => {
     expect(screen.getByText('Not cross-checked yet.')).toBeInTheDocument()
     expect(screen.getByText('bioclim_store build-chelsa')).toBeInTheDocument()
     expect(screen.queryByRole('button')).toBeNull()
+  })
+})
+
+const diag = (
+  id: 'mess' | 'exdet' | 'mop' | 'shape' | 'aoa',
+  label: string,
+  threshold: number,
+  candidate: number,
+) => ({
+  id,
+  label,
+  name: `${label} long name`,
+  reference: 'Someone et al.',
+  flag_rule: `${label} rule`,
+  threshold,
+  threshold_rule: 'outlier-trimmed maximum',
+  land_area_km2: 1000,
+  land_fraction: 0.2,
+  candidate_flagged_fraction: candidate,
+})
+
+const extrapolation: ExtrapolationSummaryOut = {
+  reference_set: 'training presences + background (as for MESS)',
+  n_reference: 10250,
+  n_cv_folds: 4,
+  mop_percentage: 1,
+  mop_k: 103,
+  aoa_weights: { bio1: 1, bio12: 0.4 },
+  diagnostics: [
+    diag('mess', 'MESS', 0, 0.1),
+    diag('exdet', 'exDet', 1, 0.15),
+    diag('mop', 'MOP', 1.23, 0.3),
+    diag('shape', 'Shape', 87.5, 0.25),
+    diag('aoa', 'AOA', 0.412, 0.35),
+  ],
+  consensus_land_area_km2: [10, 5, 4, 3, 2, 1],
+  candidate_consensus_ok_fraction: 0.6,
+  candidate_consensus_majority_fraction: 0.3,
+  exdet_univariate_area_km2: 500,
+  exdet_combinatorial_area_km2: 1200,
+  top_combinatorial_variables: [{ variable: 'bio12', area_km2: 900 }],
+}
+
+describe('extrapolation diagnostics card', () => {
+  it('lists every diagnostic with its rule, threshold and flagged shares', () => {
+    wrap(
+      <TooltipProvider>
+        <ExtrapolationCard summary={extrapolation} />
+      </TooltipProvider>,
+    )
+    for (const label of ['MESS', 'exDet', 'MOP', 'Shape', 'AOA']) {
+      expect(screen.getByText(`${label} rule`)).toBeInTheDocument()
+    }
+    expect(screen.getByText('1.23')).toBeInTheDocument()
+    expect(screen.getByText('0.412')).toBeInTheDocument()
+    expect(screen.getByText('60.0% of candidate zone flagged by none')).toBeInTheDocument()
+    expect(screen.getByText('30.0% flagged by ≥ 3 of 5')).toBeInTheDocument()
+    expect(screen.getByText(/BIO1 1.00 · BIO12 0.40/)).toBeInTheDocument()
+    expect(screen.getByText(/driven mainly by BIO12/)).toBeInTheDocument()
+  })
+
+  it('opens a diagnostic on the projection map', () => {
+    wrap(
+      <TooltipProvider>
+        <ExtrapolationCard summary={extrapolation} />
+      </TooltipProvider>,
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Show AOA on the map' }))
+    expect(mapStore.state.projection).toBe('aoa')
+    mapActions.resetForSpecies()
   })
 })

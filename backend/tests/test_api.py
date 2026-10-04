@@ -206,6 +206,28 @@ def test_layers_always_pair_suitability_with_mess(client):
     assert [e["value"] for e in layers["zones"]["legend"]] == [1, 2, 3]
 
 
+def test_layers_offer_advanced_extrapolation_diagnostics(client):
+    layers = client.get(f"/species/{TAXON_KEY}/layers").json()
+    assert [d["id"] for d in layers["diagnostics"]] == ["exdet", "mop", "shape", "aoa", "consensus"]
+    by_id = {d["id"]: d for d in layers["diagnostics"]}
+    detail = client.get(f"/species/{TAXON_KEY}/models/1").json()
+    thresholds = {
+        d["id"]: d["threshold"] for d in detail["projection"]["extrapolation"]["diagnostics"]
+    }
+    for key in ("mop", "shape", "aoa"):
+        # classes are centred on the diagnostic's own threshold (titiler interval colormap)
+        assert f"{key if key != 'aoa' else 'aoa_di'}.tif" in by_id[key]["tile_url"]
+        assert "colormap=%5B%5B%5B" in by_id[key]["tile_url"]
+        assert f"{thresholds[key]:.3g}" in by_id[key]["legend"][2]["label"]
+    assert (
+        len(by_id["exdet"]["legend"]) == 6 and "MESS cannot detect" in by_id["exdet"]["description"]
+    )
+    assert [e["value"] for e in by_id["consensus"]["legend"]] == [0, 1, 2, 3, 4, 5]
+    overlay = layers["consensus_overlay"]
+    assert "consensus.tif" in overlay["tile_url"] and len(overlay["legend"]) == 5
+    assert detail["projection"]["extrapolation"]["candidate_consensus_ok_fraction"] <= 1
+
+
 def test_severity_config_update(client):
     body = {
         "weights": {
@@ -255,6 +277,8 @@ def test_scenario_layers_pair_suitability_with_their_own_extrapolation(client, t
                 "suitability": "species/x/v1/suitability_ssp245_2050.tif",
                 "extrapolation": "species/x/v1/extrapolation_ssp245_2050.tif",
                 "extrapolated_land_fraction": 0.3,
+                "consensus": "species/x/v1/consensus_ssp245_2050.tif",
+                "diagnostics_land_fraction": {"mess": 0.3, "aoa": 0.4},
             },
             "legacy": "species/x/v1/suitability_legacy.tif",
         },
@@ -264,7 +288,9 @@ def test_scenario_layers_pair_suitability_with_their_own_extrapolation(client, t
         sc = {s["name"]: s for s in client.get(f"/species/{TAXON_KEY}/layers").json()["scenarios"]}
         assert "extrapolation_ssp245_2050.tif" in sc["ssp245_2050"]["extrapolation"]["tile_url"]
         assert sc["ssp245_2050"]["extrapolated_land_fraction"] == 0.3
-        assert sc["legacy"]["extrapolation"] is None
+        assert "consensus_ssp245_2050.tif" in sc["ssp245_2050"]["consensus"]["tile_url"]
+        assert sc["ssp245_2050"]["diagnostics_land_fraction"]["aoa"] == 0.4
+        assert sc["legacy"]["extrapolation"] is None and sc["legacy"]["consensus"] is None
     finally:
         repo.update_model_artifacts(TAXON_KEY, 1, mv.artifacts)
     r = client.post(f"/species/{TAXON_KEY}/scenarios")

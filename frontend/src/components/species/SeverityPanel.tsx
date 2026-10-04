@@ -22,9 +22,23 @@ export function SeverityPanel({ severity }: { severity: SeverityResult }) {
                 <ShieldAlert /> {conf.level} confidence
               </Badge>
             </TooltipTrigger>
-            <TooltipContent>
-              {(conf.mess_ok_fraction * 100).toFixed(0)}% of candidate-zone area lies inside the
-              training climate space (MESS ≥ 0); model {conf.model_type}. {conf.note}
+            <TooltipContent className="max-w-sm">
+              {conf.basis === 'consensus' && conf.consensus_majority_fraction != null ? (
+                <>
+                  {(conf.consensus_majority_fraction * 100).toFixed(0)}% of the candidate zone is
+                  flagged by ≥ 3 of 5 extrapolation diagnostics,{' '}
+                  {((conf.consensus_ok_fraction ?? 0) * 100).toFixed(0)}% by none;{' '}
+                </>
+              ) : null}
+              {(conf.mess_ok_fraction * 100).toFixed(0)}% has MESS ≥ 0; model {conf.model_type}.{' '}
+              {conf.note}
+              {conf.reasons && conf.reasons.length > 0 && (
+                <ul className="mt-1.5 list-disc pl-4">
+                  {conf.reasons.map((r) => (
+                    <li key={r}>{r}</li>
+                  ))}
+                </ul>
+              )}
             </TooltipContent>
           </Tooltip>
         </div>

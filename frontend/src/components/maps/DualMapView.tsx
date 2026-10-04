@@ -10,7 +10,15 @@ import { Switch } from '@/components/ui/switch'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { resolutionLabel } from '@/lib/utils'
-import { mapActions, mapStore, type ProjectionLayerId } from '@/store/mapStore'
+import {
+  DIAGNOSTIC_LAYER_IDS,
+  isDiagnosticLayer,
+  mapActions,
+  mapStore,
+  type DiagnosticLayerId,
+  type OverlaySource,
+  type ProjectionLayerId,
+} from '@/store/mapStore'
 
 import { DeckMap } from './DeckMap'
 import { hiresLayers, nativeRangeLayer, occurrenceLayer, projectionLayers } from './layers'
@@ -32,21 +40,35 @@ function occurrenceTooltip(info: PickingInfo): string | null {
   return `${p.n} records\n${p.n_native ?? 0} native · ${p.n_introduced ?? 0} introduced`
 }
 
+/** MESS plus the advanced diagnostics, in the order offered by the map's diagnostic picker. */
+export function diagnosticLayers(layers: LayerSet): RasterLayer[] {
+  const all = [...(layers.mess ? [layers.mess] : []), ...(layers.diagnostics ?? [])]
+  return DIAGNOSTIC_LAYER_IDS.flatMap((id) => all.filter((l) => l.id === id))
+}
+
 /**
- * The raster shown for a projection choice, plus the extrapolation mask that belongs to it:
- * scenarios carry their own MESS mask (future climates extrapolate more than the present).
+ * The raster shown for a projection choice, plus the extrapolation overlay that belongs to it:
+ * scenarios carry their own MESS mask and consensus (future climates extrapolate more than the
+ * present). The consensus overlay is used when chosen and available, else the MESS mask.
  */
 export function resolveProjection(
   layers: LayerSet,
   id: ProjectionLayerId,
+  overlaySource: OverlaySource = 'mess',
 ): { base: RasterLayer | null; extrapolation: RasterLayer | null } {
+  const consensus = overlaySource === 'consensus'
   if (id.startsWith('scenario:')) {
     const sc = layers.scenarios?.find((s) => s.id === id)
-    return { base: sc?.suitability ?? null, extrapolation: sc?.extrapolation ?? null }
+    return {
+      base: sc?.suitability ?? null,
+      extrapolation: (consensus && sc?.consensus) || sc?.extrapolation || null,
+    }
   }
-  const current = layers.extrapolation ?? null
+  if (isDiagnosticLayer(id)) {
+    return { base: diagnosticLayers(layers).find((l) => l.id === id) ?? null, extrapolation: null }
+  }
+  const current = (consensus && layers.consensus_overlay) || layers.extrapolation || null
   if (id === 'zones') return { base: layers.zones ?? null, extrapolation: current }
-  if (id === 'mess') return { base: layers.mess ?? null, extrapolation: null }
   return { base: layers.suitability ?? null, extrapolation: current }
 }
 
@@ -54,6 +76,7 @@ export function DualMapView({ layers, nativeRange, timeline }: Props) {
   const viewState = useSelector(mapStore, (s) => s.viewState)
   const projection = useSelector(mapStore, (s) => s.projection)
   const messOverlay = useSelector(mapStore, (s) => s.messOverlay)
+  const overlaySource = useSelector(mapStore, (s) => s.overlaySource)
   const maxYear = useSelector(mapStore, (s) => s.maxYear)
   const showNative = useSelector(mapStore, (s) => s.showNativeRange)
   const hiresOverlay = useSelector(mapStore, (s) => s.hiresOverlay)
@@ -79,21 +102,29 @@ export function DualMapView({ layers, nativeRange, timeline }: Props) {
     [layers.occurrences, maxYear, makeNative],
   )
 
-  const { base, extrapolation } = resolveProjection(layers, projection)
+  const { base, extrapolation } = resolveProjection(layers, projection, overlaySource)
   const isScenario = projection.startsWith('scenario:')
+  const isDiagnostic = isDiagnosticLayer(projection)
+  const diagnostics = diagnosticLayers(layers)
+  const hasConsensusOverlay = isScenario
+    ? !!layers.scenarios?.find((s) => s.id === projection)?.consensus
+    : !!layers.consensus_overlay
   // The high-resolution region refines current-climate suitability only.
   const hires = projection === 'suitability' ? layers.hires : null
   const rightLayers = useMemo(
     () => [
       ...projectionLayers({ base, extrapolation }, messOverlay),
-      ...(hiresOverlay ? hiresLayers(hires, messOverlay) : []),
+      ...(hiresOverlay ? hiresLayers(hires, messOverlay, overlaySource) : []),
       ...makeNative('native-range-right'),
     ],
-    [base, extrapolation, messOverlay, hires, hiresOverlay, makeNative],
+    [base, extrapolation, messOverlay, overlaySource, hires, hiresOverlay, makeNative],
   )
 
   const hasModel = !!layers.suitability
   const caveats = layers.caveats
+  // "Extrapolation" opens the consensus when the advanced diagnostics exist, else MESS.
+  const defaultDiagnostic: DiagnosticLayerId =
+    diagnostics.find((l) => l.id === 'consensus') ? 'consensus' : 'mess'
 
   return (
     <div className="grid h-[560px] grid-cols-1 gap-3 lg:grid-cols-2">
@@ -145,16 +176,40 @@ export function DualMapView({ layers, nativeRange, timeline }: Props) {
               <div className="absolute top-3 left-3 flex flex-wrap items-center gap-2 pr-14">
                 <ToggleGroup
                   type="single"
-                  value={projection.startsWith('scenario:') ? '' : projection}
-                  onValueChange={(v) => v && mapActions.setProjection(v as ProjectionLayerId)}
+                  value={isScenario ? '' : isDiagnostic ? 'extrapolation' : projection}
+                  onValueChange={(v) => {
+                    if (!v || (v === 'extrapolation' && isDiagnostic)) return
+                    mapActions.setProjection(
+                      v === 'extrapolation' ? defaultDiagnostic : (v as ProjectionLayerId),
+                    )
+                  }}
                   aria-label="Projection layer"
                 >
                   <ToggleGroupItem value="suitability">
                     <Layers /> Suitability
                   </ToggleGroupItem>
                   <ToggleGroupItem value="zones">Range zones</ToggleGroupItem>
-                  <ToggleGroupItem value="mess">MESS</ToggleGroupItem>
+                  <ToggleGroupItem value="extrapolation">
+                    {diagnostics.length > 1 ? 'Extrapolation' : 'MESS'}
+                  </ToggleGroupItem>
                 </ToggleGroup>
+                {isDiagnostic && diagnostics.length > 1 && (
+                  <Select
+                    value={projection}
+                    onValueChange={(v) => mapActions.setProjection(v as DiagnosticLayerId)}
+                  >
+                    <SelectTrigger className="w-48" aria-label="Extrapolation diagnostic">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {diagnostics.map((l) => (
+                        <SelectItem key={l.id} value={l.id}>
+                          {l.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
                 {layers.scenarios && layers.scenarios.length > 0 && (
                   <Select
                     value={projection.startsWith('scenario:') ? projection : 'current'}
@@ -175,20 +230,37 @@ export function DualMapView({ layers, nativeRange, timeline }: Props) {
                     </SelectContent>
                   </Select>
                 )}
-                {projection !== 'mess' && (
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <label className="flex items-center gap-2 rounded-lg border bg-card/85 px-2.5 py-1 text-xs shadow-sm backdrop-blur">
-                        <Switch
-                          checked={messOverlay}
-                          onCheckedChange={mapActions.setMessOverlay}
-                          aria-label="MESS extrapolation overlay"
-                        />
-                        MESS overlay
-                      </label>
-                    </TooltipTrigger>
-                    <TooltipContent>{(extrapolation ?? layers.extrapolation)?.description}</TooltipContent>
-                  </Tooltip>
+                {!isDiagnostic && (
+                  <div className="flex items-center gap-1.5 rounded-lg border bg-card/85 px-2.5 py-1 text-xs shadow-sm backdrop-blur">
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <label className="flex items-center gap-2">
+                          <Switch
+                            checked={messOverlay}
+                            onCheckedChange={mapActions.setMessOverlay}
+                            aria-label="Extrapolation overlay"
+                          />
+                          {hasConsensusOverlay ? 'Overlay' : 'MESS overlay'}
+                        </label>
+                      </TooltipTrigger>
+                      <TooltipContent>{(extrapolation ?? layers.extrapolation)?.description}</TooltipContent>
+                    </Tooltip>
+                    {hasConsensusOverlay && (
+                      <Select
+                        value={overlaySource}
+                        onValueChange={(v) => mapActions.setOverlaySource(v as OverlaySource)}
+                        disabled={!messOverlay}
+                      >
+                        <SelectTrigger className="h-6 w-28" aria-label="Overlay source">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="mess">MESS &lt; 0</SelectItem>
+                          <SelectItem value="consensus">Consensus</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    )}
+                  </div>
                 )}
                 {hires && (
                   <Tooltip>
@@ -207,7 +279,7 @@ export function DualMapView({ layers, nativeRange, timeline }: Props) {
                 )}
               </div>
               <div className="absolute bottom-3 left-3 flex flex-col gap-2">
-                {base && <RasterLegend layer={base} />}
+                {base && <RasterLegend layer={base} showDescription={isDiagnostic && base.id !== 'mess'} />}
                 {messOverlay && extrapolation && <RasterLegend layer={extrapolation} />}
                 {isScenario && !extrapolation && (
                   <div className="max-w-56 rounded-lg border border-warning/40 bg-card/90 px-3 py-2 text-[11px] text-warning">

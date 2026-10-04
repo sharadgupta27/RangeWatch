@@ -790,6 +790,7 @@ class SpeciesPipeline:
                 "threshold": result.threshold,
                 "model_type": result.model_type,
                 "mess_reference": result.mess_reference,
+                "extrapolation_reference": result.extrapolation_reference,
                 "presence_envelope": result.presence_envelope,
             },
             str(model_path),
@@ -811,7 +812,9 @@ class SpeciesPipeline:
             name: f.describe(self.artifacts.relative_uri(f.path)) for name, f in snapshot.items()
         }
 
-        self.progress("suitability_raster", 0.7, "Projecting suitability + MESS globally")
+        self.progress(
+            "suitability_raster", 0.7, "Projecting suitability + extrapolation diagnostics globally"
+        )
         scenario_stacks = {
             name: BioclimStack.open_version(self.settings.bioclim_root, stack.version, name)
             for name in stack.metadata.scenarios
@@ -844,6 +847,13 @@ class SpeciesPipeline:
             candidate_mess_ok_fraction=s["candidate_mess_ok_fraction"],
             new_cells_per_year=spread,
             model_type=result.model_type,
+            candidate_consensus_ok_fraction=(s.get("extrapolation") or {}).get(
+                "candidate_consensus_ok_fraction"
+            ),
+            candidate_consensus_majority_fraction=(s.get("extrapolation") or {}).get(
+                "candidate_consensus_majority_fraction"
+            ),
+            cbi_mean=_finite(result.cv_summary.get("cbi_mean", float("nan"))),
         )
         severity = compute_severity(sev_inputs, sev_cfg)
 
@@ -853,6 +863,7 @@ class SpeciesPipeline:
             "mess": self.artifacts.relative_uri(proj.mess),
             "zones": self.artifacts.relative_uri(proj.zones),
             "extrapolation": self.artifacts.relative_uri(proj.extrapolation),
+            **{k: self.artifacts.relative_uri(path) for k, path in proj.diagnostics.items()},
             "training_data": snapshot_meta["training_data"]["path"],
             "occurrence_manifest": snapshot_meta["occurrence_manifest"]["path"],
             "scenarios": {
@@ -952,6 +963,7 @@ class SpeciesPipeline:
                 proj.mess,
                 proj.zones,
                 proj.extrapolation,
+                *proj.diagnostics.values(),
             ],
         )
         self.repo.add_model_version(
@@ -994,11 +1006,15 @@ class SpeciesPipeline:
 
     # ======================================================== scenarios
     def _scenario_artifacts(self, out: ScenarioOutputs) -> dict[str, Any]:
-        return {
+        entry: dict[str, Any] = {
             "suitability": self.artifacts.relative_uri(out.suitability),
             "extrapolation": self.artifacts.relative_uri(out.extrapolation),
             "extrapolated_land_fraction": out.extrapolated_land_fraction,
         }
+        if out.consensus is not None:
+            entry["consensus"] = self.artifacts.relative_uri(out.consensus)
+            entry["diagnostics_land_fraction"] = out.diagnostics_land_fraction
+        return entry
 
     def project_scenarios(self, taxon_key: int, only_missing: bool = True) -> dict[str, Any]:
         """Project the *current* stored model onto the climate scenarios registered for the
@@ -1029,6 +1045,7 @@ class SpeciesPipeline:
             model=saved["model"],
             predictors=saved["predictors"],
             mess_reference=saved["mess_reference"],
+            extrapolation_reference=saved.get("extrapolation_reference"),
         )
         vdir = self.artifacts.local_path(
             str(self.artifacts.version_dir(taxon_key, mv.model_version))
@@ -1091,6 +1108,7 @@ class SpeciesPipeline:
             model=saved["model"],
             predictors=saved["predictors"],
             mess_reference=saved["mess_reference"],
+            extrapolation_reference=saved.get("extrapolation_reference"),
         )
         vdir = self.artifacts.local_path(
             str(self.artifacts.version_dir(taxon_key, mv.model_version))
