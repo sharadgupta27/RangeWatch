@@ -21,7 +21,14 @@ import {
 } from '@/store/mapStore'
 
 import { DeckMap } from './DeckMap'
-import { hiresLayers, nativeRangeLayer, occurrenceLayer, projectionLayers } from './layers'
+import {
+  effortLayer,
+  hiresLayers,
+  nativeRangeLayer,
+  occurrenceLayer,
+  projectionLayers,
+  referenceLayer,
+} from './layers'
 import { OccurrenceLegend, RasterLegend } from './Legend'
 import { TimeSlider } from './TimeSlider'
 
@@ -34,6 +41,16 @@ interface Props {
 function occurrenceTooltip(info: PickingInfo): string | null {
   const p = (info.object as { properties?: Record<string, unknown> } | undefined)?.properties
   if (!p) return null
+  if (info.layer?.id?.startsWith('reference-records')) {
+    if (p.record_id !== undefined) {
+      const status = Number(p.n_absent) > 0 ? 'reported absent' : 'present'
+      return `Independent record #${p.record_id}
+${status} · ${p.dataset_id}
+(evaluation only)`
+    }
+    return `${p.n} independent records
+${p.n_present ?? 0} present · ${p.n_absent ?? 0} absent`
+  }
   if (p.record_id !== undefined) {
     return `${p.source} #${p.record_id}\n${p.range_label}${p.year ? ` · ${p.year}` : ''}`
   }
@@ -80,6 +97,8 @@ export function DualMapView({ layers, nativeRange, timeline }: Props) {
   const maxYear = useSelector(mapStore, (s) => s.maxYear)
   const showNative = useSelector(mapStore, (s) => s.showNativeRange)
   const hiresOverlay = useSelector(mapStore, (s) => s.hiresOverlay)
+  const showEffort = useSelector(mapStore, (s) => s.showEffort)
+  const showReference = useSelector(mapStore, (s) => s.showReference)
 
   // Separate instances per map — deck.gl layers cannot be shared between Deck instances.
   const makeNative = useMemo(
@@ -98,8 +117,13 @@ export function DualMapView({ layers, nativeRange, timeline }: Props) {
   )
 
   const leftLayers = useMemo(
-    () => [...makeNative('native-range-left'), occurrenceLayer({ layer: layers.occurrences, maxYear })],
-    [layers.occurrences, maxYear, makeNative],
+    () => [
+      ...(layers.effort && showEffort ? [effortLayer({ layer: layers.effort })] : []),
+      ...makeNative('native-range-left'),
+      occurrenceLayer({ layer: layers.occurrences, maxYear }),
+      ...(layers.reference && showReference ? [referenceLayer({ layer: layers.reference })] : []),
+    ],
+    [layers.occurrences, layers.effort, layers.reference, maxYear, makeNative, showEffort, showReference],
   )
 
   const { base, extrapolation } = resolveProjection(layers, projection, overlaySource)
@@ -136,7 +160,7 @@ export function DualMapView({ layers, nativeRange, timeline }: Props) {
           onViewStateChange={mapActions.setViewState}
           getTooltip={occurrenceTooltip}
         >
-          <div className="absolute top-3 left-3 flex items-center gap-2">
+          <div className="absolute top-3 right-3 left-3 flex flex-wrap items-center gap-2">
             <Badge variant="secondary" className="bg-card/85 backdrop-blur">
               <MapIcon /> Observed occurrences
             </Badge>
@@ -153,8 +177,44 @@ export function DualMapView({ layers, nativeRange, timeline }: Props) {
                 )}
               </label>
             )}
+            {layers.effort && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <label className="flex items-center gap-2 rounded-full border bg-card/85 px-2.5 py-0.5 text-xs backdrop-blur">
+                    <Switch
+                      checked={showEffort}
+                      onCheckedChange={mapActions.setShowEffort}
+                      aria-label="Show sampling effort"
+                    />
+                    Effort
+                  </label>
+                </TooltipTrigger>
+                <TooltipContent>{layers.effort.description}</TooltipContent>
+              </Tooltip>
+            )}
+            {layers.reference && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <label className="flex items-center gap-2 rounded-full border bg-card/85 px-2.5 py-0.5 text-xs backdrop-blur">
+                    <Switch
+                      checked={showReference}
+                      onCheckedChange={mapActions.setShowReference}
+                      aria-label="Show independent records"
+                    />
+                    Independent
+                  </label>
+                </TooltipTrigger>
+                <TooltipContent>
+                  Uploaded surveys and GBIF-reported absences. They evaluate the model and are
+                  never used to train it.
+                </TooltipContent>
+              </Tooltip>
+            )}
           </div>
-          <OccurrenceLegend className="absolute bottom-3 left-3" />
+          <div className="absolute bottom-3 left-3 flex flex-col gap-2">
+            {layers.effort && showEffort && <RasterLegend layer={layers.effort} />}
+            <OccurrenceLegend showReference={!!layers.reference && showReference} />
+          </div>
           {timeline?.min_year != null && timeline.max_year != null && (
             <div className="absolute top-12 left-3">
               <TimeSlider minYear={timeline.min_year} maxYear={timeline.max_year} />

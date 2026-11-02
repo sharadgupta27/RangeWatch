@@ -48,6 +48,15 @@ MESS_RAMP = [
     (25.0, "#67a9cf"),
     (50.0, "#2166ac"),
 ]
+# effort.tif holds log10(records + 1); the ramp spans 1 to 10,000 records per pixel.
+EFFORT_LOG_MAX = 4.0
+EFFORT_RAMP = [
+    (0.0, "#000004"),
+    (1.0, "#51127c"),
+    (2.0, "#b73779"),
+    (3.0, "#fc8961"),
+    (4.0, "#fcfdbf"),
+]
 _BIG = 1e30  # open interval bound for titiler interval colormaps (JSON has no infinity)
 EXDET_BINS = [
     (-_BIG, -1.0, "#67001f", "NT1 < −1 · strong univariate novelty"),
@@ -272,6 +281,17 @@ def get_layers(
             tile_url=f"{tileserv}/public.native_range_tiles/{{z}}/{{x}}/{{y}}.pbf"
             f"?taxon_key={taxon_key}",
         ),
+        reference=(
+            VectorLayer(
+                id="reference",
+                label="Independent records",
+                source_layer="reference",
+                tile_url=f"{tileserv}/public.reference_tiles/{{z}}/{{x}}/{{y}}.pbf"
+                f"?taxon_key={taxon_key}",
+            )
+            if repo.list_reference_datasets(taxon_key)
+            else None
+        ),
     )
     version = model_version or sp.model_version
     if not version:
@@ -334,6 +354,36 @@ def get_layers(
         description="Cells where at least one predictor lies outside the training range. "
         "Suitability shown underneath is an extrapolation: treat as low confidence.",
     )
+
+    if "effort" in a:
+        effort = mv.metrics.get("sampling_effort") or {}
+        group = effort.get("target_group") or {}
+        layers.effort = RasterLayer(
+            id="effort",
+            label="Sampling effort",
+            kind="continuous",
+            tile_url=_cog_tiles(
+                settings,
+                artifacts,
+                a["effort"],
+                f"rescale=0,{EFFORT_LOG_MAX:g}&colormap_name=magma&nodata=-9999"
+                "&resampling=nearest",
+            ),
+            legend=[
+                LegendEntry(
+                    value=v,
+                    color=c,
+                    label=("≥ " if v == EFFORT_LOG_MAX else "") + f"{10 ** v:,.0f} records",
+                )
+                for v, c in EFFORT_RAMP
+            ],
+            description=(
+                f"GBIF records of the target group ({group.get('rank', 'order')} "
+                f"{group.get('name', '')}) per map pixel, log scale — the observer effort the "
+                "background was drawn from. Transparent: no records at all, so missing "
+                "presences there say nothing about suitability."
+            ),
+        )
 
     ext = mv.metrics.get("projection", {}).get("extrapolation") or {}
     layers.diagnostics = _diagnostic_layers(settings, artifacts, a, ext)

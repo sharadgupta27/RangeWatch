@@ -140,6 +140,23 @@
     <tr><td>Training AUC</td><td>{{ m.train_auc | num(3) }}</td>
         <td>Features / regularisation</td><td>{{ m.feature_classes }} / β = {{ m.beta_multiplier }}</td></tr>
   </table>
+  {% if independent %}
+  <h3>Independent evaluation</h3>
+  <p class="meta">Records this model never saw: uploaded surveys (records duplicating a
+    GBIF/iNaturalist record are left out) and absences reported to GBIF. Sensitivity = share of
+    presences predicted suitable at the model threshold; analog / extrapolated splits it by
+    MESS ≥ 0 / &lt; 0.</p>
+  <table class="compact">
+    <tr><th>Dataset</th><th>Presences</th><th>Sensitivity</th><th>Analog / extrapolated</th>
+        <th>CBI</th><th>Absences</th><th>Specificity</th><th>AUC</th></tr>
+    {% for e in independent %}{% set x = e.metrics %}
+    <tr><td>{{ e.name }}</td><td>{{ x.n_presence | num }}</td><td>{{ x.sensitivity | pct }}</td>
+        <td>{{ x.sensitivity_analog | pct }} / {{ x.sensitivity_extrapolated | pct }}</td>
+        <td>{{ x.cbi | num(2) }}</td><td>{{ x.n_absence | num }}</td>
+        <td>{{ x.specificity | pct }}</td><td>{{ x.auc_presence_absence | num(2) }}</td></tr>
+    {% endfor %}
+  </table>
+  {% endif %}
 </section>
 
 <!-- 8. Expansion outlook -->
@@ -179,15 +196,39 @@
     {{ repro.training_config.background_buffer_km | num }} km buffer of presences{% if bgi and bgi.fallback_reason %}
     (target-group background not used: {{ bgi.fallback_reason }}){% endif %}.
     {% endif %}
+    {% if bgi and bgi.target_group and bgi.target_group.weighting and bgi.target_group.weighting != 'unique_cells' %}
+    Target-group cells were drawn with probability proportional to
+    {{ 'the square root of ' if bgi.target_group.weighting == 'sqrt_record_count' else '' }}their
+    record count (bias file).
+    {% endif %}
     Predictors: {{ m.predictors | join(', ') | upper }} (global VIF &lt; 5 screen of
     {{ repro.bioclim_version_used }}, {{ repro.bioclim_source }}). Native-range polygon:
     {{ native_status }}.</p>
+  {% set dq = repro.data_quality %}
+  {% if dq %}
+  <p><strong>Data quality.</strong> {{ dq.n_records | num }} records with climate data were
+    tested ({{ dq.version }}{% if dq.reference %}, reference gazetteers {{ dq.reference.version }}{% endif %});
+    {{ dq.n_excluded | num }} failed an excluding test and were left out of training
+    ({% for t in dq.tests if t.excluded and t.status == 'run' and t.n_flagged %}{{ t.label | lower }} {{ t.n_flagged | num }}{% if not loop.last %}, {% endif %}{% else %}none{% endfor %}),
+    and {{ dq.n_flagged_kept | num }} carry review-only flags (isolated, climatically unusual or
+    pre-baseline records may be genuine range edges).
+    {% set skipped = dq.tests | selectattr('status', 'equalto', 'skipped') | list %}
+    {% if skipped %}Not run: {% for t in skipped %}{{ t.label | lower }}{% if not loop.last %}, {% endif %}{% endfor %}.{% endif %}</p>
+  {% endif %}
+  {% if effort and effort.status == 'available' %}
+  <p><strong>Sampling effort.</strong> {{ effort.candidate_unsampled_fraction | pct }} of the
+    candidate invasion zone and {{ effort.land_unsampled_fraction | pct }} of all land hold no GBIF
+    record of the target group, so the absence of presences there carries no information.</p>
+  {% endif %}
   <p><strong>Severity index.</strong> {{ severity_footnote }}</p>
   <table class="compact">
     <tr><td>Bioclim version</td><td>{{ repro.bioclim_version_used }} (sha256 {{ (repro.bioclim_sha256 or 'n/a')[:12] }})</td></tr>
     <tr><td>GBIF download</td><td>{{ repro.gbif_download_doi or repro.gbif_download_key or 'search API (no DOI)' }}</td></tr>
     <tr><td>Packages</td><td>{% for k, v in repro.package_versions.items() %}{{ k }} {{ v }}{% if not loop.last %}, {% endif %}{% endfor %}</td></tr>
     <tr><td>Random seeds</td><td>{% for k, v in repro.random_seeds.items() %}{{ k }}={{ v }}{% if not loop.last %}, {% endif %}{% endfor %}</td></tr>
+    {% if repro.data_quality and repro.data_quality.snapshot %}
+    <tr><td>Quality flags</td><td>{{ repro.data_quality.snapshot.n_rows | num }} records (sha256 {{ repro.data_quality.snapshot.sha256[:12] }})</td></tr>
+    {% endif %}
     <tr><td>MLflow run</td><td>{{ mv.mlflow_run_id or 'n/a' }}</td></tr>
   </table>
   <h3>References</h3>

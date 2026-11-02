@@ -51,6 +51,9 @@ class RecordingQueue:
     def enqueue_hires(self, job_id: str, taxon_key: int, bbox: list[float]) -> None:
         self.calls.append(("hires", job_id, taxon_key, bbox))
 
+    def enqueue_evaluation(self, job_id: str, taxon_key: int) -> None:
+        self.calls.append(("evaluation", job_id, taxon_key))
+
 
 @pytest.fixture(scope="module")
 def trained(tmp_path_factory, data_root):
@@ -450,3 +453,98 @@ def test_lineage_exposes_background_record(client):
     assert bg["requested_method"] == "target_group"
     assert bg["method"] == "target_group_order" and bg["fallback_reason"] is None
     assert bg["target_group"]["name"] == "Lamiales" and bg["target_group"]["taxon_key"] == 408
+
+
+def test_occurrences_carry_issues_and_quality_flags(client):
+    items = client.get(f"/species/{TAXON_KEY}/occurrences", params={"limit": 500}).json()["items"]
+    assert all(i["issues"] == [] for i in items)
+    assert all(i["quality_tier"] in {"A", "B", "C", "excluded"} for i in items)
+    assert all(isinstance(i["quality_flags"], list) for i in items)
+
+
+def test_lineage_and_detail_expose_data_quality_and_effort(client):
+    repro = client.get(f"/species/{TAXON_KEY}/models").json()[0]["reproducibility"]
+    dq = repro["data_quality"]
+    assert dq["version"] == "quality_v1" and dq["snapshot"]["sha256"]
+    assert {t["id"] for t in dq["tests"]} >= {"capital", "institution", "low_precision"}
+    assert repro["background"]["target_group"]["weighting"] == "unique_cells"
+    detail = client.get(f"/species/{TAXON_KEY}/models/1").json()
+    assert detail["sampling_effort"]["status"] == "available"
+    assert 0 <= detail["sampling_effort"]["land_unsampled_fraction"] <= 1
+
+
+def test_layers_offer_effort_and_reference_records(client):
+    layers = client.get(f"/species/{TAXON_KEY}/layers").json()
+    assert "colormap_name=magma" in layers["effort"]["tile_url"]
+    assert layers["effort"]["legend"][-1]["label"].startswith("≥ ")
+    # the fake GBIF reports no absences and nothing is uploaded yet → no reference layer
+    assert layers["reference"] is None or "reference_tiles" in layers["reference"]["tile_url"]
+
+
+def test_dataset_upload_list_evaluate_and_delete(client):
+    csv = "longitude,latitude,date,species\n" + "\n".join(
+        f"{10 + i * 0.5},{45 + (i % 4)},2021-05-0{1 + i % 9},Testus invasivus" for i in range(20)
+    )
+    res = client.post(
+        f"/species/{TAXON_KEY}/datasets",
+        data={"name": "Field survey 2021", "citation": "Agency (2021)"},
+        files={"file": ("survey.csv", csv, "text/csv")},
+    )
+    assert res.status_code == 201, res.text
+    body = res.json()
+    ds = body["dataset"]
+    assert ds["kind"] == "upload" and ds["n_present"] == 20 and ds["role"] == "evaluation"
+    assert ds["parse_report"]["columns"]["species"] == "species"
+    assert body["job"]["kind"] == "evaluation"
+    assert client.queue.calls[-1][0] == "evaluation"
+
+    listed = client.get(f"/species/{TAXON_KEY}/datasets").json()
+    assert ds["dataset_id"] in [d["dataset_id"] for d in listed]
+    layers = client.get(f"/species/{TAXON_KEY}/layers").json()
+    assert "public.reference_tiles" in layers["reference"]["tile_url"]
+
+    job = client.post(f"/species/{TAXON_KEY}/datasets/evaluate").json()
+    assert job["kind"] == "evaluation" and job["status"] == "queued"
+
+    bad = client.post(
+        f"/species/{TAXON_KEY}/datasets",
+        data={"name": "x"},
+        files={"file": ("survey.csv", "a,b\n1,2\n", "text/csv")},
+    )
+    assert bad.status_code == 422 and "decimal-degree" in bad.json()["detail"]
+
+    assert client.delete(f"/species/{TAXON_KEY}/datasets/{ds['dataset_id']}").status_code == 204
+    assert client.delete(f"/species/{TAXON_KEY}/datasets/{ds['dataset_id']}").status_code == 404
+
+
+def test_dataset_evaluations_are_listed_per_model_version(client, trained):
+    from src.orchestration.pipeline import SpeciesPipeline
+
+    settings, repo, artifacts = trained
+    csv = "lon,lat\n" + "\n".join(f"{5 + i * 0.4},{42 + (i % 6)}" for i in range(25))
+    res = client.post(
+        f"/species/{TAXON_KEY}/datasets",
+        data={"name": "Plots"},
+        files={"file": ("plots.csv", csv, "text/csv")},
+    )
+    dataset_id = res.json()["dataset"]["dataset_id"]
+    p = SpeciesPipeline(
+        repo=repo,
+        gbif=FakeGbif(initial=[]),
+        inat=None,
+        artifacts=artifacts,
+        registry=NullModelRegistry(),
+        settings=settings,
+        training_config=FAST_TRAINING,
+    )
+    p.evaluate_references(TAXON_KEY)  # what the queued job runs
+    ds = next(
+        d
+        for d in client.get(f"/species/{TAXON_KEY}/datasets").json()
+        if d["dataset_id"] == dataset_id
+    )
+    assert [e["model_version"] for e in ds["evaluations"]] == [1]
+    ev = ds["evaluations"][0]
+    assert ev["metrics"]["n_presence"] == 25 and ev["model_type"] == "B"
+    assert ds["overlap"]["n_checked"] == 25
+    client.delete(f"/species/{TAXON_KEY}/datasets/{dataset_id}")

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import asdict
 from typing import Any
 
 from src.api.schemas import (
@@ -10,10 +11,12 @@ from src.api.schemas import (
     ModelVersionDetail,
     ModelVersionOut,
     NativeRangeOut,
+    ReferenceDatasetOut,
+    ReferenceEvaluationOut,
     SeverityResult,
     SpeciesSummary,
 )
-from src.domain import Job, ModelVersionRecord, NativeRange, SpeciesRecord
+from src.domain import Job, ModelVersionRecord, NativeRange, ReferenceDataset, SpeciesRecord
 from src.modeling.native_range import validate_geojson_polygon
 from src.persistence.repository import Repository
 
@@ -124,5 +127,22 @@ def model_version_detail(mv: ModelVersionRecord) -> ModelVersionDetail:
             "severity": mv.severity,
             "n_records_by_effective_label": m["n_records_by_effective_label"],
             "crosschecks": list(mv.artifacts.get("crosschecks", {}).values()),
+            "sampling_effort": m.get("sampling_effort"),
         }
     )
+
+
+def reference_dataset_out(
+    ds: ReferenceDataset, versions: list[ModelVersionRecord]
+) -> ReferenceDatasetOut:
+    # Each model version stores its own scores on every reference dataset (newest first).
+    evaluations = []
+    for mv in versions:
+        entry = (mv.artifacts.get("independent_evaluation") or {}).get(ds.dataset_id)
+        if entry:
+            evaluations.append(
+                ReferenceEvaluationOut.model_validate(
+                    {**entry, "model_type": mv.model_type, "trained_ts": mv.trained_ts}
+                )
+            )
+    return ReferenceDatasetOut.model_validate({**asdict(ds), "evaluations": evaluations})

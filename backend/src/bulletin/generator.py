@@ -74,6 +74,7 @@ class BulletinGenerator:
             autoescape=select_autoescape(["html", "j2"]),
         )
         self.env.filters["num"] = lambda v, d=0: f"{v:,.{d}f}" if v is not None else "–"
+        self.env.filters["pct"] = lambda v: f"{v * 100:.0f}%" if v is not None else "–"
 
     # ------------------------------------------------------------------ public
     def render_html(self, taxon_key: int, model_version: int) -> str:
@@ -156,6 +157,8 @@ class BulletinGenerator:
             "summary": self.executive_summary(species, mv),
             "outlook": self.expansion_outlook(species, mv, timeline),
             "extrapolation": extrapolation_context(m["projection"].get("extrapolation")),
+            "independent": list((mv.artifacts.get("independent_evaluation") or {}).values()),
+            "effort": m.get("sampling_effort"),
             "caveat": TRANSFERABILITY_CAVEAT,
             "severity_footnote": methods_footnote(sev) if sev else "",
             "severity_components": COMPONENTS,

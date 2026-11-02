@@ -5,6 +5,10 @@
 * Repeat species: incremental `occurrences.search` filtered on `lastInterpreted`.
 * Target-group sampling effort: GBIF map API density tiles of a higher taxon (MVT points
   with per-pixel record counts), used for target-group background sampling.
+* Explicit absences (`occurrenceStatus = ABSENT`): kept as an evaluation-only reference
+  dataset instead of being discarded.
+* GRSciColl institutions (herbaria, museums, botanical gardens) with coordinates, for the
+  institution data-quality test.
 """
 
 from __future__ import annotations
@@ -22,7 +26,7 @@ from pathlib import Path
 from typing import Any
 
 from src.connectors.mvt import decode_points
-from src.domain import OccurrenceRecord, RangeLabel
+from src.domain import OccurrenceRecord, RangeLabel, ReferenceRecord
 
 log = logging.getLogger(__name__)
 
@@ -49,6 +53,10 @@ MIN_CALL_INTERVAL_S = 0.2
 ProgressCallback = Callable[[int, int], None]
 
 GBIF_MAP_DENSITY = "https://api.gbif.org/v2/map/occurrence/density/{z}/{x}/{y}.mvt"
+GRSCICOLL_INSTITUTIONS = "https://api.gbif.org/v1/grscicoll/institution"
+_GRSCICOLL_PAGE = 1000
+# Reference dataset holding a species' explicit GBIF absences.
+GBIF_ABSENCES_DATASET_ID = "gbif-absences"
 # EPSG:4326 map tiles are 512 px; zoom z has 2^(z+1) x 2^z tiles of 180/2^z degrees.
 MAP_TILE_PX = 512
 MAP_MAX_ZOOM = 6
@@ -112,6 +120,18 @@ class EffortDensity:
 
 
 @dataclass(frozen=True, slots=True)
+class Institution:
+    """A GRSciColl institution with coordinates (where specimens are often geocoded)."""
+
+    key: str
+    name: str
+    longitude: float
+    latitude: float
+    types: tuple[str, ...] = ()
+    country: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class DownloadResult:
     download_key: str
     doi: str | None
@@ -149,6 +169,15 @@ def _parse_date(value: Any) -> date | None:
     return None
 
 
+def _parse_issues(raw: Mapping[str, Any]) -> tuple[str, ...]:
+    """Issue flags: a list in search JSON (`issues`), ';'-separated in SIMPLE_CSV (`issue`)."""
+    value = raw.get("issues", raw.get("issue"))
+    if not value:
+        return ()
+    items = value if isinstance(value, (list, tuple)) else str(value).split(";")
+    return tuple(sorted({str(i).strip().upper() for i in items if str(i).strip()}))
+
+
 def _to_float(value: Any) -> float | None:
     if value in (None, ""):
         return None
@@ -158,10 +187,10 @@ def _to_float(value: Any) -> float | None:
         return None
 
 
-def normalize_record(
-    raw: Mapping[str, Any], taxon_key: int, max_uncertainty_m: float
-) -> OccurrenceRecord | None:
-    """Clean one GBIF record (search JSON or SIMPLE_CSV row). Returns None if unusable."""
+def _usable(
+    raw: Mapping[str, Any], max_uncertainty_m: float
+) -> tuple[int, float, float, float | None] | None:
+    """(gbifID, lon, lat, uncertainty) of a record usable for modelling, else None."""
     gbif_id = raw.get("gbifID") or raw.get("key")
     lat = _to_float(raw.get("decimalLatitude"))
     lon = _to_float(raw.get("decimalLongitude"))
@@ -169,10 +198,7 @@ def normalize_record(
         return None
     if not (-90 <= lat <= 90 and -180 <= lon <= 180) or (lat == 0 and lon == 0):
         return None
-    if str(raw.get("occurrenceStatus") or "PRESENT").upper() == "ABSENT":
-        return None
-    basis = raw.get("basisOfRecord") or None
-    if basis in _EXCLUDED_BASIS:
+    if raw.get("basisOfRecord") in _EXCLUDED_BASIS:
         return None
     em = raw.get("establishmentMeans")
     doe = raw.get("degreeOfEstablishment")
@@ -183,6 +209,23 @@ def normalize_record(
     uncertainty = _to_float(raw.get("coordinateUncertaintyInMeters"))
     if uncertainty is not None and uncertainty > max_uncertainty_m:
         return None
+    return int(gbif_id), lon, lat, uncertainty
+
+
+def normalize_record(
+    raw: Mapping[str, Any], taxon_key: int, max_uncertainty_m: float
+) -> OccurrenceRecord | None:
+    """Clean one GBIF presence record (search JSON or SIMPLE_CSV row). None if unusable.
+    Absences are not presences: they go through `normalize_absence`."""
+    if str(raw.get("occurrenceStatus") or "PRESENT").upper() == "ABSENT":
+        return None
+    usable = _usable(raw, max_uncertainty_m)
+    if usable is None:
+        return None
+    gbif_id, lon, lat, uncertainty = usable
+    basis = raw.get("basisOfRecord") or None
+    em = raw.get("establishmentMeans")
+    doe = raw.get("degreeOfEstablishment")
 
     crossref: int | None = None
     if raw.get("datasetKey") == INAT_GBIF_DATASET_KEY:
@@ -194,7 +237,7 @@ def normalize_record(
     return OccurrenceRecord(
         taxon_key=taxon_key,
         source="GBIF",
-        record_id=int(gbif_id),
+        record_id=gbif_id,
         longitude=lon,
         latitude=lat,
         event_date=_parse_date(raw.get("eventDate")),
@@ -203,6 +246,34 @@ def normalize_record(
         country_code=raw.get("countryCode") or None,
         range_label=map_range_label(em, doe),
         inat_crossref_id=crossref,
+        issues=_parse_issues(raw),
+    )
+
+
+def normalize_absence(
+    raw: Mapping[str, Any], taxon_key: int, max_uncertainty_m: float
+) -> ReferenceRecord | None:
+    """Clean one GBIF record with `occurrenceStatus = ABSENT` (same validity rules as
+    presences). None for presences and unusable records."""
+    if str(raw.get("occurrenceStatus") or "").upper() != "ABSENT":
+        return None
+    usable = _usable(raw, max_uncertainty_m)
+    if usable is None:
+        return None
+    gbif_id, lon, lat, uncertainty = usable
+    return ReferenceRecord(
+        taxon_key=taxon_key,
+        dataset_id=GBIF_ABSENCES_DATASET_ID,
+        record_id=gbif_id,
+        longitude=lon,
+        latitude=lat,
+        occurrence_status="absent",
+        event_date=_parse_date(raw.get("eventDate")),
+        coordinate_uncertainty_m=uncertainty,
+        basis_of_record=raw.get("basisOfRecord") or None,
+        country_code=raw.get("countryCode") or None,
+        sampling_protocol=raw.get("samplingProtocol") or None,
+        source_dataset_key=raw.get("datasetKey") or None,
     )
 
 
@@ -419,11 +490,49 @@ class GbifClient:
         spatial slices (lat/lon ranges) that each fit in that window. Records on slice
         boundaries are de-duplicated by gbifID. `on_progress(fetched, total)` runs per page.
         """
+        return self._search(
+            taxon_key,
+            "PRESENT",
+            lambda row: normalize_record(row, taxon_key, self.max_uncertainty_m),
+            since,
+            until,
+            on_progress,
+        )
+
+    def search_absences(
+        self,
+        taxon_key: int,
+        since: datetime | None = None,
+        until: datetime | None = None,
+        on_progress: ProgressCallback | None = None,
+    ) -> list[ReferenceRecord]:
+        """Records with `occurrenceStatus = ABSENT` (surveys reporting the species absent).
+
+        Always via the search API: absences are few, and they are evaluation data, not part
+        of the DOI-backed presence download."""
+        return self._search(
+            taxon_key,
+            "ABSENT",
+            lambda row: normalize_absence(row, taxon_key, self.max_uncertainty_m),
+            since,
+            until,
+            on_progress,
+        )
+
+    def _search(
+        self,
+        taxon_key: int,
+        occurrence_status: str,
+        normalize: Callable[[Mapping[str, Any]], Any],
+        since: datetime | None,
+        until: datetime | None,
+        on_progress: ProgressCallback | None,
+    ) -> list[Any]:
         params: dict[str, Any] = {
             "taxonKey": taxon_key,
             "hasCoordinate": True,
             "hasGeospatialIssue": False,
-            "occurrenceStatus": "PRESENT",
+            "occurrenceStatus": occurrence_status,
         }
         if since is not None:
             end = until or datetime.now(UTC)
@@ -454,7 +563,7 @@ class GbifClient:
         # silently drop whole regions).
         share = target / total
 
-        out: dict[int, OccurrenceRecord] = {}
+        out: dict[int, Any] = {}
         fetched = 0
         for sp, n in slices:
             quota = min(SEARCH_WINDOW, n if share >= 1 else max(1, math.ceil(n * share)))
@@ -463,8 +572,10 @@ class GbifClient:
                 limit = min(_SEARCH_PAGE, quota - offset)
                 page = self._call(self._occ.search, limit=limit, offset=offset, **sp)
                 results = page.get("results", [])
-                for rec in self._normalize_many(results, taxon_key):
-                    out[rec.record_id] = rec
+                for row in results:
+                    rec = normalize(row)
+                    if rec is not None:
+                        out[rec.record_id] = rec
                 offset += len(results)
                 fetched += len(results)
                 if on_progress is not None:
@@ -513,6 +624,38 @@ class GbifClient:
         )
         return [(sp, n)]
 
+    # ------------------------------------------------------- institutions
+    def fetch_institutions(self) -> list[Institution]:
+        """Every GRSciColl institution that has coordinates (paged registry API)."""
+        out: list[Institution] = []
+        offset = 0
+        while True:
+            page = self._call(
+                _http_get_json,
+                GRSCICOLL_INSTITUTIONS,
+                params={"limit": _GRSCICOLL_PAGE, "offset": offset},
+            )
+            results = page.get("results", [])
+            for item in results:
+                lat = _to_float(item.get("latitude"))
+                lon = _to_float(item.get("longitude"))
+                if lat is None or lon is None or not (-90 <= lat <= 90 and -180 <= lon <= 180):
+                    continue
+                address = item.get("address") or item.get("mailingAddress") or {}
+                out.append(
+                    Institution(
+                        key=str(item.get("key", "")),
+                        name=str(item.get("name") or item.get("code") or ""),
+                        longitude=lon,
+                        latitude=lat,
+                        types=tuple(str(t) for t in item.get("types") or ()),
+                        country=address.get("country") if isinstance(address, dict) else None,
+                    )
+                )
+            offset += len(results)
+            if page.get("endOfRecords", True) or not results:
+                return out
+
     def _normalize_many(
         self, rows: Iterable[Mapping[str, Any]], taxon_key: int
     ) -> Iterator[OccurrenceRecord]:
@@ -554,6 +697,14 @@ def _http_get(url: str, params: Mapping[str, Any], timeout: tuple[float, float])
     resp = requests.get(url, params=params, timeout=timeout)
     resp.raise_for_status()
     return resp.content
+
+
+def _http_get_json(url: str, params: Mapping[str, Any], timeout: tuple[float, float]) -> Any:
+    import requests
+
+    resp = requests.get(url, params=params, timeout=timeout)
+    resp.raise_for_status()
+    return resp.json()
 
 
 def _retry_after(resp: Any) -> float | None:

@@ -241,3 +241,45 @@ def test_hires_stacks_are_only_downloaded_for_worldclim(tmp_path):
     build_stack(root)  # source: "synthetic test stack"
     with pytest.raises(ValueError, match="not a WorldClim stack"):
         add_hires(BIOCLIM_VERSION, "30s", root)
+
+
+def test_target_group_weighting_follows_record_counts(stack):
+    # Two 1° cells with effort: one with 99 records, one with 1.
+    lon, lat, counts = [10.5, 20.5], [45.5, 45.5], [99, 1]
+    unique = sample_target_group_background(lon, lat, stack, 500, seed=3, bands=["bio1"])
+    assert len(unique.lon) == 2 and unique.n_cells == 2  # each cell once
+    weighted = sample_target_group_background(
+        lon, lat, stack, 500, seed=3, bands=["bio1"], counts=counts, weighting="record_count"
+    )
+    assert len(weighted.lon) == 500 and weighted.n_cells == 2  # drawn with replacement
+    share = float(np.mean(weighted.lon == 10.5))
+    assert 0.95 < share < 1.0
+    sqrt = sample_target_group_background(
+        lon,
+        lat,
+        stack,
+        2000,
+        seed=3,
+        bands=["bio1"],
+        counts=counts,
+        weighting="sqrt_record_count",
+    )
+    assert 0.85 < float(np.mean(sqrt.lon == 10.5)) < 0.95  # √99 : √1 ≈ 0.91
+    with pytest.raises(ValueError, match="weighting"):
+        sample_target_group_background(lon, lat, stack, 5, seed=3, bands=["bio1"], weighting="x")
+
+
+def test_target_group_counts_are_summed_per_cell(stack):
+    # Three pixels: two share a cell (counts 1 + 1), one cell alone with count 2 → equal odds.
+    lon, lat = [10.2, 10.7, 20.5], [45.5, 45.5, 45.5]
+    bg = sample_target_group_background(
+        lon,
+        lat,
+        stack,
+        4000,
+        seed=0,
+        bands=["bio1"],
+        counts=[1, 1, 2],
+        weighting="record_count",
+    )
+    assert 0.45 < float(np.mean(bg.lon < 15)) < 0.55

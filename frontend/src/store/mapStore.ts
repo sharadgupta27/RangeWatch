@@ -45,6 +45,10 @@ export interface MapUiState {
   /** Regional high-resolution suitability drawn over the global current-climate layer. */
   hiresOverlay: boolean
   showNativeRange: boolean
+  /** Target-group sampling effort under the observed occurrences. */
+  showEffort: boolean
+  /** Independent (evaluation-only) records: uploaded surveys and GBIF absences. */
+  showReference: boolean
   /** Upper bound for the occurrence time slider; null = all years. */
   maxYear: number | null
   playing: boolean
@@ -60,6 +64,8 @@ export const mapStore = createStore<MapUiState>({
   overlaySource: 'mess',
   hiresOverlay: true,
   showNativeRange: true,
+  showEffort: false,
+  showReference: true,
   maxYear: null,
   playing: false,
 })
@@ -74,6 +80,9 @@ export const mapActions = {
   setHiresOverlay: (hiresOverlay: boolean) => mapStore.setState((s) => ({ ...s, hiresOverlay })),
   setShowNativeRange: (showNativeRange: boolean) =>
     mapStore.setState((s) => ({ ...s, showNativeRange })),
+  setShowEffort: (showEffort: boolean) => mapStore.setState((s) => ({ ...s, showEffort })),
+  setShowReference: (showReference: boolean) =>
+    mapStore.setState((s) => ({ ...s, showReference })),
   setMaxYear: (maxYear: number | null) => mapStore.setState((s) => ({ ...s, maxYear })),
   setPlaying: (playing: boolean) => mapStore.setState((s) => ({ ...s, playing })),
   resetForSpecies: () =>

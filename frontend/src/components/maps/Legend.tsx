@@ -49,11 +49,24 @@ export function RasterLegend({
   )
 }
 
-export function OccurrenceLegend({ className }: { className?: string }) {
+export function OccurrenceLegend({
+  className,
+  showReference = false,
+}: {
+  className?: string
+  /** Add the independent (evaluation-only) records to the key. */
+  showReference?: boolean
+}) {
   const items = [
     ['var(--native)', 'Native'],
     ['var(--introduced)', 'Introduced'],
     ['var(--unknown)', 'Unlabelled'],
+    ...(showReference
+      ? ([
+          ['var(--reference-present)', 'Independent survey'],
+          ['var(--reference-absent)', 'Reported absent'],
+        ] as const)
+      : []),
   ] as const
   return (
     <div
@@ -66,7 +79,13 @@ export function OccurrenceLegend({ className }: { className?: string }) {
       <ul className="space-y-1">
         {items.map(([c, l]) => (
           <li key={l} className="flex items-center gap-2">
-            <span className="size-2.5 rounded-full" style={{ background: c }} />
+            <span
+              className={cn(
+                'size-2.5 rounded-full',
+                c.startsWith('var(--reference') && 'ring-[1.5px] ring-slate-900',
+              )}
+              style={{ background: c }}
+            />
             <span className="text-muted-foreground">{l}</span>
           </li>
         ))}

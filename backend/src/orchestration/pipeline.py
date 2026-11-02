@@ -24,6 +24,14 @@ Two user-driven additions sit *outside* that decision (they never change the thr
 Asset steps are executed through a `StepRunner` so the same logic runs directly (tests) or
 as Prefect tasks (orchestration/flows.py): raw_occurrences → features → model →
 suitability_raster → bulletin.
+
+Alongside the contract, and never changing it:
+  * explicit GBIF absences are kept as an evaluation-only reference dataset (they are not
+    occurrences and never count towards the retrain delta);
+  * records failing an excluded data-quality test (features/quality.py) are left out of
+    training; every flag is stored in the version's quality_flags.parquet snapshot;
+  * every new model version is scored on the species' reference datasets (uploaded surveys,
+    GBIF absences), so successive versions can be compared on independent data.
 """
 
 from __future__ import annotations
@@ -46,12 +54,18 @@ import pandas as pd
 from shapely.geometry import shape
 
 from src.config import Settings
-from src.connectors.gbif_client import download_citation, inat_citation
+from src.connectors.gbif_client import (
+    GBIF_ABSENCES_DATASET_ID,
+    download_citation,
+    inat_citation,
+)
 from src.domain import (
     BIOCLIM_BANDS,
     ModelVersionRecord,
     NativeRange,
     OccurrenceRecord,
+    ReferenceDataset,
+    ReferenceRecord,
     SpeciesRecord,
     SpeciesStatus,
     utcnow,
@@ -65,6 +79,14 @@ from src.features.background_sampler import (
     sample_target_group_background,
 )
 from src.features.bioclim_store import dvc_pointer_md5
+from src.features.quality import (
+    DEFAULT_EXCLUDE,
+    QualityConfig,
+    QualityResult,
+    assess_quality,
+    overlap_with_occurrences,
+)
+from src.features.quality_refs import QualityReferences
 from src.features.raster_sampler import (
     METADATA_FILENAME,
     BioclimMetadata,
@@ -72,6 +94,7 @@ from src.features.raster_sampler import (
     sample_raster_file,
 )
 from src.modeling.crosscheck import climate_crosscheck
+from src.modeling.evaluation import independent_evaluation
 from src.modeling.maxent_trainer import (
     TRANSFERABILITY_CAVEAT,
     TrainingConfig,
@@ -85,7 +108,15 @@ from src.modeling.native_range import (
     propose_native_range,
     validate_geojson_polygon,
 )
-from src.modeling.projection import ScenarioOutputs, project_model, project_scenario
+from src.modeling.projection import (
+    EFFORT_RASTER,
+    ScenarioOutputs,
+    effort_grid,
+    effort_zone_summary,
+    project_model,
+    project_scenario,
+    write_effort_raster,
+)
 from src.modeling.severity_index import (
     SeverityConfig,
     SeverityInputs,
@@ -95,12 +126,14 @@ from src.modeling.severity_index import (
 from src.persistence.artifact_store import ArtifactStore
 from src.persistence.model_registry import ModelRegistry
 from src.persistence.repository import Repository
-from src.persistence.training_snapshot import write_training_snapshot
+from src.persistence.training_snapshot import write_quality_snapshot, write_training_snapshot
 
 log = logging.getLogger(__name__)
 T = TypeVar("T")
 
 TRACKED_PACKAGES = ("elapid", "pygbif", "pyinaturalist", "rasterio", "scikit-learn", "numpy")
+INDEPENDENT_EVALUATION_FILE = "independent_evaluation.json"
+GLOBAL_BBOX = (-180.0, -90.0, 180.0, 90.0)
 
 
 class StepRunner(Protocol):
@@ -133,6 +166,13 @@ class GbifLike(Protocol):
     def fetch_effort_density(
         self, taxon_key: int, bbox: tuple[float, float, float, float], max_pixel_deg: float
     ) -> Any: ...
+    def search_absences(
+        self,
+        taxon_key: int,
+        since: datetime | None = None,
+        until: datetime | None = None,
+        on_progress: Callable[[int, int], None] | None = None,
+    ) -> list[ReferenceRecord]: ...
 
 
 class InatLike(Protocol):
@@ -341,6 +381,7 @@ class SpeciesPipeline:
             records = self.gbif.search_occurrences(taxon_key, on_progress=self._gbif_progress)
         n = self.repo.append_occurrences(records)
         n += self._ingest_inat(taxon_key, since=None)
+        self.ingest_absences(taxon_key)
         counts = self.repo.occurrence_counts(taxon_key)
         self.repo.update_species(
             taxon_key,
@@ -443,7 +484,53 @@ class SpeciesPipeline:
             except Exception as exc:
                 log.warning("iNaturalist incremental fetch failed: %s", exc)
                 self._inat_fetch_ok = False
+        self.ingest_absences(species.taxon_key, full=full)
         return delta
+
+    def ingest_absences(self, taxon_key: int, full: bool = False) -> int:
+        """Store the species' explicit GBIF absences (occurrenceStatus = ABSENT) in its
+        evaluation-only reference dataset. They are not occurrences: they never enter
+        training or the retrain delta. Failure never blocks the presence pipeline; the
+        dataset keeps its own watermark, so missed absences are fetched next time."""
+        if not self.settings.gbif_absences_enabled:
+            return 0
+        ds = self.repo.get_reference_dataset(taxon_key, GBIF_ABSENCES_DATASET_ID)
+        started = utcnow()
+        since = None if ds is None or full else ds.last_fetch_ts
+        try:
+            records = self.gbif.search_absences(taxon_key, since=since)
+        except Exception as exc:
+            log.warning("GBIF absence fetch failed (continuing): %s", exc)
+            return 0
+        if ds is None:
+            ds = self.repo.save_reference_dataset(
+                ReferenceDataset(
+                    taxon_key=taxon_key,
+                    dataset_id=GBIF_ABSENCES_DATASET_ID,
+                    kind="gbif_absences",
+                    name="GBIF explicit absences",
+                    citation=(
+                        "GBIF.org occurrence search, occurrenceStatus=ABSENT, "
+                        f"taxonKey={taxon_key} (search API; not DOI-citable)"
+                    ),
+                    note="Survey records reporting the species as not found. An absence is "
+                    "a site, not a grid cell: the species may still occur elsewhere in the "
+                    "cell, so specificity computed from absences is a lower bound.",
+                )
+            )
+        n = self.repo.append_reference_records(records)
+        self.repo.save_reference_dataset(
+            replace(ds, last_fetch_ts=started, **self._reference_counts(taxon_key, ds.dataset_id))
+        )
+        return n
+
+    def _reference_counts(self, taxon_key: int, dataset_id: str) -> dict[str, int]:
+        recs = self.repo.load_reference_records(taxon_key, dataset_id)
+        status = recs["occurrence_status"] if not recs.empty else pd.Series(dtype=str)
+        return {
+            "n_present": int((status == "present").sum()),
+            "n_absent": int((status == "absent").sum()),
+        }
 
     def append_to_occurrence_store(self, taxon_key: int, delta: list[OccurrenceRecord]) -> int:
         return self.repo.append_occurrences(delta)
@@ -590,6 +677,13 @@ class SpeciesPipeline:
                 retrain_needed=True,
             )
             raise
+        try:
+            evaluated = self._evaluate_references(taxon_key, versions=[version])
+            if evaluated["datasets"]:
+                out.details["independent_evaluation"] = evaluated["datasets"]
+        except Exception as exc:  # evaluation on reference data never blocks publishing
+            log.exception("Independent evaluation failed")
+            out.details["independent_evaluation_error"] = f"{type(exc).__name__}: {exc}"
         if self.bulletin is not None:
             try:
                 self.step("bulletin", self.bulletin.generate, taxon_key, version)
@@ -628,7 +722,13 @@ class SpeciesPipeline:
     ) -> tuple[Any, dict[str, Any]]:
         cfg = self.training_config
         predictors = list(stack.metadata.selected_predictors or BIOCLIM_BANDS)
+        n_records = len(occ)
         occ = occ[~occ[predictors].isna().any(axis=1)].reset_index(drop=True)
+        self.progress("model", 0.45, f"Data-quality tests on {len(occ):,} records")
+        quality = self.assess_quality(occ, predictors, stack)
+        quality.summary["n_outside_climate_grid"] = n_records - len(occ)
+        quality_frame = quality.frame(occ)
+        occ = occ[~quality.excluded].reset_index(drop=True)
         labels = effective_range_labels(occ, nr.geometry)
         model_type = select_model_type(labels)
         pres = occ[training_presence_mask(labels, model_type)].reset_index(drop=True)
@@ -665,11 +765,37 @@ class SpeciesPipeline:
                 "cv_fold_assignment": cfg.seed,
                 "maxent_random_state": cfg.seed,
                 "permutation_importance": cfg.seed,
+                "quality_outlier_fit": cfg.seed,
             },
             "n_records_by_effective_label": labels.value_counts().to_dict(),
             "background": background_info,
+            "quality": quality.summary,
+            "quality_frame": quality_frame,
         }
         return result, info
+
+    def quality_config(self) -> QualityConfig:
+        exclude = self.settings.quality_exclude
+        return QualityConfig(
+            exclude=tuple(exclude) if exclude is not None else DEFAULT_EXCLUDE,
+            baseline_start_year=self.settings.quality_baseline_start_year,
+        )
+
+    def assess_quality(
+        self, occ: pd.DataFrame, predictors: list[str], stack: BioclimStack
+    ) -> QualityResult:
+        """Data-quality tests on records with climate data (see features/quality.py)."""
+        refs = QualityReferences.load(
+            self.settings.quality_reference_root, self.settings.quality_reference_version
+        )
+        return assess_quality(
+            occ,
+            predictors,
+            cell_deg=abs(stack.res[0]),
+            refs=refs,
+            cfg=self.quality_config(),
+            seed=self.training_config.seed,
+        )
 
     def sample_background(
         self,
@@ -724,6 +850,7 @@ class SpeciesPipeline:
     ) -> BackgroundSample | None:
         cfg = self.training_config
         rank = cfg.target_group_rank.lower()
+        weighting = cfg.target_group_weighting
         group = self.gbif.get_taxon(taxon_key).higher_taxon(rank)
         if group is None:
             info["fallback_reason"] = f"taxon has no {rank} in the GBIF backbone"
@@ -744,6 +871,7 @@ class SpeciesPipeline:
             "n_tiles": effort.n_tiles,
             "query": effort.query,
             "fetched_ts": utcnow().isoformat(),
+            "weighting": weighting,
         }
         if not effort.lon:
             info["fallback_reason"] = f"no GBIF records of {rank} {group_name} in the region"
@@ -756,11 +884,16 @@ class SpeciesPipeline:
             seed,
             predictors,
             region=region,
-            method=f"target_group_{rank}",
+            method=f"target_group_{rank}"
+            + ("" if weighting == "unique_cells" else f"_{weighting}"),
+            counts=effort.count,
+            weighting=weighting,
         )
-        if len(bg.lon) < cfg.min_target_group_cells:
+        n_cells = bg.n_cells if bg.n_cells is not None else len(bg.lon)
+        info["target_group"]["n_background_cells"] = n_cells
+        if n_cells < cfg.min_target_group_cells:
             info["fallback_reason"] = (
-                f"only {len(bg.lon)} cells with {rank} {group_name} records in the background "
+                f"only {n_cells} cells with {rank} {group_name} records in the background "
                 f"region (< {cfg.min_target_group_cells})"
             )
             return None
@@ -808,6 +941,7 @@ class SpeciesPipeline:
             info["occ_valid"],
             info["labels"],
         )
+        snapshot["quality_flags"] = write_quality_snapshot(vdir, info["quality_frame"])
         snapshot_meta = {
             name: f.describe(self.artifacts.relative_uri(f.path)) for name, f in snapshot.items()
         }
@@ -828,6 +962,10 @@ class SpeciesPipeline:
             occ_valid["longitude"].to_numpy(),
             occ_valid["latitude"].to_numpy(),
             scenario_stacks=scenario_stacks,
+        )
+
+        effort_path, effort_info = self._effort_layer(
+            taxon_key, info["background"], stack, vdir, proj.zones
         )
 
         labels: pd.Series = info["labels"]
@@ -866,6 +1004,8 @@ class SpeciesPipeline:
             **{k: self.artifacts.relative_uri(path) for k, path in proj.diagnostics.items()},
             "training_data": snapshot_meta["training_data"]["path"],
             "occurrence_manifest": snapshot_meta["occurrence_manifest"]["path"],
+            "quality_flags": snapshot_meta["quality_flags"]["path"],
+            **({"effort": self.artifacts.relative_uri(effort_path)} if effort_path else {}),
             "scenarios": {
                 name: self._scenario_artifacts(out) for name, out in proj.scenarios.items()
             },
@@ -897,6 +1037,7 @@ class SpeciesPipeline:
             "native_range_confirmed_ts": nr.confirmed_ts.isoformat() if nr.confirmed_ts else None,
             "training_data": snapshot_meta["training_data"],
             "occurrence_manifest": snapshot_meta["occurrence_manifest"],
+            "data_quality": {**info["quality"], "snapshot": snapshot_meta["quality_flags"]},
         }
         metrics: dict[str, Any] = {
             **{k: _finite(v) for k, v in result.cv_summary.items()},
@@ -929,6 +1070,7 @@ class SpeciesPipeline:
             "confidence_label": result.confidence_label,
             "transferability_caveat": TRANSFERABILITY_CAVEAT,
             "projection": s,
+            "sampling_effort": effort_info,
             "reproducibility": reproducibility,
         }
 
@@ -947,18 +1089,28 @@ class SpeciesPipeline:
                 "gbif_download_doi": refreshed.last_gbif_download_doi or "none",
                 "training_data_sha256": snapshot_meta["training_data"]["sha256"],
                 "occurrence_manifest_sha256": snapshot_meta["occurrence_manifest"]["sha256"],
+                "quality_flags_sha256": snapshot_meta["quality_flags"]["sha256"],
+                "quality_version": info["quality"]["version"],
+                "quality_reference_version": (info["quality"].get("reference") or {}).get(
+                    "version", "none"
+                ),
+                "target_group_weighting": self.training_config.target_group_weighting,
                 **{f"pkg_{k}": v for k, v in reproducibility["package_versions"].items()},
             },
             metrics={
-                k: v
-                for k, v in metrics.items()
-                if isinstance(v, (int, float)) and not isinstance(v, bool)
+                **{
+                    k: v
+                    for k, v in metrics.items()
+                    if isinstance(v, (int, float)) and not isinstance(v, bool)
+                },
+                "n_quality_excluded": info["quality"]["n_excluded"],
             },
             tags={"model_type": result.model_type, "confidence": result.confidence_label},
             artifact_paths=[
                 model_path,
                 snapshot["training_data"].path,
                 snapshot["occurrence_manifest"].path,
+                snapshot["quality_flags"].path,
                 proj.suitability,
                 proj.mess,
                 proj.zones,
@@ -1003,6 +1155,196 @@ class SpeciesPipeline:
                 "severity": severity["score_0_100"],
             },
         )
+
+    # ======================================================== sampling effort
+    def _effort_layer(
+        self,
+        taxon_key: int,
+        background: dict[str, Any],
+        stack: BioclimStack,
+        vdir: Path,
+        zones: Path,
+    ) -> tuple[Path | None, dict[str, Any]]:
+        """Global GBIF sampling effort of the target group: a map layer, plus the share of
+        each range zone where the group has no records at all (there, an absence of
+        presences is uninformative). Never blocks publishing."""
+        if not self.settings.effort_layer_enabled:
+            return None, {"status": "disabled"}
+        rank = self.training_config.target_group_rank.lower()
+        try:
+            tg = background.get("target_group") or {}
+            if tg:
+                group_key, group_name, rank = int(tg["taxon_key"]), tg["name"], tg["rank"]
+            else:
+                group = self.gbif.get_taxon(taxon_key).higher_taxon(rank)
+                if group is None:
+                    return None, {
+                        "status": "unavailable",
+                        "reason": f"taxon has no {rank} in the GBIF backbone",
+                    }
+                group_key, group_name = group
+            self.progress(
+                "suitability_raster", 0.85, f"Global GBIF sampling effort for {rank} {group_name}"
+            )
+            eff = self.gbif.fetch_effort_density(
+                group_key, GLOBAL_BBOX, max_pixel_deg=abs(stack.res[0])
+            )
+            grid = effort_grid(eff.lon, eff.lat, eff.count, eff.pixel_deg)
+            path = write_effort_raster(grid, eff.pixel_deg, vdir / EFFORT_RASTER)
+            summary = effort_zone_summary(zones, stack, grid, eff.pixel_deg)
+        except Exception as exc:
+            log.warning("Sampling-effort layer unavailable: %s", exc)
+            return None, {"status": "unavailable", "reason": f"{type(exc).__name__}: {exc}"}
+        return path, {
+            "status": "available",
+            "target_group": {"rank": rank, "taxon_key": group_key, "name": group_name},
+            "n_records": int(eff.n_records),
+            "max_records_per_pixel": int(grid.max()) if grid.size else 0,
+            "pixel_deg": eff.pixel_deg,
+            "map_zoom": eff.zoom,
+            "n_tiles": eff.n_tiles,
+            "query": eff.query,
+            "fetched_ts": utcnow().isoformat(),
+            **summary,
+        }
+
+    # ======================================================== independent evaluation
+    def evaluate_references(self, taxon_key: int, all_versions: bool = True) -> dict[str, Any]:
+        """Re-check every reference dataset's independence and score model versions on it
+        (all versions by default, so a new upload immediately compares them)."""
+        with self._exclusive(taxon_key):
+            versions = (
+                [mv.model_version for mv in self.repo.list_model_versions(taxon_key)]
+                if all_versions
+                else None
+            )
+            self.progress("evaluation", 0.1, "Checking independence and scoring model versions")
+            out = self._evaluate_references(taxon_key, versions=versions)
+            self.progress("done", 1.0, f"Evaluated {len(out['model_versions'])} model version(s)")
+            return out
+
+    def _evaluate_references(
+        self, taxon_key: int, versions: list[int] | None = None
+    ) -> dict[str, Any]:
+        datasets = self.repo.list_reference_datasets(taxon_key)
+        if not datasets:
+            return {"taxon_key": taxon_key, "datasets": [], "model_versions": []}
+        occ = self.repo.load_occurrences(taxon_key)
+        records: dict[str, pd.DataFrame] = {}
+        independent: dict[str, np.ndarray] = {}
+        for ds in datasets:
+            recs = self.repo.load_reference_records(taxon_key, ds.dataset_id)
+            records[ds.dataset_id] = recs
+            if ds.kind == "upload":
+                dup = overlap_with_occurrences(
+                    recs["longitude"],
+                    recs["latitude"],
+                    recs["event_date"],
+                    occ["longitude"],
+                    occ["latitude"],
+                    occ["event_date"],
+                    distance_m=self.settings.overlap_distance_m,
+                    max_days=self.settings.overlap_max_days,
+                )
+                overlap = {
+                    "n_checked": len(recs),
+                    "n_overlap": int(dup.sum()),
+                    "fraction": round(float(dup.mean()), 4) if len(recs) else 0.0,
+                    "distance_m": self.settings.overlap_distance_m,
+                    "max_days": self.settings.overlap_max_days,
+                    "n_occurrences_compared": len(occ),
+                    "checked_ts": utcnow().isoformat(),
+                    "rule": "a GBIF/iNaturalist record within the distance and, when both "
+                    "are dated, within the day window; such records are left out of the "
+                    "independent evaluation",
+                }
+                self.repo.save_reference_dataset(replace(ds, overlap=overlap))
+            else:
+                dup = np.zeros(len(recs), dtype=bool)
+            independent[ds.dataset_id] = ~dup
+
+        species = self.repo.get_species(taxon_key)
+        if versions is None:
+            versions = [species.model_version] if species and species.model_version else []
+        done: list[int] = []
+        for version in versions:
+            mv = self.repo.get_model_version(taxon_key, version)
+            if mv is None or "suitability" not in mv.artifacts:
+                continue
+            suit_path = self.artifacts.local_path(mv.artifacts["suitability"])
+            if not suit_path.exists():
+                continue
+            # Versions trained before the extrapolation consensus have no such raster.
+            extra_uri = mv.artifacts.get("extrapolation")
+            extra_path = self.artifacts.local_path(extra_uri) if extra_uri else None
+            bg_pred = self._background_predictions(mv, suit_path)
+            threshold = float(mv.metrics.get("threshold", 0.0))
+            entries: dict[str, Any] = {}
+            for ds in datasets:
+                recs = records[ds.dataset_id]
+                keep = independent[ds.dataset_id]
+                entries[ds.dataset_id] = {
+                    "dataset_id": ds.dataset_id,
+                    "name": ds.name,
+                    "kind": ds.kind,
+                    "model_version": version,
+                    "evaluated_ts": utcnow().isoformat(),
+                    "n_records": len(recs),
+                    "n_excluded_overlap": int((~keep).sum()),
+                    "metrics": self._score(recs[keep], suit_path, extra_path, bg_pred, threshold),
+                    "metrics_all_records": (
+                        self._score(recs, suit_path, extra_path, bg_pred, threshold)
+                        if (~keep).any()
+                        else None
+                    ),
+                }
+            vdir = self.artifacts.local_path(str(self.artifacts.version_dir(taxon_key, version)))
+            (vdir / INDEPENDENT_EVALUATION_FILE).write_text(
+                json.dumps(entries, indent=2, default=str), encoding="utf-8"
+            )
+            fresh = self.repo.get_model_version(taxon_key, version)
+            assert fresh is not None
+            self.repo.update_model_artifacts(
+                taxon_key, version, {**fresh.artifacts, "independent_evaluation": entries}
+            )
+            done.append(version)
+        return {
+            "taxon_key": taxon_key,
+            "datasets": [ds.dataset_id for ds in datasets],
+            "model_versions": done,
+        }
+
+    def _background_predictions(self, mv: ModelVersionRecord, suit_path: Path) -> np.ndarray:
+        """Suitability at the version's own background points (from its training snapshot),
+        the reference distribution for the independent CBI."""
+        snap = (mv.metrics.get("reproducibility") or {}).get("training_data")
+        if not snap:
+            return np.array([], dtype="float64")
+        path = self.artifacts.local_path(snap["path"])
+        if not path.exists():
+            return np.array([], dtype="float64")
+        bg = pd.read_parquet(path, columns=["role", "longitude", "latitude"])
+        bg = bg[bg["role"] == "background"]
+        return sample_raster_file(suit_path, bg["longitude"], bg["latitude"]).astype("float64")
+
+    @staticmethod
+    def _score(
+        recs: pd.DataFrame,
+        suit_path: Path,
+        extra_path: Path | None,
+        bg_pred: np.ndarray,
+        threshold: float,
+    ) -> dict[str, Any]:
+        pres = recs[recs["occurrence_status"] == "present"]
+        absn = recs[recs["occurrence_status"] == "absent"]
+        p = sample_raster_file(suit_path, pres["longitude"], pres["latitude"])
+        a = sample_raster_file(suit_path, absn["longitude"], absn["latitude"])
+        ext = (
+            sample_raster_file(extra_path, pres["longitude"], pres["latitude"]) == 1
+            if extra_path is not None and extra_path.exists()
+            else None
+        )
+        return independent_evaluation(p, a, bg_pred, threshold, presence_extrapolated=ext)
 
     # ======================================================== scenarios
     def _scenario_artifacts(self, out: ScenarioOutputs) -> dict[str, Any]:

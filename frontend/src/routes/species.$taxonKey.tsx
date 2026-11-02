@@ -5,6 +5,7 @@ import {
   ArrowLeft,
   ChevronRight,
   DatabaseZap,
+  FlaskConical,
   Gauge,
   GitBranch,
   Leaf,
@@ -14,6 +15,7 @@ import {
   PenLine,
   Play,
   RefreshCw,
+  ShieldCheck,
   SlidersHorizontal,
 } from 'lucide-react'
 import { useEffect, useRef } from 'react'
@@ -40,12 +42,14 @@ import { NativeRangeEditor } from '@/components/maps/NativeRangeEditor'
 import { BulletinCard } from '@/components/species/BulletinCard'
 import { CaveatBanner } from '@/components/species/CaveatBanner'
 import { CrossCheckCard } from '@/components/species/CrossCheckCard'
+import { DataQualityCard, SamplingEffortCard } from '@/components/species/DataQualityCard'
 import { ExtrapolationCard } from '@/components/species/ExtrapolationCard'
 import { HiresCard } from '@/components/species/HiresCard'
 import { JobStatusBar } from '@/components/species/JobStatusBar'
 import { MetricsCards } from '@/components/species/MetricsCards'
 import { ModelLineageTable } from '@/components/species/ModelLineageTable'
 import { OccurrenceTable } from '@/components/species/OccurrenceTable'
+import { ReferenceDatasetsPanel } from '@/components/species/ReferenceDatasetsPanel'
 import { ScenariosCard } from '@/components/species/ScenariosCard'
 import { SeverityConfigForm } from '@/components/species/SeverityConfigForm'
 import { SeverityPanel } from '@/components/species/SeverityPanel'
@@ -59,7 +63,15 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { mapActions, mapStore } from '@/store/mapStore'
 
-const TABS = ['overview', 'native-range', 'severity', 'lineage', 'occurrences'] as const
+const TABS = [
+  'overview',
+  'native-range',
+  'severity',
+  'lineage',
+  'occurrences',
+  'quality',
+  'independent',
+] as const
 type Tab = (typeof TABS)[number]
 
 const searchSchema = z.object({ tab: z.enum(TABS).optional().catch(undefined) })
@@ -264,6 +276,8 @@ function SpeciesWorkspace() {
           <TabsTrigger value="severity"><SlidersHorizontal /> Severity settings</TabsTrigger>
           <TabsTrigger value="lineage"><GitBranch /> Model lineage</TabsTrigger>
           <TabsTrigger value="occurrences"><ListTree /> Occurrences</TabsTrigger>
+          <TabsTrigger value="quality"><ShieldCheck /> Data quality</TabsTrigger>
+          <TabsTrigger value="independent"><FlaskConical /> Independent data</TabsTrigger>
         </TabsList>
 
         <TabsContent value="overview" className="space-y-4">
@@ -400,6 +414,25 @@ function SpeciesWorkspace() {
 
         <TabsContent value="occurrences">
           <OccurrenceTable taxonKey={taxonKey} />
+        </TabsContent>
+
+        <TabsContent value="quality">
+          {model.data ? (
+            <div className="grid gap-4 xl:grid-cols-[1.4fr_1fr]">
+              <DataQualityCard quality={model.data.reproducibility.data_quality} />
+              <SamplingEffortCard effort={model.data.sampling_effort} />
+            </div>
+          ) : (
+            <Card>
+              <CardContent className="py-8 text-center text-sm text-muted-foreground">
+                Records are checked for data quality when the first model is trained.
+              </CardContent>
+            </Card>
+          )}
+        </TabsContent>
+
+        <TabsContent value="independent">
+          <ReferenceDatasetsPanel taxonKey={taxonKey} jobActive={job.active} />
         </TabsContent>
       </Tabs>
     </div>

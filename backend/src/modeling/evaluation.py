@@ -109,6 +109,69 @@ def evaluate_fold(
     )
 
 
+def independent_evaluation(
+    presence_pred: np.ndarray,
+    absence_pred: np.ndarray,
+    background_pred: np.ndarray,
+    threshold: float,
+    presence_extrapolated: np.ndarray | None = None,
+    min_records: int = 5,
+) -> dict[str, Any]:
+    """Score a model on records it was never trained on (an uploaded survey, GBIF absences).
+
+    `*_pred` are the model's suitability values at those records (NaN = outside the climate
+    grid, excluded). Presence-only test data give sensitivity at the model's threshold and a
+    CBI against the model's own background; absences add specificity, AUC (presence vs
+    absence) and TSS. `presence_extrapolated` (MESS < 0 at each presence) splits sensitivity
+    into analog vs extrapolated cells, i.e. whether the extrapolation layer marks where the
+    model fails.
+
+    Caveat: an absence is a site where the species was not found during a survey; the cell
+    containing it can still hold the species elsewhere, so specificity is a lower bound.
+    """
+    p = np.asarray(presence_pred, dtype="float64")
+    a = np.asarray(absence_pred, dtype="float64")
+    b = np.asarray(background_pred, dtype="float64")
+    p_ok, a_ok = ~np.isnan(p), ~np.isnan(a)
+    pv, av, bv = p[p_ok], a[a_ok], b[~np.isnan(b)]
+    out: dict[str, Any] = {
+        "threshold": float(threshold),
+        "n_presence": int(p_ok.sum()),
+        "n_absence": int(a_ok.sum()),
+        "n_outside_grid": int((~p_ok).sum() + (~a_ok).sum()),
+        "sensitivity": None,
+        "mean_suitability_presence": None,
+        "cbi": None,
+        "specificity": None,
+        "mean_suitability_absence": None,
+        "auc_presence_absence": None,
+        "tss": None,
+        "sensitivity_analog": None,
+        "sensitivity_extrapolated": None,
+        "n_presence_extrapolated": None,
+    }
+    if len(pv) >= min_records:
+        out["sensitivity"] = float(np.mean(pv >= threshold))
+        out["mean_suitability_presence"] = float(np.mean(pv))
+        if len(bv) >= min_records:
+            cbi = continuous_boyce_index(pv, bv)
+            out["cbi"] = None if np.isnan(cbi) else float(cbi)
+    if len(av) >= min_records:
+        out["specificity"] = float(np.mean(av < threshold))
+        out["mean_suitability_absence"] = float(np.mean(av))
+    if len(pv) >= min_records and len(av) >= min_records:
+        out["auc_presence_absence"] = auc(pv, av)
+        out["tss"] = out["sensitivity"] + out["specificity"] - 1.0
+    if presence_extrapolated is not None and len(pv) >= min_records:
+        ext = np.asarray(presence_extrapolated, dtype=bool)[p_ok]
+        out["n_presence_extrapolated"] = int(ext.sum())
+        if (~ext).sum() >= min_records:
+            out["sensitivity_analog"] = float(np.mean(pv[~ext] >= threshold))
+        if ext.sum() >= min_records:
+            out["sensitivity_extrapolated"] = float(np.mean(pv[ext] >= threshold))
+    return out
+
+
 def summarize_folds(folds: Sequence[FoldMetrics]) -> dict[str, float]:
     out: dict[str, float] = {}
     for name in ("auc", "tss", "cbi"):

@@ -521,3 +521,85 @@ def project_scenario(
             else {}
         ),
     )
+
+
+# ---------------------------------------------------------------------------
+# Sampling effort of the target group (map layer + per-zone summary)
+# ---------------------------------------------------------------------------
+EFFORT_RASTER = "effort.tif"
+
+
+def effort_grid(
+    lon: Sequence[float], lat: Sequence[float], count: Sequence[float], pixel_deg: float
+) -> np.ndarray:
+    """Global record-count grid at the effort data's own pixel size (rows from 90°N)."""
+    ny, nx = round(180.0 / pixel_deg), round(360.0 / pixel_deg)
+    grid = np.zeros((ny, nx), dtype="float64")
+    lon_a, lat_a = np.asarray(lon, dtype="float64"), np.asarray(lat, dtype="float64")
+    cols = np.clip(np.floor((lon_a + 180.0) / pixel_deg).astype(int), 0, nx - 1)
+    rows = np.clip(np.floor((90.0 - lat_a) / pixel_deg).astype(int), 0, ny - 1)
+    np.add.at(grid, (rows, cols), np.asarray(count, dtype="float64"))
+    return grid
+
+
+def write_effort_raster(grid: np.ndarray, pixel_deg: float, path: Path) -> Path:
+    """COG of log10(records + 1); cells without records are nodata (transparent on the map)."""
+    values = np.where(grid > 0, np.log10(grid + 1.0), FLOAT_NODATA).astype("float32")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp) / path.name
+        with rasterio.open(
+            tmp_path,
+            "w",
+            driver="GTiff",
+            width=grid.shape[1],
+            height=grid.shape[0],
+            count=1,
+            dtype="float32",
+            crs="EPSG:4326",
+            transform=rasterio.transform.from_origin(-180.0, 90.0, pixel_deg, pixel_deg),
+            nodata=FLOAT_NODATA,
+            tiled=True,
+            blockxsize=256,
+            blockysize=256,
+            compress="deflate",
+        ) as dst:
+            dst.write(values, 1)
+        rio_copy(tmp_path, path, driver="COG", **_COG_OPTS)
+    return path
+
+
+def effort_zone_summary(
+    zones_path: Path, stack: BioclimStack, grid: np.ndarray, pixel_deg: float
+) -> dict[str, Any]:
+    """Share of land and of each range zone (area-weighted) where the target group has no
+    GBIF records at all: there, missing presences say nothing about suitability."""
+    ny, nx = grid.shape
+    totals: Counter[str] = Counter()
+    unsampled: Counter[str] = Counter()
+    names = {1: "native_suitable", 2: "established_outside", 3: "candidate"}
+    with rasterio.open(zones_path) as src:
+        t = src.transform
+        for _, win in src.block_windows(1):
+            zones = src.read(1, window=win)
+            rows = np.arange(win.row_off, win.row_off + win.height)
+            cols = np.arange(win.col_off, win.col_off + win.width)
+            lat = t.f + (rows + 0.5) * t.e
+            lon = t.c + (cols + 0.5) * t.a
+            gr = np.clip(np.floor((90.0 - lat) / pixel_deg).astype(int), 0, ny - 1)
+            gc = np.clip(np.floor((lon + 180.0) / pixel_deg).astype(int), 0, nx - 1)
+            empty = grid[np.ix_(gr, gc)] <= 0
+            area = np.broadcast_to(cell_area_km2(stack.transform, rows)[:, None], zones.shape)
+            land = zones != ZONE_NODATA
+            totals["land"] += float(area[land].sum())
+            unsampled["land"] += float(area[land & empty].sum())
+            for code, name in names.items():
+                z = zones == code
+                totals[name] += float(area[z].sum())
+                unsampled[name] += float(area[z & empty].sum())
+    return {
+        f"{name}_unsampled_fraction": (
+            round(unsampled[name] / totals[name], 4) if totals[name] else None
+        )
+        for name in ("land", *names.values())
+    }

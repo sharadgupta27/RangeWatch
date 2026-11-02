@@ -235,6 +235,7 @@ python -m src.features.bioclim_store derive --from bioclim_v1 --version bioclim_
 python -m src.features.bioclim_store add-scenario --version bioclim_v2 --gcm ACCESS-CM2 --ssp ssp245 --period 2041-2060
 python -m src.features.bioclim_store add-hires --version bioclim_v2 --resolution 30s   # optional, ≈10 GB download
 python -m src.features.bioclim_store build-chelsa --version chelsa_v1 --match bioclim_v2  # optional, ≈5 GB download
+python -m src.features.quality_refs build --version quality_refs_v1  # data-quality gazetteers, ≈45 s
 ```
 
 `SDM_BIOCLIM_VERSION` selects the active version. A version is never modified once a model has
@@ -424,7 +425,55 @@ approach of Phillips et al. 2009. The pipeline falls back to the uniform buffere
 and records why, when the order is unknown, the effort data is unreachable, or fewer than 500
 cells have records. The method, target group, effort query and any fallback reason are logged
 per version, shown verbatim in the lineage table, and written into the bulletin's methods
-section.
+section. `SDM_TARGET_GROUP_WEIGHTING=record_count` (or `sqrt_record_count`) instead draws cells
+with probability proportional to the group's record count (a bias file), with replacement, so
+the full effort gradient is kept; the default `unique_cells` is the behaviour described above.
+
+**Data quality.** Before training, every record with climate data goes through the tests in
+`features/quality.py`, after CoordinateCleaner (Zizka et al. 2019) where there is a counterpart:
+
+| Test | Effect by default |
+| --- | --- |
+| Equal coordinates, GBIF headquarters, country capital (within 1 km), country/province centroid (1 km), biodiversity institution (100 m, GBIF GRSciColl), GBIF geospatial issue, coordinates less precise than one grid cell (stated uncertainty, or precision implied by the decimals) | **excluded** from training |
+| Near a capital (1–10 km), coordinates corrected by GBIF, fuzzy taxon match, date issue, before the climate baseline (1970), environmental outlier (robust Mahalanobis), spatially isolated (> 1000 km) | flagged for review, kept |
+
+Outliers and isolated records are never removed automatically, because for an invader they are
+often the invasion front. CoordinateCleaner's 10 km capital buffer is report-only: on the Israel
+Nature and Parks Authority survey data it caught 197 precise *Acacia saligna* records a median
+7.5 km from Tel Aviv and Jerusalem. Each record also gets a tier (A: specimen with ≤ 1 km
+stated uncertainty; B: other unflagged records; C: flags or no stated uncertainty). The
+occurrence store is not modified. Flags are written to `quality_flags.parquet` per version
+(SHA-256 in the lineage), summarised in the *Data quality* tab, the lineage table and the
+bulletin, and shown per record in the occurrence table. `SDM_QUALITY_EXCLUDE` changes which tests
+exclude. The capital/centroid/institution tests need the reference gazetteers
+(`python -m src.features.quality_refs build`); without them they are reported as skipped, not
+passed. GBIF issue flags are now stored with each record (`occurrences.issues`); records
+ingested earlier get them on the next fetch that returns them (e.g. *Re-sync all*).
+
+**Independent data.** Records that evaluate a model but never train it live in
+`reference_datasets` / `reference_records`, apart from `occurrences`:
+
+- *GBIF explicit absences* (`occurrenceStatus = ABSENT`), which used to be discarded, are
+  fetched with every check, with their own watermark. They never count towards the retrain
+  delta.
+- *Uploads* (*Independent data* tab or `POST /api/species/{key}/datasets`): CSV/TSV, GeoJSON,
+  GeoPackage or zipped shapefile, with provenance, citation and licence. Columns are detected
+  (projected columns such as `ITM - LONG` are rejected as coordinates), rows of other species
+  are dropped, and spatial files are reprojected to WGS84.
+
+A job then checks each upload for independence: a record within 100 m and ±1 day of a
+GBIF/iNaturalist record is a duplicate and is left out. It then scores **every model version**
+on every dataset (`modeling/evaluation.independent_evaluation`): sensitivity at the model
+threshold, split into analog and extrapolated cells; CBI against the version's own
+background; and, with absences, specificity, AUC and TSS. Each new version is scored
+automatically after training. The table shows whether retraining improved predictions on
+records the models never saw; that is the test the continuous-updating design has to pass.
+
+**Sampling effort.** Each version also gets a global effort raster of the target group
+(`effort.tif`, log₁₀ records per GBIF map pixel; *Effort* switch on the observed map). It comes
+with the share of land, suitable native range, established range and candidate invasion zone
+that hold no record of the group at all: there, the absence of presences carries no
+information.
 
 **Storage growth.** Species with no user request (no job) for `SDM_ARCHIVE_INACTIVE_AFTER_DAYS`
 (default 180; `0` disables) have their feature table moved to
@@ -483,3 +532,14 @@ SHA-256 is part of the lineage. The nightly sweep does not count as a request.
   this retrains on most nightly checks; raising it is a reviewed decision.
 - The local stack runs the 10′ climate layer; production should build 2.5′ (Kubernetes
   `bioclim-build` Job default).
+- Centroid tests (1 km) can still catch genuine records where a small province's centroid lies
+  inside a city: on the INPA data, 20 *Acacia saligna* records near the Jerusalem district
+  centroid. Review them in the occurrence table; drop `province_centroid` from
+  `SDM_QUALITY_EXCLUDE` if they are real.
+- Independent evaluation is presence-heavy: few GBIF records are explicit absences, and an
+  absence is a surveyed site, not an empty grid cell, so specificity is a lower bound. Quality
+  tiers are reported but not yet used as training weights. Bias covariates and integrated
+  (presence-only + survey) models are the planned next steps.
+- The sampling-effort layer is report-only: it does not change the severity confidence label.
+  Folding it into confidence would change a documented rule, so it needs the same review as
+  the other confidence thresholds.

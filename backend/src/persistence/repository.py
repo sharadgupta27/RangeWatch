@@ -1,8 +1,11 @@
 """Repository protocol + an in-memory implementation (used by tests and local dry-runs).
 
 Occurrence data is append-only: `append_occurrences` inserts only unseen (source, record_id)
-keys and `fill_features` only fills bio* columns that are still NULL. Only species_registry,
-native_ranges, model_versions (severity recompute) and jobs rows are updated in place.
+keys; for keys already stored it only fills `issues` while that is still NULL (records ingested
+before issues were recorded), and `fill_features` only fills bio* columns that are still NULL.
+Only species_registry, native_ranges, reference_datasets, model_versions (severity recompute)
+and jobs rows are updated in place. Reference records are append-only; a reference dataset is
+removed as a whole (with its records), never edited row by row.
 """
 
 from __future__ import annotations
@@ -25,6 +28,8 @@ from src.domain import (
     ModelVersionRecord,
     NativeRange,
     OccurrenceRecord,
+    ReferenceDataset,
+    ReferenceRecord,
     SpeciesRecord,
     utcnow,
 )
@@ -40,9 +45,24 @@ OCCURRENCE_COLUMNS: tuple[str, ...] = (
     "country_code",
     "range_label",
     "inat_crossref_id",
+    "issues",
     "ingested_ts",
     *BIOCLIM_BANDS,
     "bioclim_version",
+)
+REFERENCE_COLUMNS: tuple[str, ...] = (
+    "dataset_id",
+    "record_id",
+    "occurrence_status",
+    "longitude",
+    "latitude",
+    "event_date",
+    "coordinate_uncertainty_m",
+    "basis_of_record",
+    "country_code",
+    "sampling_protocol",
+    "source_dataset_key",
+    "ingested_ts",
 )
 
 
@@ -79,6 +99,16 @@ class Repository(Protocol):
     ) -> tuple[pd.DataFrame, int]: ...
     def occurrence_timeline(self, taxon_key: int) -> pd.DataFrame: ...
 
+    # reference (evaluation-only) datasets
+    def list_reference_datasets(self, taxon_key: int) -> list[ReferenceDataset]: ...
+    def get_reference_dataset(self, taxon_key: int, dataset_id: str) -> ReferenceDataset | None: ...
+    def save_reference_dataset(self, ds: ReferenceDataset) -> ReferenceDataset: ...
+    def delete_reference_dataset(self, taxon_key: int, dataset_id: str) -> None: ...
+    def append_reference_records(self, records: Sequence[ReferenceRecord]) -> int: ...
+    def load_reference_records(
+        self, taxon_key: int, dataset_id: str | None = None
+    ) -> pd.DataFrame: ...
+
     # native range
     def get_native_range(self, taxon_key: int) -> NativeRange | None: ...
     def save_native_range(self, nr: NativeRange) -> NativeRange: ...
@@ -109,6 +139,7 @@ class Repository(Protocol):
 
 def records_to_frame(records: Sequence[OccurrenceRecord]) -> pd.DataFrame:
     df = pd.DataFrame([asdict(r) for r in records])
+    df["issues"] = [list(r.issues) for r in records]
     for b in BIOCLIM_BANDS:
         df[b] = float("nan")
     df["bioclim_version"] = None
@@ -127,6 +158,8 @@ class InMemoryRepository:
         self._models: dict[int, dict[int, ModelVersionRecord]] = {}
         self._jobs: dict[uuid.UUID, Job] = {}
         self._species_locks: dict[int, threading.Lock] = {}
+        self._ref_datasets: dict[tuple[int, str], ReferenceDataset] = {}
+        self._ref_records: dict[tuple[int, str], pd.DataFrame] = {}
 
     # ---------------------------------------------------------- species
     def get_species(self, taxon_key: int) -> SpeciesRecord | None:
@@ -167,12 +200,20 @@ class InMemoryRepository:
                 if key not in self._species:
                     raise NotFoundError(key)
                 cur = self._occ[key]
-                seen = set(zip(cur["source"], cur["record_id"].astype("int64"), strict=True))
+                pos = {
+                    (s, int(r)): i
+                    for i, (s, r) in enumerate(zip(cur["source"], cur["record_id"], strict=True))
+                }
                 grp = grp.drop_duplicates(["source", "record_id"])
-                mask = [
-                    (s, int(r)) not in seen
-                    for s, r in zip(grp["source"], grp["record_id"], strict=True)
-                ]
+                mask = []
+                for s, r, issues in zip(
+                    grp["source"], grp["record_id"], grp["issues"], strict=True
+                ):
+                    i = pos.get((s, int(r)))
+                    mask.append(i is None)
+                    # Only fills issues still unknown (rows ingested before they were kept).
+                    if i is not None and cur.at[cur.index[i], "issues"] is None:
+                        cur.at[cur.index[i], "issues"] = list(issues)
                 add = grp.loc[mask, list(OCCURRENCE_COLUMNS)]
                 if len(add):
                     self._occ[key] = (
@@ -262,6 +303,69 @@ class InMemoryRepository:
         )
         out["year"] = out["year"].astype(int)
         return out
+
+    # ----------------------------------------------- reference datasets
+    def list_reference_datasets(self, taxon_key: int) -> list[ReferenceDataset]:
+        with self._lock:
+            out = [copy.deepcopy(d) for (k, _), d in self._ref_datasets.items() if k == taxon_key]
+            return sorted(out, key=lambda d: d.created_ts)
+
+    def get_reference_dataset(self, taxon_key: int, dataset_id: str) -> ReferenceDataset | None:
+        with self._lock:
+            ds = self._ref_datasets.get((taxon_key, dataset_id))
+            return copy.deepcopy(ds) if ds else None
+
+    def save_reference_dataset(self, ds: ReferenceDataset) -> ReferenceDataset:
+        with self._lock:
+            if ds.taxon_key not in self._species:
+                raise NotFoundError(ds.taxon_key)
+            key = (ds.taxon_key, ds.dataset_id)
+            old = self._ref_datasets.get(key)
+            saved = replace(
+                ds, created_ts=old.created_ts if old else ds.created_ts, updated_ts=utcnow()
+            )
+            self._ref_datasets[key] = copy.deepcopy(saved)
+            self._ref_records.setdefault(key, pd.DataFrame(columns=list(REFERENCE_COLUMNS)))
+            return copy.deepcopy(saved)
+
+    def delete_reference_dataset(self, taxon_key: int, dataset_id: str) -> None:
+        with self._lock:
+            self._ref_datasets.pop((taxon_key, dataset_id), None)
+            self._ref_records.pop((taxon_key, dataset_id), None)
+
+    def append_reference_records(self, records: Sequence[ReferenceRecord]) -> int:
+        if not records:
+            return 0
+        with self._lock:
+            new = pd.DataFrame([asdict(r) for r in records])
+            new["ingested_ts"] = utcnow()
+            inserted = 0
+            for (taxon_key, dataset_id), grp in new.groupby(["taxon_key", "dataset_id"]):
+                key = (int(taxon_key), str(dataset_id))
+                if key not in self._ref_datasets:
+                    raise NotFoundError(key)
+                cur = self._ref_records[key]
+                seen = {int(r) for r in cur["record_id"]}
+                grp = grp.drop_duplicates("record_id")
+                add = grp.loc[[int(r) not in seen for r in grp["record_id"]]]
+                add = add[list(REFERENCE_COLUMNS)]
+                if len(add):
+                    self._ref_records[key] = (
+                        add.copy() if cur.empty else pd.concat([cur, add], ignore_index=True)
+                    )
+                inserted += len(add)
+            return inserted
+
+    def load_reference_records(self, taxon_key: int, dataset_id: str | None = None) -> pd.DataFrame:
+        with self._lock:
+            frames = [
+                df
+                for (k, d), df in self._ref_records.items()
+                if k == taxon_key and (dataset_id is None or d == dataset_id) and not df.empty
+            ]
+            if not frames:
+                return pd.DataFrame(columns=list(REFERENCE_COLUMNS))
+            return pd.concat(frames, ignore_index=True)
 
     # ------------------------------------------------------ native range
     def get_native_range(self, taxon_key: int) -> NativeRange | None:

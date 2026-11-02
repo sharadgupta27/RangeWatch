@@ -21,6 +21,7 @@ class JobQueue(Protocol):
     ) -> None: ...
     def enqueue_crosscheck(self, job_id: str, taxon_key: int) -> None: ...
     def enqueue_hires(self, job_id: str, taxon_key: int, bbox: list[float]) -> None: ...
+    def enqueue_evaluation(self, job_id: str, taxon_key: int) -> None: ...
 
 
 class CeleryJobQueue:
@@ -69,6 +70,11 @@ class CeleryJobQueue:
     def enqueue_hires(self, job_id: str, taxon_key: int, bbox: list[float]) -> None:
         self._app.send_task(
             "sdm.project_hires", kwargs={"job_id": job_id, "taxon_key": taxon_key, "bbox": bbox}
+        )
+
+    def enqueue_evaluation(self, job_id: str, taxon_key: int) -> None:
+        self._app.send_task(
+            "sdm.evaluate_references", kwargs={"job_id": job_id, "taxon_key": taxon_key}
         )
 
 

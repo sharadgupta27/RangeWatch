@@ -186,3 +186,33 @@ def test_reference_drops_incomplete_rows():
     ref_arr[0, 1] = np.nan
     ref = ExtrapolationReference.build(["a", "b", "c"], ref_arr, folds)
     assert ref.n_reference == 99 and np.isfinite(ref.mins).all()
+
+
+def test_independent_evaluation_scores_presences_absences_and_extrapolation():
+    from src.modeling.evaluation import independent_evaluation
+
+    rng = np.random.default_rng(0)
+    pres = np.r_[rng.uniform(0.5, 1.0, 40), rng.uniform(0.0, 0.2, 10), [np.nan]]
+    absn = rng.uniform(0.0, 0.4, 30)
+    bg = rng.uniform(0, 1, 2000)
+    ext = np.r_[np.zeros(40, bool), np.ones(10, bool), [False]]
+    out = independent_evaluation(pres, absn, bg, threshold=0.45, presence_extrapolated=ext)
+    assert out["n_presence"] == 50 and out["n_absence"] == 30 and out["n_outside_grid"] == 1
+    assert out["sensitivity"] == 0.8 and out["specificity"] == 1.0
+    assert abs(out["tss"] - 0.8) < 1e-9
+    assert out["auc_presence_absence"] > 0.8
+    # the model fails exactly where the extrapolation layer said it would
+    assert out["sensitivity_analog"] == 1.0 and out["sensitivity_extrapolated"] == 0.0
+    assert out["n_presence_extrapolated"] == 10
+    assert out["cbi"] is not None and out["cbi"] > 0
+
+
+def test_independent_evaluation_with_too_few_records_reports_none():
+    from src.modeling.evaluation import independent_evaluation
+
+    out = independent_evaluation(np.array([0.9, 0.8]), np.array([]), np.array([]), 0.5)
+    assert (
+        out["n_presence"] == 2
+        and out["sensitivity"] is None
+        and out["auc_presence_absence"] is None
+    )

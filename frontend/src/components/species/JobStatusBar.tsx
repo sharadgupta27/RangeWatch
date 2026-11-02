@@ -15,6 +15,7 @@ const STAGE_LABEL: Record<string, string> = {
   scenario_raster: 'Projecting climate scenarios',
   hires_raster: 'Projecting high-resolution region',
   crosscheck: 'Refitting on the cross-check climate data',
+  evaluation: 'Scoring model versions on independent data',
   done: 'Finishing',
 }
 
@@ -25,6 +26,7 @@ const KIND_LABEL: Record<JobOut['kind'], string> = {
   validation: 'Validation suite',
   crosscheck: 'Climate cross-check',
   hires: 'High-resolution projection',
+  evaluation: 'Independent evaluation',
 }
 
 /** Live progress for the latest job (SSE stream, or polling while the stream is down). */

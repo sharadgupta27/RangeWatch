@@ -70,6 +70,57 @@ CREATE TABLE IF NOT EXISTS occurrences_default PARTITION OF occurrences DEFAULT;
 CREATE INDEX IF NOT EXISTS occurrences_geom_gist ON occurrences USING gist (geom);
 CREATE INDEX IF NOT EXISTS occurrences_taxon_ingested ON occurrences (taxon_key, ingested_ts);
 
+-- GBIF interpretation issue flags, used by the data-quality tests (features/quality.py).
+-- NULL = ingested before issues were recorded; the next fetch that returns the record fills
+-- it (only while NULL, like the bio* columns). '{}' = no issues (and every iNat record).
+ALTER TABLE occurrences ADD COLUMN IF NOT EXISTS issues text[];
+
+-- ---------------------------------------------------------------------------
+-- Reference datasets: independent records used to *evaluate* models, never to train them.
+--   kind 'gbif_absences': GBIF records with occurrenceStatus = ABSENT (one dataset per taxon)
+--   kind 'upload':        a user-supplied survey (e.g. agency field records), with provenance
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS reference_datasets (
+    taxon_key      integer NOT NULL REFERENCES species_registry (taxon_key),
+    dataset_id     text NOT NULL,
+    kind           text NOT NULL CHECK (kind IN ('gbif_absences', 'upload')),
+    role           text NOT NULL DEFAULT 'evaluation' CHECK (role IN ('evaluation')),
+    name           text NOT NULL,
+    citation       text,
+    license        text,
+    note           text,
+    file_name      text,
+    file_sha256    text,
+    parse_report   jsonb,
+    overlap        jsonb,
+    n_present      integer NOT NULL DEFAULT 0,
+    n_absent       integer NOT NULL DEFAULT 0,
+    last_fetch_ts  timestamptz,
+    created_ts     timestamptz NOT NULL DEFAULT now(),
+    updated_ts     timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (taxon_key, dataset_id)
+);
+
+-- Append-only like occurrences (a dataset is removed as a whole, never edited row by row).
+CREATE TABLE IF NOT EXISTS reference_records (
+    taxon_key                 integer NOT NULL,
+    dataset_id                text NOT NULL,
+    record_id                 bigint NOT NULL,
+    occurrence_status         text NOT NULL CHECK (occurrence_status IN ('present', 'absent')),
+    geom                      geometry(Point, 4326) NOT NULL,
+    event_date                date,
+    coordinate_uncertainty_m  double precision,
+    basis_of_record           text,
+    country_code              text,
+    sampling_protocol         text,
+    source_dataset_key        text,
+    ingested_ts               timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (taxon_key, dataset_id, record_id),
+    FOREIGN KEY (taxon_key, dataset_id)
+        REFERENCES reference_datasets (taxon_key, dataset_id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS reference_records_geom_gist ON reference_records USING gist (geom);
+
 -- ---------------------------------------------------------------------------
 -- Native-range polygons (user-reviewed; never auto-confirmed)
 -- ---------------------------------------------------------------------------
@@ -174,6 +225,56 @@ $$ LANGUAGE plpgsql STABLE PARALLEL SAFE;
 
 COMMENT ON FUNCTION public.occurrence_tiles IS
     'Occurrence vector tiles for one taxon; aggregated below z7, raw points above.';
+
+-- pg_tileserv function layer: reference (evaluation) records — GBIF absences and uploaded
+-- surveys. Aggregated below z7 like occurrences, with per-status counts.
+--   /public.reference_tiles/{z}/{x}/{y}.pbf?taxon_key=...
+CREATE OR REPLACE FUNCTION public.reference_tiles(
+    z integer, x integer, y integer,
+    taxon_key integer DEFAULT 0
+)
+RETURNS bytea AS $$
+DECLARE
+    result bytea;
+    bounds geometry := ST_TileEnvelope(z, x, y);
+    cell double precision := (2 * 20037508.342789244) / (2 ^ z) / 64.0;
+BEGIN
+    IF z < 7 THEN
+        WITH pts AS (
+            SELECT ST_Transform(r.geom, 3857) AS g, r.occurrence_status
+            FROM reference_records r
+            WHERE r.taxon_key = reference_tiles.taxon_key
+              AND r.geom && ST_Transform(bounds, 4326)
+        ), agg AS (
+            SELECT ST_SnapToGrid(g, cell) AS g,
+                   count(*)::int AS n,
+                   count(*) FILTER (WHERE occurrence_status = 'present')::int AS n_present,
+                   count(*) FILTER (WHERE occurrence_status = 'absent')::int AS n_absent
+            FROM pts GROUP BY 1
+        ), mvtgeom AS (
+            SELECT ST_AsMVTGeom(g, bounds) AS geom, n, n_present, n_absent FROM agg
+        )
+        SELECT ST_AsMVT(mvtgeom, 'reference') INTO result FROM mvtgeom;
+    ELSE
+        WITH mvtgeom AS (
+            SELECT ST_AsMVTGeom(ST_Transform(r.geom, 3857), bounds) AS geom,
+                   1 AS n,
+                   (r.occurrence_status = 'present')::int AS n_present,
+                   (r.occurrence_status = 'absent')::int AS n_absent,
+                   r.dataset_id,
+                   r.record_id
+            FROM reference_records r
+            WHERE r.taxon_key = reference_tiles.taxon_key
+              AND r.geom && ST_Transform(bounds, 4326)
+        )
+        SELECT ST_AsMVT(mvtgeom, 'reference') INTO result FROM mvtgeom;
+    END IF;
+    RETURN result;
+END;
+$$ LANGUAGE plpgsql STABLE PARALLEL SAFE;
+
+COMMENT ON FUNCTION public.reference_tiles IS
+    'Reference (evaluation-only) records for one taxon: GBIF absences and uploaded surveys.';
 
 -- pg_tileserv function layer: native-range polygon as vector tiles (display only; the
 -- editor fetches the single polygon as GeoJSON from the API).

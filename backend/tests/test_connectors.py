@@ -450,3 +450,82 @@ def test_taxon_exposes_higher_taxon_keys():
     t = client.get_taxon(7)
     assert t.higher_taxon("order") == (408, "Lamiales")
     assert t.higher_taxon("family") is None
+
+
+def test_issue_flags_are_kept_from_search_json_and_download_csv():
+    base = {"gbifID": "5", "decimalLatitude": "45.1", "decimalLongitude": "7.2"}
+    rec = normalize_record({**base, "issues": ["taxon_match_fuzzy", "COORDINATE_ROUNDED"]}, 1, 1e4)
+    assert rec is not None and rec.issues == ("COORDINATE_ROUNDED", "TAXON_MATCH_FUZZY")
+    rec = normalize_record({**base, "issue": "RECORDED_DATE_INVALID;ZERO_COORDINATE"}, 1, 1e4)
+    assert rec is not None and rec.issues == ("RECORDED_DATE_INVALID", "ZERO_COORDINATE")
+    assert normalize_record({**base, "issue": ""}, 1, 1e4).issues == ()
+
+
+def test_absences_are_normalised_as_reference_records_not_presences():
+    from src.connectors.gbif_client import GBIF_ABSENCES_DATASET_ID, normalize_absence
+
+    raw = {
+        "gbifID": "77",
+        "decimalLatitude": "32.1",
+        "decimalLongitude": "34.8",
+        "occurrenceStatus": "ABSENT",
+        "eventDate": "2021-04-02",
+        "samplingProtocol": "10 m² plot",
+        "datasetKey": "ds-1",
+    }
+    assert normalize_record(raw, 9, 1e4) is None
+    rec = normalize_absence(raw, 9, 1e4)
+    assert rec is not None and rec.occurrence_status == "absent"
+    assert (rec.dataset_id, rec.record_id) == (GBIF_ABSENCES_DATASET_ID, 77)
+    assert rec.sampling_protocol == "10 m² plot" and rec.source_dataset_key == "ds-1"
+    assert normalize_absence({**raw, "occurrenceStatus": "PRESENT"}, 9, 1e4) is None
+    assert normalize_absence({**raw, "basisOfRecord": "FOSSIL_SPECIMEN"}, 9, 1e4) is None
+
+
+def test_search_absences_queries_absent_status():
+    fake = FakeGbifSearch(5)
+    for row in fake.rows:
+        row["occurrenceStatus"] = "ABSENT"
+    client = _client_with(fake)
+    out = client.search_absences(42)
+    assert len(out) == 5 and all(r.occurrence_status == "absent" for r in out)
+    assert all(c["occurrenceStatus"] == "ABSENT" for c in fake.calls)
+
+
+def test_institutions_are_paged_and_need_coordinates(monkeypatch):
+    from src.connectors import gbif_client
+
+    pages = [
+        {
+            "results": [
+                {
+                    "key": "a",
+                    "name": "Herbarium A",
+                    "latitude": 31.77,
+                    "longitude": 35.2,
+                    "types": ["HERBARIUM"],
+                    "address": {"country": "IL"},
+                },
+                {"key": "b", "name": "No coordinates"},
+            ],
+            "endOfRecords": False,
+        },
+        {
+            "results": [{"key": "c", "code": "BG", "latitude": "52.4", "longitude": "13.3"}],
+            "endOfRecords": True,
+        },
+    ]
+    offsets = []
+
+    def fake_json(url, params, timeout):
+        offsets.append(params["offset"])
+        return pages[len(offsets) - 1]
+
+    monkeypatch.setattr(gbif_client, "_http_get_json", fake_json)
+    inst = _client_with(SimpleNamespace()).fetch_institutions()
+    assert offsets == [0, 2]
+    assert [(i.key, i.name, i.country) for i in inst] == [
+        ("a", "Herbarium A", "IL"),
+        ("c", "BG", None),
+    ]
+    assert inst[0].types == ("HERBARIUM",)

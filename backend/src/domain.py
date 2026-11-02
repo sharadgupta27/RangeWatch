@@ -41,6 +41,10 @@ ZONE_LABELS: dict[int, str] = {
 RangeLabel = Literal["native", "introduced", "unknown"]
 OccurrenceSource = Literal["GBIF", "iNaturalist"]
 ModelType = Literal["A", "B"]
+OccurrenceStatus = Literal["present", "absent"]
+# Reference datasets are never training data: they evaluate models independently.
+ReferenceKind = Literal["gbif_absences", "upload"]
+ReferenceRole = Literal["evaluation"]
 
 
 def utcnow() -> datetime:
@@ -74,6 +78,7 @@ class JobKind(StrEnum):
     VALIDATION = "validation"
     CROSSCHECK = "crosscheck"
     HIRES = "hires"
+    EVALUATION = "evaluation"
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,6 +94,52 @@ class OccurrenceRecord:
     country_code: str | None = None
     range_label: RangeLabel = "unknown"
     inat_crossref_id: int | None = None
+    # GBIF interpretation issue flags (e.g. COUNTRY_COORDINATE_MISMATCH). Empty for records
+    # without any (and for iNaturalist, which has none); see features/quality.py.
+    issues: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class ReferenceRecord:
+    """One record of a reference dataset: an explicit GBIF absence or a row of an uploaded
+    survey. Stored apart from `occurrences` and never used for training."""
+
+    taxon_key: int
+    dataset_id: str
+    record_id: int
+    longitude: float
+    latitude: float
+    occurrence_status: OccurrenceStatus = "present"
+    event_date: date | None = None
+    coordinate_uncertainty_m: float | None = None
+    basis_of_record: str | None = None
+    country_code: str | None = None
+    sampling_protocol: str | None = None
+    source_dataset_key: str | None = None
+
+
+@dataclass(slots=True)
+class ReferenceDataset:
+    taxon_key: int
+    dataset_id: str
+    kind: ReferenceKind
+    name: str
+    role: ReferenceRole = "evaluation"
+    citation: str | None = None
+    license: str | None = None
+    note: str | None = None
+    file_name: str | None = None
+    file_sha256: str | None = None
+    # How the upload was parsed (columns used, rows skipped and why, CRS).
+    parse_report: dict[str, Any] | None = None
+    # Independence check against the GBIF/iNaturalist occurrence store.
+    overlap: dict[str, Any] | None = None
+    n_present: int = 0
+    n_absent: int = 0
+    # Incremental-fetch watermark (GBIF absences only).
+    last_fetch_ts: datetime | None = None
+    created_ts: datetime = field(default_factory=utcnow)
+    updated_ts: datetime = field(default_factory=utcnow)
 
 
 @dataclass(slots=True)

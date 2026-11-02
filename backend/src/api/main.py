@@ -7,7 +7,16 @@ import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from src.api.routers import bulletin, jobs, layers, meta, models, species, validation
+from src.api.routers import (
+    bulletin,
+    datasets,
+    jobs,
+    layers,
+    meta,
+    models,
+    species,
+    validation,
+)
 from src.config import get_settings
 
 
@@ -31,6 +40,7 @@ def create_app() -> FastAPI:
     for r in (
         meta.router,
         species.router,
+        datasets.router,
         models.router,
         layers.router,
         bulletin.router,

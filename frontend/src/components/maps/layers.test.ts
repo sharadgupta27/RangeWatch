@@ -5,12 +5,15 @@ import type { LayerSet, RasterLayer, VectorLayer } from '@/api/types'
 import { diagnosticLayers, resolveProjection } from './DualMapView'
 import {
   COLORS,
+  effortLayer,
   hiresLayers,
   occurrenceColor,
   occurrenceLayer,
   occurrenceRadius,
   occurrenceTileUrl,
   projectionLayers,
+  referenceColor,
+  referenceLayer,
 } from './layers'
 import { toFeatureCollection, toMultiPolygon } from './NativeRangeEditor'
 
@@ -205,5 +208,32 @@ describe('high-resolution region layers', () => {
   it('drops only the MESS mask when the overlay is off, and nothing without a region', () => {
     expect(hiresLayers(hires, false).map((l) => l.id)).toEqual(['hires-suitability', 'hires-outline'])
     expect(hiresLayers(null, true)).toEqual([])
+  })
+})
+
+describe('independent records and sampling effort layers', () => {
+  const ref: VectorLayer = {
+    id: 'reference',
+    label: 'Independent records',
+    source_layer: 'reference',
+    tile_url: 'http://tiles/public.reference_tiles/{z}/{x}/{y}.pbf?taxon_key=42',
+  }
+
+  it('colours survey presences violet, absences white, and blends aggregated cells', () => {
+    expect(referenceColor({ n: 3, n_present: 3, n_absent: 0 })).toEqual(COLORS.referencePresent)
+    expect(referenceColor({ n: 3, n_present: 0, n_absent: 3 })).toEqual(COLORS.referenceAbsent)
+    const half = referenceColor({ n: 2, n_present: 1, n_absent: 1 })
+    expect(half[0]).toBeGreaterThan(COLORS.referencePresent[0])
+    expect(half[1]).toBeLessThan(COLORS.referenceAbsent[1])
+  })
+
+  it('reads the pg_tileserv reference function layer and the effort COG', () => {
+    const layer = referenceLayer({ layer: ref })
+    expect(layer.id).toBe('reference-records')
+    expect(layer.props.data).toBe(ref.tile_url)
+    const effort = effortLayer({ layer: raster('effort'), visible: false })
+    expect(effort.id).toBe('sampling-effort')
+    expect(effort.props.visible).toBe(false)
+    expect(effort.props.opacity).toBe(0.7)
   })
 })

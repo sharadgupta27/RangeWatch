@@ -21,6 +21,53 @@ export const COLORS = {
   unknown: [148, 163, 184, 210] as RGBA,
   nativeRangeFill: [42, 157, 143, 28] as RGBA,
   nativeRangeLine: [94, 234, 212, 255] as RGBA,
+  referencePresent: [168, 85, 247, 235] as RGBA,
+  referenceAbsent: [248, 250, 252, 235] as RGBA,
+}
+
+interface ReferenceProps {
+  n?: number
+  n_present?: number
+  n_absent?: number
+}
+
+/** Independent records: violet for survey presences, white for reported absences (blended
+ *  by the absent share in aggregated cells). */
+export function referenceColor(p: ReferenceProps): RGBA {
+  const n = Math.max(1, p.n ?? 1)
+  const absent = Math.min(1, (p.n_absent ?? 0) / n)
+  const a = COLORS.referencePresent
+  const b = COLORS.referenceAbsent
+  return [0, 1, 2, 3].map((i) => Math.round(a[i]! * (1 - absent) + b[i]! * absent)) as RGBA
+}
+
+/**
+ * Evaluation-only records (uploaded surveys, GBIF absences) from pg_tileserv, aggregated
+ * server-side below z7 like occurrences. A thicker dark outline sets them apart from the
+ * occurrences underneath.
+ */
+export function referenceLayer(opts: { layer: VectorLayer; visible?: boolean }): Layer {
+  return new MVTLayer<ReferenceProps>({
+    id: 'reference-records',
+    data: opts.layer.tile_url,
+    visible: opts.visible ?? true,
+    minZoom: 0,
+    maxZoom: 14,
+    pointType: 'circle',
+    pointRadiusUnits: 'pixels',
+    getPointRadius: (f: Feature) => occurrenceRadius((f.properties ?? {}) as ReferenceProps),
+    getFillColor: (f: Feature) => referenceColor((f.properties ?? {}) as ReferenceProps),
+    getLineColor: [15, 23, 42, 230],
+    lineWidthUnits: 'pixels',
+    getLineWidth: 1.5,
+    stroked: true,
+    pickable: true,
+  })
+}
+
+/** Target-group sampling effort (titiler COG) drawn under the observed occurrences. */
+export function effortLayer(opts: { layer: RasterLayer; visible?: boolean }): Layer {
+  return rasterTileLayer({ id: 'sampling-effort', opacity: 0.7, ...opts })
 }
 
 /** Occurrence tile URL with the time-slider bound appended as a pg_tileserv function arg. */
@@ -28,7 +75,7 @@ export function occurrenceTileUrl(layer: VectorLayer, maxYear: number | null): s
   return maxYear === null ? layer.tile_url : `${layer.tile_url}&max_year=${maxYear}`
 }
 
-interface OccurrenceProps {
+export interface OccurrenceProps {
   n?: number
   n_native?: number
   n_introduced?: number

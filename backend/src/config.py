@@ -56,6 +56,27 @@ class Settings(BaseSettings):
     # when too sparse) or "buffer". Changing either changes model results: log + review.
     background_method: str = "target_group"
     target_group_rank: str = "order"
+    # How target-group cells are drawn: "unique_cells" (each cell with effort once),
+    # "record_count" (bias file: ∝ the group's records per cell) or "sqrt_record_count".
+    target_group_weighting: str = "unique_cells"
+    # Global target-group sampling-effort raster per model version (map layer + per-zone
+    # "unsampled" shares). Costs ~32 GBIF map-tile requests per training run.
+    effort_layer_enabled: bool = True
+
+    # --- data quality (features/quality.py); tests and thresholds are logged per version ---
+    quality_reference_version: str = "quality_refs_v1"
+    # Tests whose flags exclude a record from training; None = every "error" test.
+    quality_exclude: list[str] | None = None
+    quality_baseline_start_year: int = 1970
+
+    # --- reference (evaluation-only) datasets ---
+    upload_max_bytes: int = 25 * 1024 * 1024
+    upload_max_rows: int = 200_000
+    # An uploaded record duplicates a GBIF/iNat record if one lies within this distance
+    # (and, when both are dated, within `overlap_max_days`).
+    overlap_distance_m: float = 100.0
+    overlap_max_days: int = 1
+    gbif_absences_enabled: bool = True
 
     # --- storage growth: species without a user request for this long get their feature
     # table archived (zstd-recompressed); 0 disables. ---
@@ -64,6 +85,10 @@ class Settings(BaseSettings):
     @property
     def bioclim_root(self) -> Path:
         return self.data_root / "bioclim"
+
+    @property
+    def quality_reference_root(self) -> Path:
+        return self.data_root / "reference"
 
     @property
     def native_range_root(self) -> Path:

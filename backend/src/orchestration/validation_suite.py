@@ -292,6 +292,8 @@ def transferability_check(pipeline: SpeciesPipeline, taxon_key: int) -> dict[str
     feats = stack.sample(occ["longitude"], occ["latitude"], predictors)
     occ = occ.drop(columns=[c for c in predictors if c in occ.columns]).join(feats)
     occ = occ[~occ[predictors].isna().any(axis=1)].reset_index(drop=True)
+    # Same data-quality exclusions as the pipeline's own training.
+    occ = occ[~pipeline.assess_quality(occ, predictors, stack).excluded].reset_index(drop=True)
     labels = effective_range_labels(occ, nr.geometry)
     cfg = replace(
         pipeline.training_config,

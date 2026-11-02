@@ -15,6 +15,7 @@ RangeLabelT = Literal["native", "introduced", "unknown"]
 SourceT = Literal["GBIF", "iNaturalist"]
 ModelTypeT = Literal["A", "B"]
 ConfidenceT = Literal["low", "moderate", "high"]
+QualityTierT = Literal["A", "B", "C", "excluded"]
 
 
 class ApiModel(BaseModel):
@@ -244,6 +245,15 @@ class OccurrenceRow(ApiModel):
     basis_of_record: str | None = None
     country_code: str | None = None
     range_label: RangeLabelT
+    issues: list[str] | None = Field(
+        None, description="GBIF issue flags (null: ingested before issues were recorded)"
+    )
+    quality_flags: list[str] | None = Field(
+        None,
+        description="Data-quality flags from the current model version's assessment (null: "
+        "not assessed, e.g. outside the climate grid or ingested after training)",
+    )
+    quality_tier: QualityTierT | None = None
     ingested_ts: datetime
 
 
@@ -289,6 +299,14 @@ class TargetGroupInfo(ApiModel):
     n_tiles: int
     query: str = Field(description="GBIF map API density-tile query used as sampling effort")
     fetched_ts: str
+    weighting: str | None = Field(
+        None,
+        description="unique_cells (each cell once), record_count (bias file) or "
+        "sqrt_record_count; absent for versions trained before the option existed",
+    )
+    n_background_cells: int | None = Field(
+        None, description="Distinct cells in the background sample"
+    )
 
 
 class BackgroundInfo(ApiModel):
@@ -298,6 +316,43 @@ class BackgroundInfo(ApiModel):
     target_group: TargetGroupInfo | None = None
     fallback_reason: str | None = Field(
         None, description="Why target-group background was not used, if it was requested"
+    )
+
+
+class DataQualityTestOut(ApiModel):
+    id: str
+    label: str
+    severity: Literal["error", "warning"]
+    description: str
+    reference: str | None = None
+    excluded: bool = Field(description="Records it flags are excluded from training")
+    status: Literal["run", "skipped"]
+    reason: str | None = Field(None, description="Why the test was skipped")
+    n_flagged: int
+
+
+class DataQualityOut(ApiModel):
+    """Record-level data-quality assessment of one training run (features/quality.py)."""
+
+    version: str
+    config: dict[str, Any]
+    reference: dict[str, Any] | None = Field(
+        None, description="Reference gazetteer version and per-table SHA-256 (null: none)"
+    )
+    n_records: int = Field(description="Records with climate data that were assessed")
+    n_excluded: int
+    n_flagged_kept: int = Field(description="Records with warning flags only (kept)")
+    n_outside_climate_grid: int | None = None
+    tiers: dict[str, int]
+    tier_rules: dict[str, str]
+    tests: list[DataQualityTestOut]
+    issue_counts: dict[str, int] = Field(default_factory=dict)
+    n_issues_unknown: int = 0
+    n_undated: int = 0
+    grid_cell_m: float | None = None
+    environmental_outlier_cutoff: dict[str, Any] | None = None
+    snapshot: TrainingSnapshotInfo | None = Field(
+        None, description="quality_flags.parquet: every assessed record with its flags"
     )
 
 
@@ -327,6 +382,34 @@ class ReproducibilityInfo(ApiModel):
     )
     occurrence_manifest: TrainingSnapshotInfo | None = Field(
         None, description="All valid records considered, with ingested and effective labels"
+    )
+    data_quality: DataQualityOut | None = Field(
+        None, description="Data-quality tests and exclusions; absent for older versions"
+    )
+
+
+class SamplingEffortOut(ApiModel):
+    """Global GBIF sampling effort of the target group, summarised per range zone."""
+
+    status: Literal["available", "unavailable", "disabled"]
+    reason: str | None = None
+    target_group: dict[str, Any] | None = None
+    n_records: int | None = None
+    max_records_per_pixel: int | None = None
+    pixel_deg: float | None = None
+    map_zoom: int | None = None
+    n_tiles: int | None = None
+    query: str | None = None
+    fetched_ts: str | None = None
+    land_unsampled_fraction: float | None = Field(
+        None, description="Share of land area without any record of the target group"
+    )
+    native_suitable_unsampled_fraction: float | None = None
+    established_outside_unsampled_fraction: float | None = None
+    candidate_unsampled_fraction: float | None = Field(
+        None,
+        description="Share of the candidate invasion zone without target-group records: "
+        "there, the absence of presences says nothing about suitability",
     )
 
 
@@ -482,6 +565,91 @@ class ModelVersionDetail(ModelVersionOut):
     severity: SeverityResult | None = None
     n_records_by_effective_label: dict[str, int]
     crosschecks: list[ClimateCrossCheckOut] = Field(default_factory=list)
+    sampling_effort: SamplingEffortOut | None = Field(
+        None, description="Absent for versions trained before the effort layer existed"
+    )
+
+
+# -------------------------------------------------------- reference datasets
+class IndependentMetricsOut(ApiModel):
+    """Scores on records the model never saw (modeling/evaluation.independent_evaluation)."""
+
+    threshold: float
+    n_presence: int
+    n_absence: int
+    n_outside_grid: int
+    sensitivity: float | None = Field(None, description="Share of presences ≥ threshold")
+    mean_suitability_presence: float | None = None
+    cbi: float | None = Field(None, description="Presences vs the model's own background")
+    specificity: float | None = Field(
+        None, description="Share of absences < threshold (a lower bound: absence ≠ empty cell)"
+    )
+    mean_suitability_absence: float | None = None
+    auc_presence_absence: float | None = None
+    tss: float | None = None
+    sensitivity_analog: float | None = Field(
+        None, description="Sensitivity at presences inside the training climate (MESS ≥ 0)"
+    )
+    sensitivity_extrapolated: float | None = Field(
+        None, description="Sensitivity at presences in extrapolated cells (MESS < 0)"
+    )
+    n_presence_extrapolated: int | None = None
+
+
+class ReferenceEvaluationOut(ApiModel):
+    model_version: int
+    model_type: ModelTypeT | None = None
+    trained_ts: datetime | None = None
+    evaluated_ts: str
+    n_records: int
+    n_excluded_overlap: int = Field(
+        description="Records left out because they duplicate a GBIF/iNaturalist record"
+    )
+    metrics: IndependentMetricsOut
+    metrics_all_records: IndependentMetricsOut | None = Field(
+        None, description="Including the overlapping records (only when there are any)"
+    )
+
+
+class OverlapOut(ApiModel):
+    n_checked: int
+    n_overlap: int
+    fraction: float
+    distance_m: float
+    max_days: int
+    n_occurrences_compared: int
+    checked_ts: str
+    rule: str
+
+
+class ReferenceDatasetOut(ApiModel):
+    taxon_key: int
+    dataset_id: str
+    kind: Literal["gbif_absences", "upload"]
+    role: Literal["evaluation"]
+    name: str
+    citation: str | None = None
+    license: str | None = None
+    note: str | None = None
+    file_name: str | None = None
+    file_sha256: str | None = None
+    parse_report: dict[str, Any] | None = None
+    overlap: OverlapOut | None = Field(
+        None, description="Independence check against the occurrence store (uploads only)"
+    )
+    n_present: int
+    n_absent: int
+    last_fetch_ts: datetime | None = None
+    created_ts: datetime
+    updated_ts: datetime
+    evaluations: list[ReferenceEvaluationOut] = Field(
+        default_factory=list, description="One entry per evaluated model version, newest first"
+    )
+
+
+class DatasetUploadResult(ApiModel):
+    dataset: ReferenceDatasetOut
+    job: JobOut | None = Field(None, description="Independence check + evaluation job")
 
 
 # ------------------------------------------------------------------ layers
@@ -577,6 +745,12 @@ class LayerSet(ApiModel):
         None, description="Resolution of the model's high-resolution stack, if one is registered"
     )
     hires_max_cells: int | None = None
+    effort: RasterLayer | None = Field(
+        None, description="Target-group sampling effort (log records per pixel)"
+    )
+    reference: VectorLayer | None = Field(
+        None, description="Evaluation-only reference records (uploads, GBIF absences)"
+    )
     caveats: LayerCaveats | None = None
 
 

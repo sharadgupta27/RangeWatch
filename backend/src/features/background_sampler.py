@@ -63,6 +63,14 @@ class BackgroundSample:
     features: pd.DataFrame
     method: str
     seed: int
+    # Distinct bioclim cells in the sample (weighted target-group samples may repeat cells).
+    n_cells: int | None = None
+
+
+# How target-group cells are drawn: each cell with effort once ("unique_cells", Phillips et al.
+# 2009), or with probability proportional to its record count — a bias file — or to its square
+# root (a compromise when effort spans orders of magnitude).
+TARGET_GROUP_WEIGHTINGS = ("unique_cells", "record_count", "sqrt_record_count")
 
 
 def buffer_region(lon: Sequence[float], lat: Sequence[float], buffer_km: float) -> shapely.Geometry:
@@ -126,26 +134,47 @@ def sample_target_group_background(
     bands: Sequence[str],
     region: shapely.Geometry | None = None,
     method: str = "target_group",
+    counts: Sequence[float] | None = None,
+    weighting: str = "unique_cells",
 ) -> BackgroundSample:
     """Target-group background: draw from occurrences of related taxa sampled by the same
     observers/methods, which mirrors the sampling bias of the presences (preferred when a
     target group is available).
 
-    Locations are de-duplicated to bioclim cells first, so every cell with recorded effort
-    is equally likely (unique localities, as in Phillips et al. 2009) and dense hotspots do
-    not swamp the background. `region` restricts the draw to the same area the buffered
-    alternative would use.
+    Locations are de-duplicated to bioclim cells first. With `weighting="unique_cells"` every
+    cell with recorded effort is equally likely (unique localities, as in Phillips et al.
+    2009), so dense hotspots do not swamp the background. With "record_count" (or
+    "sqrt_record_count") cells are drawn with replacement, with probability proportional to
+    the target group's record count per cell (or its square root) from `counts` — the bias-
+    file approach, which keeps the full effort gradient. `region` restricts the draw to the
+    same area the buffered alternative would use.
     """
+    if weighting not in TARGET_GROUP_WEIGHTINGS:
+        raise ValueError(f"weighting must be one of {TARGET_GROUP_WEIGHTINGS}, got {weighting!r}")
     lon_in = np.asarray(bias_lon, dtype="float64")
     lat_in = np.asarray(bias_lat, dtype="float64")
+    cnt_in = np.asarray(counts, dtype="float64") if counts is not None else np.ones(len(lon_in))
     if region is not None:
         inside = shapely.contains_xy(region, lon_in, lat_in)
-        lon_in, lat_in = lon_in[inside], lat_in[inside]
+        lon_in, lat_in, cnt_in = lon_in[inside], lat_in[inside], cnt_in[inside]
     idx = cell_dedupe(lon_in, lat_in, stack.transform)
     lon_a = lon_in[idx]
     lat_a = lat_in[idx]
     rng = np.random.default_rng(seed)
-    take = rng.choice(len(lon_a), size=min(n, len(lon_a)), replace=False)
+    if weighting == "unique_cells":
+        take = rng.choice(len(lon_a), size=min(n, len(lon_a)), replace=False)
+    else:
+        # Effort per cell: sum of the pixel counts falling in it (first pixel gives the point).
+        rows, cols = rowcol(stack.transform, lon_in, lat_in)
+        codes, _ = pd.factorize(
+            pd.Series(list(zip(np.asarray(rows).tolist(), np.asarray(cols).tolist(), strict=True)))
+        )
+        per_cell = np.bincount(codes, weights=np.clip(cnt_in, 0, None), minlength=len(idx))
+        w = np.sqrt(per_cell) if weighting == "sqrt_record_count" else per_cell
+        if len(lon_a) == 0 or w.sum() <= 0:
+            take = np.array([], dtype=int)
+        else:
+            take = rng.choice(len(lon_a), size=n, replace=True, p=w / w.sum())
     feats = stack.sample(lon_a[take], lat_a[take], bands)
     valid = ~feats.isna().any(axis=1).to_numpy()
     return BackgroundSample(
@@ -154,4 +183,5 @@ def sample_target_group_background(
         feats[valid].reset_index(drop=True),
         method,
         seed,
+        n_cells=len(np.unique(take[valid])),
     )

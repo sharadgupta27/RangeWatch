@@ -4,6 +4,7 @@ severity configuration."""
 from __future__ import annotations
 
 import logging
+from functools import lru_cache
 from typing import Annotated, Literal
 
 import pandas as pd
@@ -14,6 +15,7 @@ from src.api.deps import (
     InatSearch,
     JobQueue,
     TaxonSearch,
+    artifacts_dep,
     gbif_search_dep,
     inat_search_dep,
     queue_dep,
@@ -43,6 +45,7 @@ from src.domain import Job, JobKind
 from src.features.raster_sampler import METADATA_FILENAME, RESOLUTION_DEG, BioclimMetadata
 from src.modeling.severity_index import SeverityConfig
 from src.orchestration.registry_ops import recompute_severity, update_native_range
+from src.persistence.artifact_store import ArtifactStore
 from src.persistence.repository import Repository
 
 log = logging.getLogger(__name__)
@@ -291,13 +294,53 @@ def list_occurrences(
     limit: Annotated[int, Query(ge=1, le=500)] = 50,
     source: Literal["GBIF", "iNaturalist"] | None = None,
     range_label: Literal["native", "introduced", "unknown"] | None = None,
+    artifacts: ArtifactStore = Depends(artifacts_dep),
 ) -> OccurrencePage:
     """Paginated occurrence list for table views (map layers use pg_tileserv vector tiles)."""
-    _get_species_or_404(repo, taxon_key)
+    sp = _get_species_or_404(repo, taxon_key)
     df, total = repo.page_occurrences(taxon_key, offset, limit, source, range_label)
-    df = df.astype(object).where(pd.notna(df), None)
-    items = [OccurrenceRow.model_validate(r) for r in df.to_dict(orient="records")]
-    return OccurrencePage(items=items, total=total, offset=offset, limit=limit)
+    lookup = _quality_lookup(repo, artifacts, sp.taxon_key, sp.model_version)
+    rows = []
+    for r in df.astype(object).where(pd.notna(df), None).to_dict(orient="records"):
+        flags, tier = lookup.get((r["source"], int(r["record_id"])), (None, None))
+        issues = r.get("issues")
+        rows.append(
+            OccurrenceRow.model_validate(
+                {
+                    **r,
+                    "issues": list(issues) if issues is not None else None,
+                    "quality_flags": flags,
+                    "quality_tier": tier,
+                }
+            )
+        )
+    return OccurrencePage(items=rows, total=total, offset=offset, limit=limit)
+
+
+def _quality_lookup(
+    repo: Repository, artifacts: ArtifactStore, taxon_key: int, version: int
+) -> dict[tuple[str, int], tuple[list[str], str]]:
+    """(source, record_id) → (flags, tier) from the current version's quality snapshot."""
+    if not version:
+        return {}
+    mv = repo.get_model_version(taxon_key, version)
+    uri = mv.artifacts.get("quality_flags") if mv else None
+    if not uri:
+        return {}
+    path = artifacts.local_path(uri)
+    return _read_quality_snapshot(str(path), path.stat().st_mtime) if path.exists() else {}
+
+
+@lru_cache(maxsize=8)
+def _read_quality_snapshot(path: str, mtime: float) -> dict[tuple[str, int], tuple[list[str], str]]:
+    # Snapshots are immutable per version; mtime only guards against a rewritten file.
+    df = pd.read_parquet(path, columns=["source", "record_id", "quality_flags", "quality_tier"])
+    return {
+        (str(s), int(r)): ([f for f in str(fl).split(";") if f], str(t))
+        for s, r, fl, t in zip(
+            df["source"], df["record_id"], df["quality_flags"], df["quality_tier"], strict=True
+        )
+    }
 
 
 @router.get(

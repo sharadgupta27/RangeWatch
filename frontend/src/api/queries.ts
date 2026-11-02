@@ -16,7 +16,12 @@ import { useEffect, useRef, useState } from 'react'
 
 import { absoluteApiUrl, api, unwrap } from './client'
 import type { paths } from './schema'
-import type { JobOut, NativeRangeUpdate, SeverityConfigModel } from './types'
+import type {
+  DatasetUploadFields,
+  JobOut,
+  NativeRangeUpdate,
+  SeverityConfigModel,
+} from './types'
 
 /** Payload of one `jobs` event on GET /jobs/events (typed from the OpenAPI contract). */
 type JobEventPayload =
@@ -33,6 +38,7 @@ export const qk = {
   model: (k: number, v: number) => ['species', k, 'models', v] as const,
   layers: (k: number) => ['species', k, 'layers'] as const,
   bulletin: (k: number) => ['species', k, 'bulletin'] as const,
+  datasets: (k: number) => ['species', k, 'datasets'] as const,
   jobs: (k: number) => ['jobs', { taxonKey: k }] as const,
   bioclim: () => ['bioclim'] as const,
 }
@@ -425,5 +431,79 @@ export function useRunValidation() {
     mutationFn: async (train: boolean) =>
       unwrap(await api.POST('/validation/runs', { body: { train } })),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['jobs', 'validation'] }),
+  })
+}
+
+// ------------------------------------------------------------ reference datasets
+/** Multipart body for an upload: the typed fields plus the file itself. */
+export function datasetFormData(file: File, fields: DatasetUploadFields): FormData {
+  const fd = new FormData()
+  fd.append('file', file, file.name)
+  for (const [key, value] of Object.entries(fields)) {
+    if (typeof value === 'string' && value.trim() !== '') fd.append(key, value.trim())
+  }
+  return fd
+}
+
+export function useReferenceDatasets(taxonKey: number, enabled = true) {
+  return useQuery({
+    queryKey: qk.datasets(taxonKey),
+    queryFn: async () =>
+      unwrap(
+        await api.GET('/species/{taxon_key}/datasets', {
+          params: { path: { taxon_key: taxonKey } },
+        }),
+      ),
+    enabled,
+  })
+}
+
+export function useUploadDataset(taxonKey: number) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async ({ file, fields }: { file: File; fields: DatasetUploadFields }) =>
+      unwrap(
+        await api.POST('/species/{taxon_key}/datasets', {
+          params: { path: { taxon_key: taxonKey } },
+          // The generated body types the file as a string (OpenAPI "binary"); the serializer
+          // sends the real File in a FormData instead.
+          body: { ...fields, file: file.name },
+          bodySerializer: () => datasetFormData(file, fields),
+        }),
+      ),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: qk.datasets(taxonKey) })
+      void qc.invalidateQueries({ queryKey: qk.layers(taxonKey) })
+      void qc.invalidateQueries({ queryKey: qk.jobs(taxonKey) })
+    },
+  })
+}
+
+export function useDeleteDataset(taxonKey: number) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (datasetId: string) => {
+      const res = await api.DELETE('/species/{taxon_key}/datasets/{dataset_id}', {
+        params: { path: { taxon_key: taxonKey, dataset_id: datasetId } },
+      })
+      if (!res.response.ok) unwrap(res)
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: qk.datasets(taxonKey) })
+      void qc.invalidateQueries({ queryKey: qk.layers(taxonKey) })
+    },
+  })
+}
+
+export function useEvaluateDatasets(taxonKey: number) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async () =>
+      unwrap(
+        await api.POST('/species/{taxon_key}/datasets/evaluate', {
+          params: { path: { taxon_key: taxonKey } },
+        }),
+      ),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.jobs(taxonKey) }),
   })
 }

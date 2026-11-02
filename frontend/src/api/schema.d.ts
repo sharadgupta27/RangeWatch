@@ -251,6 +251,72 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/species/{taxon_key}/datasets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Datasets
+         * @description Reference datasets with each model version's independent evaluation on them.
+         */
+        get: operations["listReferenceDatasets"];
+        put?: never;
+        /**
+         * Upload Dataset
+         * @description Upload an independent survey as an evaluation-only dataset. Columns are detected
+         *     unless named; rows of other species are dropped when the file has a species column.
+         */
+        post: operations["uploadReferenceDataset"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/species/{taxon_key}/datasets/{dataset_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete Dataset
+         * @description Remove an uploaded dataset and its records. Scores already stored with model versions
+         *     stay in their lineage. GBIF absences are managed by the pipeline and cannot be removed.
+         */
+        delete: operations["deleteReferenceDataset"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/species/{taxon_key}/datasets/evaluate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Evaluate
+         * @description Re-run the independence check and score every model version on every dataset.
+         */
+        post: operations["evaluateReferenceDatasets"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/species/{taxon_key}/models": {
         parameters: {
             query?: never;
@@ -482,6 +548,36 @@ export interface components {
             /** Crosscheck Source */
             crosscheck_source?: string | null;
         };
+        /** Body_uploadReferenceDataset */
+        Body_uploadReferenceDataset: {
+            /**
+             * File
+             * @description CSV/TSV, GeoJSON, GeoPackage or zipped shapefile
+             */
+            file: string;
+            /** Name */
+            name: string;
+            /** Citation */
+            citation?: string | null;
+            /** License */
+            license?: string | null;
+            /** Note */
+            note?: string | null;
+            /** Longitude Column */
+            longitude_column?: string | null;
+            /** Latitude Column */
+            latitude_column?: string | null;
+            /** Species Column */
+            species_column?: string | null;
+            /** Date Column */
+            date_column?: string | null;
+            /** Uncertainty Column */
+            uncertainty_column?: string | null;
+            /** Status Column */
+            status_column?: string | null;
+            /** Record Id Column */
+            record_id_column?: string | null;
+        };
         /** BulletinRequest */
         BulletinRequest: {
             /** Model Version */
@@ -560,6 +656,110 @@ export interface components {
             tss_mean?: number | null;
             /** Threshold */
             threshold?: number | null;
+        };
+        /**
+         * DataQualityOut
+         * @description Record-level data-quality assessment of one training run (features/quality.py).
+         */
+        DataQualityOut: {
+            /** Version */
+            version: string;
+            /** Config */
+            config: {
+                [key: string]: unknown;
+            };
+            /**
+             * Reference
+             * @description Reference gazetteer version and per-table SHA-256 (null: none)
+             */
+            reference?: {
+                [key: string]: unknown;
+            } | null;
+            /**
+             * N Records
+             * @description Records with climate data that were assessed
+             */
+            n_records: number;
+            /** N Excluded */
+            n_excluded: number;
+            /**
+             * N Flagged Kept
+             * @description Records with warning flags only (kept)
+             */
+            n_flagged_kept: number;
+            /** N Outside Climate Grid */
+            n_outside_climate_grid?: number | null;
+            /** Tiers */
+            tiers: {
+                [key: string]: number;
+            };
+            /** Tier Rules */
+            tier_rules: {
+                [key: string]: string;
+            };
+            /** Tests */
+            tests: components["schemas"]["DataQualityTestOut"][];
+            /** Issue Counts */
+            issue_counts?: {
+                [key: string]: number;
+            };
+            /**
+             * N Issues Unknown
+             * @default 0
+             */
+            n_issues_unknown: number;
+            /**
+             * N Undated
+             * @default 0
+             */
+            n_undated: number;
+            /** Grid Cell M */
+            grid_cell_m?: number | null;
+            /** Environmental Outlier Cutoff */
+            environmental_outlier_cutoff?: {
+                [key: string]: unknown;
+            } | null;
+            /** @description quality_flags.parquet: every assessed record with its flags */
+            snapshot?: components["schemas"]["TrainingSnapshotInfo"] | null;
+        };
+        /** DataQualityTestOut */
+        DataQualityTestOut: {
+            /** Id */
+            id: string;
+            /** Label */
+            label: string;
+            /**
+             * Severity
+             * @enum {string}
+             */
+            severity: "error" | "warning";
+            /** Description */
+            description: string;
+            /** Reference */
+            reference?: string | null;
+            /**
+             * Excluded
+             * @description Records it flags are excluded from training
+             */
+            excluded: boolean;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "run" | "skipped";
+            /**
+             * Reason
+             * @description Why the test was skipped
+             */
+            reason?: string | null;
+            /** N Flagged */
+            n_flagged: number;
+        };
+        /** DatasetUploadResult */
+        DatasetUploadResult: {
+            dataset: components["schemas"]["ReferenceDatasetOut"];
+            /** @description Independence check + evaluation job */
+            job?: components["schemas"]["JobOut"] | null;
         };
         /** ExtrapolationDiagnosticOut */
         ExtrapolationDiagnosticOut: {
@@ -739,10 +939,59 @@ export interface components {
             bbox: number[];
         };
         /**
+         * IndependentMetricsOut
+         * @description Scores on records the model never saw (modeling/evaluation.independent_evaluation).
+         */
+        IndependentMetricsOut: {
+            /** Threshold */
+            threshold: number;
+            /** N Presence */
+            n_presence: number;
+            /** N Absence */
+            n_absence: number;
+            /** N Outside Grid */
+            n_outside_grid: number;
+            /**
+             * Sensitivity
+             * @description Share of presences ≥ threshold
+             */
+            sensitivity?: number | null;
+            /** Mean Suitability Presence */
+            mean_suitability_presence?: number | null;
+            /**
+             * Cbi
+             * @description Presences vs the model's own background
+             */
+            cbi?: number | null;
+            /**
+             * Specificity
+             * @description Share of absences < threshold (a lower bound: absence ≠ empty cell)
+             */
+            specificity?: number | null;
+            /** Mean Suitability Absence */
+            mean_suitability_absence?: number | null;
+            /** Auc Presence Absence */
+            auc_presence_absence?: number | null;
+            /** Tss */
+            tss?: number | null;
+            /**
+             * Sensitivity Analog
+             * @description Sensitivity at presences inside the training climate (MESS ≥ 0)
+             */
+            sensitivity_analog?: number | null;
+            /**
+             * Sensitivity Extrapolated
+             * @description Sensitivity at presences in extrapolated cells (MESS < 0)
+             */
+            sensitivity_extrapolated?: number | null;
+            /** N Presence Extrapolated */
+            n_presence_extrapolated?: number | null;
+        };
+        /**
          * JobKind
          * @enum {string}
          */
-        JobKind: "pipeline" | "bulletin" | "scenarios" | "validation" | "crosscheck" | "hires";
+        JobKind: "pipeline" | "bulletin" | "scenarios" | "validation" | "crosscheck" | "hires" | "evaluation";
         /** JobOut */
         JobOut: {
             /**
@@ -835,6 +1084,10 @@ export interface components {
             hires_available?: string | null;
             /** Hires Max Cells */
             hires_max_cells?: number | null;
+            /** @description Target-group sampling effort (log records per pixel) */
+            effort?: components["schemas"]["RasterLayer"] | null;
+            /** @description Evaluation-only reference records (uploads, GBIF absences) */
+            reference?: components["schemas"]["VectorLayer"] | null;
             caveats?: components["schemas"]["LayerCaveats"] | null;
         };
         /** LegendEntry */
@@ -953,6 +1206,8 @@ export interface components {
             };
             /** Crosschecks */
             crosschecks?: components["schemas"]["ClimateCrossCheckOut"][];
+            /** @description Absent for versions trained before the effort layer existed */
+            sampling_effort?: components["schemas"]["SamplingEffortOut"] | null;
         };
         /** ModelVersionOut */
         ModelVersionOut: {
@@ -1087,6 +1342,18 @@ export interface components {
              */
             range_label: "native" | "introduced" | "unknown";
             /**
+             * Issues
+             * @description GBIF issue flags (null: ingested before issues were recorded)
+             */
+            issues?: string[] | null;
+            /**
+             * Quality Flags
+             * @description Data-quality flags from the current model version's assessment (null: not assessed, e.g. outside the climate grid or ingested after training)
+             */
+            quality_flags?: string[] | null;
+            /** Quality Tier */
+            quality_tier?: ("A" | "B" | "C" | "excluded") | null;
+            /**
              * Ingested Ts
              * Format: date-time
              */
@@ -1114,6 +1381,25 @@ export interface components {
             inaturalist_direct: number;
             /** Last Inat Fetch Ts */
             last_inat_fetch_ts?: string | null;
+        };
+        /** OverlapOut */
+        OverlapOut: {
+            /** N Checked */
+            n_checked: number;
+            /** N Overlap */
+            n_overlap: number;
+            /** Fraction */
+            fraction: number;
+            /** Distance M */
+            distance_m: number;
+            /** Max Days */
+            max_days: number;
+            /** N Occurrences Compared */
+            n_occurrences_compared: number;
+            /** Checked Ts */
+            checked_ts: string;
+            /** Rule */
+            rule: string;
         };
         /** PredictorAgreementOut */
         PredictorAgreementOut: {
@@ -1190,6 +1476,83 @@ export interface components {
             /** Description */
             description: string;
         };
+        /** ReferenceDatasetOut */
+        ReferenceDatasetOut: {
+            /** Taxon Key */
+            taxon_key: number;
+            /** Dataset Id */
+            dataset_id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "gbif_absences" | "upload";
+            /**
+             * Role
+             * @constant
+             */
+            role: "evaluation";
+            /** Name */
+            name: string;
+            /** Citation */
+            citation?: string | null;
+            /** License */
+            license?: string | null;
+            /** Note */
+            note?: string | null;
+            /** File Name */
+            file_name?: string | null;
+            /** File Sha256 */
+            file_sha256?: string | null;
+            /** Parse Report */
+            parse_report?: {
+                [key: string]: unknown;
+            } | null;
+            /** @description Independence check against the occurrence store (uploads only) */
+            overlap?: components["schemas"]["OverlapOut"] | null;
+            /** N Present */
+            n_present: number;
+            /** N Absent */
+            n_absent: number;
+            /** Last Fetch Ts */
+            last_fetch_ts?: string | null;
+            /**
+             * Created Ts
+             * Format: date-time
+             */
+            created_ts: string;
+            /**
+             * Updated Ts
+             * Format: date-time
+             */
+            updated_ts: string;
+            /**
+             * Evaluations
+             * @description One entry per evaluated model version, newest first
+             */
+            evaluations?: components["schemas"]["ReferenceEvaluationOut"][];
+        };
+        /** ReferenceEvaluationOut */
+        ReferenceEvaluationOut: {
+            /** Model Version */
+            model_version: number;
+            /** Model Type */
+            model_type?: ("A" | "B") | null;
+            /** Trained Ts */
+            trained_ts?: string | null;
+            /** Evaluated Ts */
+            evaluated_ts: string;
+            /** N Records */
+            n_records: number;
+            /**
+             * N Excluded Overlap
+             * @description Records left out because they duplicate a GBIF/iNaturalist record
+             */
+            n_excluded_overlap: number;
+            metrics: components["schemas"]["IndependentMetricsOut"];
+            /** @description Including the overlapping records (only when there are any) */
+            metrics_all_records?: components["schemas"]["IndependentMetricsOut"] | null;
+        };
         /** ReproducibilityInfo */
         ReproducibilityInfo: {
             /** Bioclim Version Used */
@@ -1233,6 +1596,8 @@ export interface components {
             training_data?: components["schemas"]["TrainingSnapshotInfo"] | null;
             /** @description All valid records considered, with ingested and effective labels */
             occurrence_manifest?: components["schemas"]["TrainingSnapshotInfo"] | null;
+            /** @description Data-quality tests and exclusions; absent for older versions */
+            data_quality?: components["schemas"]["DataQualityOut"] | null;
         };
         /** RunRequest */
         RunRequest: {
@@ -1247,6 +1612,51 @@ export interface components {
              * @default false
              */
             full_resync: boolean;
+        };
+        /**
+         * SamplingEffortOut
+         * @description Global GBIF sampling effort of the target group, summarised per range zone.
+         */
+        SamplingEffortOut: {
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "available" | "unavailable" | "disabled";
+            /** Reason */
+            reason?: string | null;
+            /** Target Group */
+            target_group?: {
+                [key: string]: unknown;
+            } | null;
+            /** N Records */
+            n_records?: number | null;
+            /** Max Records Per Pixel */
+            max_records_per_pixel?: number | null;
+            /** Pixel Deg */
+            pixel_deg?: number | null;
+            /** Map Zoom */
+            map_zoom?: number | null;
+            /** N Tiles */
+            n_tiles?: number | null;
+            /** Query */
+            query?: string | null;
+            /** Fetched Ts */
+            fetched_ts?: string | null;
+            /**
+             * Land Unsampled Fraction
+             * @description Share of land area without any record of the target group
+             */
+            land_unsampled_fraction?: number | null;
+            /** Native Suitable Unsampled Fraction */
+            native_suitable_unsampled_fraction?: number | null;
+            /** Established Outside Unsampled Fraction */
+            established_outside_unsampled_fraction?: number | null;
+            /**
+             * Candidate Unsampled Fraction
+             * @description Share of the candidate invasion zone without target-group records: there, the absence of presences says nothing about suitability
+             */
+            candidate_unsampled_fraction?: number | null;
         };
         /** ScenarioLayer */
         ScenarioLayer: {
@@ -1552,6 +1962,16 @@ export interface components {
             query: string;
             /** Fetched Ts */
             fetched_ts: string;
+            /**
+             * Weighting
+             * @description unique_cells (each cell once), record_count (bias file) or sqrt_record_count; absent for versions trained before the option existed
+             */
+            weighting?: string | null;
+            /**
+             * N Background Cells
+             * @description Distinct cells in the background sample
+             */
+            n_background_cells?: number | null;
         };
         /** TaxonSearchResult */
         TaxonSearchResult: {
@@ -2186,6 +2606,133 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SeverityResult"] | null;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    listReferenceDatasets: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                taxon_key: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReferenceDatasetOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    uploadReferenceDataset: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                taxon_key: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_uploadReferenceDataset"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatasetUploadResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    deleteReferenceDataset: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                taxon_key: number;
+                dataset_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    evaluateReferenceDatasets: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                taxon_key: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobOut"];
                 };
             };
             /** @description Validation Error */

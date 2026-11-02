@@ -39,3 +39,12 @@ export type ClimateCrossCheckOut = S['ClimateCrossCheckOut']
 export type BackgroundInfo = S['BackgroundInfo']
 export type ExtrapolationSummaryOut = S['ExtrapolationSummaryOut']
 export type ExtrapolationDiagnosticOut = S['ExtrapolationDiagnosticOut']
+export type DataQualityOut = S['DataQualityOut']
+export type DataQualityTestOut = S['DataQualityTestOut']
+export type SamplingEffortOut = S['SamplingEffortOut']
+export type ReferenceDatasetOut = S['ReferenceDatasetOut']
+export type ReferenceEvaluationOut = S['ReferenceEvaluationOut']
+export type IndependentMetricsOut = S['IndependentMetricsOut']
+export type DatasetUploadResult = S['DatasetUploadResult']
+/** Multipart fields of POST /species/{taxon_key}/datasets (the file is sent separately). */
+export type DatasetUploadFields = Omit<S['Body_uploadReferenceDataset'], 'file'>

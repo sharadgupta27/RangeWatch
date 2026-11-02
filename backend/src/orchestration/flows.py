@@ -80,6 +80,13 @@ def hires_flow(taxon_key: int, bbox: list[float], job_id: str | None = None) -> 
     return pipeline.project_hires(taxon_key, (west, south, east, north))
 
 
+@flow(name="independent-evaluation")
+def evaluation_flow(taxon_key: int, job_id: str | None = None) -> dict[str, Any]:
+    """Independence check + scoring of every model version on the reference datasets."""
+    pipeline = build_pipeline(progress=job_progress(job_id), step=prefect_step)
+    return pipeline.evaluate_references(taxon_key)
+
+
 @flow(name="validation-suite")
 def validation_flow(
     taxon_keys: list[int] | None = None, train: bool = True, job_id: str | None = None

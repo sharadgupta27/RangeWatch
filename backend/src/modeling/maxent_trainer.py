@@ -66,6 +66,8 @@ class TrainingConfig:
     # has fewer than `min_target_group_cells` occupied cells in the region.
     background_method: str = "target_group"
     target_group_rank: str = "order"
+    # unique_cells | record_count | sqrt_record_count (features/background_sampler.py)
+    target_group_weighting: str = "unique_cells"
     min_target_group_cells: int = 500
     thin_km: float = 10.0
     min_presences: int = 15
@@ -85,6 +87,7 @@ class TrainingConfig:
             "background_buffer_km": self.background_buffer_km,
             "background_method": self.background_method,
             "target_group_rank": self.target_group_rank,
+            "target_group_weighting": self.target_group_weighting,
             "min_target_group_cells": self.min_target_group_cells,
             "thin_km": self.thin_km,
             "min_presences": self.min_presences,

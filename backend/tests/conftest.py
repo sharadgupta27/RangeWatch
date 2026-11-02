@@ -17,7 +17,7 @@ from rasterio.transform import from_origin
 
 from src.config import Settings
 from src.connectors.gbif_client import EffortDensity, TaxonSuggestion
-from src.domain import BIOCLIM_BANDS, OccurrenceRecord
+from src.domain import BIOCLIM_BANDS, OccurrenceRecord, ReferenceRecord
 from src.features.raster_sampler import METADATA_FILENAME, STACK_FILENAME
 from src.modeling.maxent_trainer import TrainingConfig
 
@@ -182,6 +182,9 @@ class FakeGbif:
     calls: list[datetime | None] = field(default_factory=list)
     effort_error: Exception | None = None
     effort_calls: list[tuple[int, tuple[float, ...]]] = field(default_factory=list)
+    absences: list[ReferenceRecord] = field(default_factory=list)
+    absence_calls: list[datetime | None] = field(default_factory=list)
+    absence_error: Exception | None = None
 
     def get_taxon(self, taxon_key: int) -> TaxonSuggestion:
         return TaxonSuggestion(
@@ -239,6 +242,18 @@ class FakeGbif:
         if since is None:
             return list(self.initial)
         return self.deltas.pop(0) if self.deltas else []
+
+    def search_absences(
+        self,
+        taxon_key: int,
+        since: datetime | None = None,
+        until: datetime | None = None,
+        on_progress=None,
+    ) -> list[ReferenceRecord]:
+        self.absence_calls.append(since)
+        if self.absence_error is not None:
+            raise self.absence_error
+        return list(self.absences) if since is None else []
 
     def download_occurrences(self, taxon_key: int, workdir: Path):  # pragma: no cover
         raise AssertionError("download API must not be used without credentials")

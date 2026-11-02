@@ -31,6 +31,9 @@
   --native: #2a9d8f;
   --introduced: #f4845f;
   --unknown: #94a3b8;
+  /* Independent (evaluation-only) records: survey presences and reported absences. */
+  --reference-present: #a855f7;
+  --reference-absent: #f8fafc;
   --candidate: #e63946;
   --established: #f4a261;
   --sev-suitability: #264653;

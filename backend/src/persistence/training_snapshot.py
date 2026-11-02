@@ -27,6 +27,7 @@ import pandas as pd
 
 TRAINING_DATA_FILE = "training_data.parquet"
 OCCURRENCE_MANIFEST_FILE = "occurrence_manifest.parquet"
+QUALITY_FLAGS_FILE = "quality_flags.parquet"
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,6 +57,13 @@ def verify(path: Path, expected_sha256: str) -> bool:
 def _write(df: pd.DataFrame, path: Path) -> SnapshotFile:
     df.to_parquet(path, index=False)
     return SnapshotFile(path, file_sha256(path), len(df), path.stat().st_size)
+
+
+def write_quality_snapshot(vdir: Path, flags: pd.DataFrame) -> SnapshotFile:
+    """`quality_flags.parquet`: every record assessed by the data-quality tests with its
+    flags, tier and whether it was excluded from training (features/quality.py)."""
+    vdir.mkdir(parents=True, exist_ok=True)
+    return _write(flags, vdir / QUALITY_FLAGS_FILE)
 
 
 def write_training_snapshot(

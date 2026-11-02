@@ -126,6 +126,13 @@ export const lineageColumns = helper.columns([
               </div>
               <div className="break-all">{tg.query}</div>
               <div>fetched {tg.fetched_ts}</div>
+              {tg.weighting && (
+                <div>
+                  weighting {tg.weighting}
+                  {tg.n_background_cells != null &&
+                    ` · ${tg.n_background_cells.toLocaleString()} distinct cells`}
+                </div>
+              )}
             </div>
           )}
           {bg.fallback_reason && (
@@ -195,7 +202,7 @@ export const lineageColumns = helper.columns([
       }
       return (
         <div className="max-w-56 font-mono text-[11px]">
-          {[r.training_data, r.occurrence_manifest].map(
+          {[r.training_data, r.occurrence_manifest, r.data_quality?.snapshot].map(
             (f) =>
               f && (
                 <div key={f.path} className="mb-1">
@@ -207,6 +214,51 @@ export const lineageColumns = helper.columns([
                 </div>
               ),
           )}
+        </div>
+      )
+    },
+  }),
+  helper.accessor((row) => row.reproducibility.data_quality?.n_excluded ?? -1, {
+    id: 'data_quality',
+    header: 'Data quality',
+    sortFn: 'basic',
+    cell: (info) => {
+      const dq = info.row.original.reproducibility.data_quality
+      if (!dq) {
+        return (
+          <span className="text-[11px] text-muted-foreground">
+            not assessed (trained before the data-quality tests)
+          </span>
+        )
+      }
+      const ref = dq.reference as
+        | { version?: string; tables?: Record<string, { n_rows?: number; sha256?: string | null }> }
+        | null
+        | undefined
+      return (
+        <div className="min-w-64 max-w-80 font-mono text-[11px]">
+          <div>
+            {dq.version} · {dq.n_records.toLocaleString()} assessed · {dq.n_excluded.toLocaleString()}{' '}
+            excluded · {dq.n_flagged_kept.toLocaleString()} flagged kept
+          </div>
+          <div className="text-muted-foreground">
+            exclude: {(dq.config.exclude as string[] | undefined)?.join(', ') || 'none'}
+          </div>
+          <ul className="mt-1 text-muted-foreground">
+            {dq.tests.map((t) => (
+              <li key={t.id} className="whitespace-nowrap">
+                {t.id} {t.status === 'skipped' ? 'skipped' : t.n_flagged.toLocaleString()}
+              </li>
+            ))}
+          </ul>
+          <div className="mt-1 text-muted-foreground">
+            {ref?.version ? `references ${ref.version}` : 'no reference gazetteers'}
+          </div>
+          {Object.entries(ref?.tables ?? {}).map(([name, t]) => (
+            <div key={name} className="break-all text-muted-foreground">
+              {name} {t.n_rows?.toLocaleString()} rows · sha256 {t.sha256 ?? 'n/a'}
+            </div>
+          ))}
         </div>
       )
     },

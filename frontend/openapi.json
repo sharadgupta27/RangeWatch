@@ -678,6 +678,192 @@
         }
       }
     },
+    "/species/{taxon_key}/datasets": {
+      "get": {
+        "tags": [
+          "datasets"
+        ],
+        "summary": "List Datasets",
+        "description": "Reference datasets with each model version's independent evaluation on them.",
+        "operationId": "listReferenceDatasets",
+        "parameters": [
+          {
+            "name": "taxon_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Taxon Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ReferenceDatasetOut"
+                  },
+                  "title": "Response Listreferencedatasets"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "datasets"
+        ],
+        "summary": "Upload Dataset",
+        "description": "Upload an independent survey as an evaluation-only dataset. Columns are detected\nunless named; rows of other species are dropped when the file has a species column.",
+        "operationId": "uploadReferenceDataset",
+        "parameters": [
+          {
+            "name": "taxon_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Taxon Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_uploadReferenceDataset"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatasetUploadResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/species/{taxon_key}/datasets/{dataset_id}": {
+      "delete": {
+        "tags": [
+          "datasets"
+        ],
+        "summary": "Delete Dataset",
+        "description": "Remove an uploaded dataset and its records. Scores already stored with model versions\nstay in their lineage. GBIF absences are managed by the pipeline and cannot be removed.",
+        "operationId": "deleteReferenceDataset",
+        "parameters": [
+          {
+            "name": "taxon_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Taxon Key"
+            }
+          },
+          {
+            "name": "dataset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Dataset Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/species/{taxon_key}/datasets/evaluate": {
+      "post": {
+        "tags": [
+          "datasets"
+        ],
+        "summary": "Evaluate",
+        "description": "Re-run the independence check and score every model version on every dataset.",
+        "operationId": "evaluateReferenceDatasets",
+        "parameters": [
+          {
+            "name": "taxon_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Taxon Key"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/species/{taxon_key}/models": {
       "get": {
         "tags": [
@@ -1405,6 +1591,138 @@
         ],
         "title": "BioclimInfo"
       },
+      "Body_uploadReferenceDataset": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "File",
+            "description": "CSV/TSV, GeoJSON, GeoPackage or zipped shapefile"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "citation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Citation"
+          },
+          "license": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "License"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "longitude_column": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Longitude Column"
+          },
+          "latitude_column": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latitude Column"
+          },
+          "species_column": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Species Column"
+          },
+          "date_column": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Date Column"
+          },
+          "uncertainty_column": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Uncertainty Column"
+          },
+          "status_column": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status Column"
+          },
+          "record_id_column": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Record Id Column"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file",
+          "name"
+        ],
+        "title": "Body_uploadReferenceDataset"
+      },
       "BulletinRequest": {
         "properties": {
           "model_version": {
@@ -1651,6 +1969,240 @@
         },
         "type": "object",
         "title": "CrossCheckMetricsOut"
+      },
+      "DataQualityOut": {
+        "properties": {
+          "version": {
+            "type": "string",
+            "title": "Version"
+          },
+          "config": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Config"
+          },
+          "reference": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reference",
+            "description": "Reference gazetteer version and per-table SHA-256 (null: none)"
+          },
+          "n_records": {
+            "type": "integer",
+            "title": "N Records",
+            "description": "Records with climate data that were assessed"
+          },
+          "n_excluded": {
+            "type": "integer",
+            "title": "N Excluded"
+          },
+          "n_flagged_kept": {
+            "type": "integer",
+            "title": "N Flagged Kept",
+            "description": "Records with warning flags only (kept)"
+          },
+          "n_outside_climate_grid": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "N Outside Climate Grid"
+          },
+          "tiers": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Tiers"
+          },
+          "tier_rules": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Tier Rules"
+          },
+          "tests": {
+            "items": {
+              "$ref": "#/components/schemas/DataQualityTestOut"
+            },
+            "type": "array",
+            "title": "Tests"
+          },
+          "issue_counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Issue Counts"
+          },
+          "n_issues_unknown": {
+            "type": "integer",
+            "title": "N Issues Unknown",
+            "default": 0
+          },
+          "n_undated": {
+            "type": "integer",
+            "title": "N Undated",
+            "default": 0
+          },
+          "grid_cell_m": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Grid Cell M"
+          },
+          "environmental_outlier_cutoff": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Environmental Outlier Cutoff"
+          },
+          "snapshot": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TrainingSnapshotInfo"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "quality_flags.parquet: every assessed record with its flags"
+          }
+        },
+        "type": "object",
+        "required": [
+          "version",
+          "config",
+          "n_records",
+          "n_excluded",
+          "n_flagged_kept",
+          "tiers",
+          "tier_rules",
+          "tests"
+        ],
+        "title": "DataQualityOut",
+        "description": "Record-level data-quality assessment of one training run (features/quality.py)."
+      },
+      "DataQualityTestOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "error",
+              "warning"
+            ],
+            "title": "Severity"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description"
+          },
+          "reference": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reference"
+          },
+          "excluded": {
+            "type": "boolean",
+            "title": "Excluded",
+            "description": "Records it flags are excluded from training"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "run",
+              "skipped"
+            ],
+            "title": "Status"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason",
+            "description": "Why the test was skipped"
+          },
+          "n_flagged": {
+            "type": "integer",
+            "title": "N Flagged"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "label",
+          "severity",
+          "description",
+          "excluded",
+          "status",
+          "n_flagged"
+        ],
+        "title": "DataQualityTestOut"
+      },
+      "DatasetUploadResult": {
+        "properties": {
+          "dataset": {
+            "$ref": "#/components/schemas/ReferenceDatasetOut"
+          },
+          "job": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/JobOut"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Independence check + evaluation job"
+          }
+        },
+        "type": "object",
+        "required": [
+          "dataset"
+        ],
+        "title": "DatasetUploadResult"
       },
       "ExtrapolationDiagnosticOut": {
         "properties": {
@@ -2072,6 +2624,150 @@
         ],
         "title": "HiresRequest"
       },
+      "IndependentMetricsOut": {
+        "properties": {
+          "threshold": {
+            "type": "number",
+            "title": "Threshold"
+          },
+          "n_presence": {
+            "type": "integer",
+            "title": "N Presence"
+          },
+          "n_absence": {
+            "type": "integer",
+            "title": "N Absence"
+          },
+          "n_outside_grid": {
+            "type": "integer",
+            "title": "N Outside Grid"
+          },
+          "sensitivity": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sensitivity",
+            "description": "Share of presences \u2265 threshold"
+          },
+          "mean_suitability_presence": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mean Suitability Presence"
+          },
+          "cbi": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cbi",
+            "description": "Presences vs the model's own background"
+          },
+          "specificity": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Specificity",
+            "description": "Share of absences < threshold (a lower bound: absence \u2260 empty cell)"
+          },
+          "mean_suitability_absence": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mean Suitability Absence"
+          },
+          "auc_presence_absence": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auc Presence Absence"
+          },
+          "tss": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tss"
+          },
+          "sensitivity_analog": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sensitivity Analog",
+            "description": "Sensitivity at presences inside the training climate (MESS \u2265 0)"
+          },
+          "sensitivity_extrapolated": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sensitivity Extrapolated",
+            "description": "Sensitivity at presences in extrapolated cells (MESS < 0)"
+          },
+          "n_presence_extrapolated": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "N Presence Extrapolated"
+          }
+        },
+        "type": "object",
+        "required": [
+          "threshold",
+          "n_presence",
+          "n_absence",
+          "n_outside_grid"
+        ],
+        "title": "IndependentMetricsOut",
+        "description": "Scores on records the model never saw (modeling/evaluation.independent_evaluation)."
+      },
       "JobKind": {
         "type": "string",
         "enum": [
@@ -2080,7 +2776,8 @@
           "scenarios",
           "validation",
           "crosscheck",
-          "hires"
+          "hires",
+          "evaluation"
         ],
         "title": "JobKind"
       },
@@ -2345,6 +3042,28 @@
               }
             ],
             "title": "Hires Max Cells"
+          },
+          "effort": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RasterLayer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Target-group sampling effort (log records per pixel)"
+          },
+          "reference": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/VectorLayer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Evaluation-only reference records (uploads, GBIF absences)"
           },
           "caveats": {
             "anyOf": [
@@ -2692,6 +3411,17 @@
             },
             "type": "array",
             "title": "Crosschecks"
+          },
+          "sampling_effort": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SamplingEffortOut"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Absent for versions trained before the effort layer existed"
           }
         },
         "type": "object",
@@ -3118,6 +3848,53 @@
             ],
             "title": "Range Label"
           },
+          "issues": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Issues",
+            "description": "GBIF issue flags (null: ingested before issues were recorded)"
+          },
+          "quality_flags": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quality Flags",
+            "description": "Data-quality flags from the current model version's assessment (null: not assessed, e.g. outside the climate grid or ingested after training)"
+          },
+          "quality_tier": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "A",
+                  "B",
+                  "C",
+                  "excluded"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quality Tier"
+          },
           "ingested_ts": {
             "type": "string",
             "format": "date-time",
@@ -3173,6 +3950,54 @@
         ],
         "title": "OccurrenceSources",
         "description": "How the merged occurrence set was assembled (records are de-duplicated across sources)."
+      },
+      "OverlapOut": {
+        "properties": {
+          "n_checked": {
+            "type": "integer",
+            "title": "N Checked"
+          },
+          "n_overlap": {
+            "type": "integer",
+            "title": "N Overlap"
+          },
+          "fraction": {
+            "type": "number",
+            "title": "Fraction"
+          },
+          "distance_m": {
+            "type": "number",
+            "title": "Distance M"
+          },
+          "max_days": {
+            "type": "integer",
+            "title": "Max Days"
+          },
+          "n_occurrences_compared": {
+            "type": "integer",
+            "title": "N Occurrences Compared"
+          },
+          "checked_ts": {
+            "type": "string",
+            "title": "Checked Ts"
+          },
+          "rule": {
+            "type": "string",
+            "title": "Rule"
+          }
+        },
+        "type": "object",
+        "required": [
+          "n_checked",
+          "n_overlap",
+          "fraction",
+          "distance_m",
+          "max_days",
+          "n_occurrences_compared",
+          "checked_ts",
+          "rule"
+        ],
+        "title": "OverlapOut"
       },
       "PredictorAgreementOut": {
         "properties": {
@@ -3375,6 +4200,235 @@
         ],
         "title": "RasterLayer"
       },
+      "ReferenceDatasetOut": {
+        "properties": {
+          "taxon_key": {
+            "type": "integer",
+            "title": "Taxon Key"
+          },
+          "dataset_id": {
+            "type": "string",
+            "title": "Dataset Id"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "gbif_absences",
+              "upload"
+            ],
+            "title": "Kind"
+          },
+          "role": {
+            "type": "string",
+            "const": "evaluation",
+            "title": "Role"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "citation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Citation"
+          },
+          "license": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "License"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "file_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File Name"
+          },
+          "file_sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File Sha256"
+          },
+          "parse_report": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parse Report"
+          },
+          "overlap": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OverlapOut"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Independence check against the occurrence store (uploads only)"
+          },
+          "n_present": {
+            "type": "integer",
+            "title": "N Present"
+          },
+          "n_absent": {
+            "type": "integer",
+            "title": "N Absent"
+          },
+          "last_fetch_ts": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Fetch Ts"
+          },
+          "created_ts": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created Ts"
+          },
+          "updated_ts": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated Ts"
+          },
+          "evaluations": {
+            "items": {
+              "$ref": "#/components/schemas/ReferenceEvaluationOut"
+            },
+            "type": "array",
+            "title": "Evaluations",
+            "description": "One entry per evaluated model version, newest first"
+          }
+        },
+        "type": "object",
+        "required": [
+          "taxon_key",
+          "dataset_id",
+          "kind",
+          "role",
+          "name",
+          "n_present",
+          "n_absent",
+          "created_ts",
+          "updated_ts"
+        ],
+        "title": "ReferenceDatasetOut"
+      },
+      "ReferenceEvaluationOut": {
+        "properties": {
+          "model_version": {
+            "type": "integer",
+            "title": "Model Version"
+          },
+          "model_type": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "A",
+                  "B"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Type"
+          },
+          "trained_ts": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trained Ts"
+          },
+          "evaluated_ts": {
+            "type": "string",
+            "title": "Evaluated Ts"
+          },
+          "n_records": {
+            "type": "integer",
+            "title": "N Records"
+          },
+          "n_excluded_overlap": {
+            "type": "integer",
+            "title": "N Excluded Overlap",
+            "description": "Records left out because they duplicate a GBIF/iNaturalist record"
+          },
+          "metrics": {
+            "$ref": "#/components/schemas/IndependentMetricsOut"
+          },
+          "metrics_all_records": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IndependentMetricsOut"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Including the overlapping records (only when there are any)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "model_version",
+          "evaluated_ts",
+          "n_records",
+          "n_excluded_overlap",
+          "metrics"
+        ],
+        "title": "ReferenceEvaluationOut"
+      },
       "ReproducibilityInfo": {
         "properties": {
           "bioclim_version_used": {
@@ -3518,6 +4572,17 @@
               }
             ],
             "description": "All valid records considered, with ingested and effective labels"
+          },
+          "data_quality": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DataQualityOut"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Data-quality tests and exclusions; absent for older versions"
           }
         },
         "type": "object",
@@ -3547,6 +4612,171 @@
         },
         "type": "object",
         "title": "RunRequest"
+      },
+      "SamplingEffortOut": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "available",
+              "unavailable",
+              "disabled"
+            ],
+            "title": "Status"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "target_group": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Group"
+          },
+          "n_records": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "N Records"
+          },
+          "max_records_per_pixel": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Records Per Pixel"
+          },
+          "pixel_deg": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pixel Deg"
+          },
+          "map_zoom": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Map Zoom"
+          },
+          "n_tiles": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "N Tiles"
+          },
+          "query": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Query"
+          },
+          "fetched_ts": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fetched Ts"
+          },
+          "land_unsampled_fraction": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Land Unsampled Fraction",
+            "description": "Share of land area without any record of the target group"
+          },
+          "native_suitable_unsampled_fraction": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Native Suitable Unsampled Fraction"
+          },
+          "established_outside_unsampled_fraction": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Established Outside Unsampled Fraction"
+          },
+          "candidate_unsampled_fraction": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Candidate Unsampled Fraction",
+            "description": "Share of the candidate invasion zone without target-group records: there, the absence of presences says nothing about suitability"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "title": "SamplingEffortOut",
+        "description": "Global GBIF sampling effort of the target group, summarised per range zone."
       },
       "ScenarioLayer": {
         "properties": {
@@ -4312,6 +5542,30 @@
           "fetched_ts": {
             "type": "string",
             "title": "Fetched Ts"
+          },
+          "weighting": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Weighting",
+            "description": "unique_cells (each cell once), record_count (bias file) or sqrt_record_count; absent for versions trained before the option existed"
+          },
+          "n_background_cells": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "N Background Cells",
+            "description": "Distinct cells in the background sample"
           }
         },
         "type": "object",

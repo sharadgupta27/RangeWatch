@@ -22,14 +22,18 @@ from src.domain import (
     ModelVersionRecord,
     NativeRange,
     OccurrenceRecord,
+    ReferenceDataset,
+    ReferenceRecord,
     SpeciesRecord,
     SpeciesStatus,
 )
-from src.persistence.repository import STALE_JOB_MESSAGE, NotFoundError
+from src.persistence.repository import REFERENCE_COLUMNS, STALE_JOB_MESSAGE, NotFoundError
 
 _SPECIES_COLS = [f.name for f in dc_fields(SpeciesRecord)]
 _JSON_SPECIES_COLS = {"model_metrics", "severity_config"}
 _JOB_COLS = [f.name for f in dc_fields(Job)]
+_REF_DATASET_COLS = [f.name for f in dc_fields(ReferenceDataset)]
+_JSON_REF_DATASET_COLS = {"parse_report", "overlap"}
 _BIO_SELECT = ", ".join(BIOCLIM_BANDS)
 
 
@@ -140,15 +144,21 @@ class PostgresRepository:
                 "bor": r.basis_of_record,
                 "cc": r.country_code,
                 "label": r.range_label,
+                "issues": list(r.issues),
             }
             for r in records
         ]
+        # Existing rows are never changed, except that `issues` is filled while still NULL
+        # (rows ingested before issue flags were recorded) — the same rule as bio* features.
         sql = text("""
             INSERT INTO occurrences (taxon_key, source, record_id, inat_crossref_id, geom,
-                event_date, coordinate_uncertainty_m, basis_of_record, country_code, range_label)
+                event_date, coordinate_uncertainty_m, basis_of_record, country_code, range_label,
+                issues)
             VALUES (:taxon_key, :source, :record_id, :inat_crossref_id,
-                ST_SetSRID(ST_MakePoint(:lon, :lat), 4326), :event_date, :unc, :bor, :cc, :label)
-            ON CONFLICT DO NOTHING
+                ST_SetSRID(ST_MakePoint(:lon, :lat), 4326), :event_date, :unc, :bor, :cc, :label,
+                CAST(:issues AS text[]))
+            ON CONFLICT (taxon_key, source, record_id) DO UPDATE SET issues = EXCLUDED.issues
+                WHERE occurrences.issues IS NULL
             """)
         keys = {r.taxon_key for r in records}
         with self.engine.begin() as c:
@@ -170,7 +180,8 @@ class PostgresRepository:
         sql = text(f"""
             SELECT source, record_id, ST_X(geom) AS longitude, ST_Y(geom) AS latitude,
                    event_date, coordinate_uncertainty_m, basis_of_record, country_code,
-                   range_label, inat_crossref_id, ingested_ts, {_BIO_SELECT}, bioclim_version
+                   range_label, inat_crossref_id, issues, ingested_ts, {_BIO_SELECT},
+                   bioclim_version
             FROM occurrences WHERE taxon_key = :k
             """)
         with self.engine.connect() as c:
@@ -261,7 +272,7 @@ class PostgresRepository:
                 text(f"""
                     SELECT source, record_id, ST_X(geom) AS longitude, ST_Y(geom) AS latitude,
                            event_date, coordinate_uncertainty_m, basis_of_record, country_code,
-                           range_label, ingested_ts
+                           range_label, issues, ingested_ts
                     FROM occurrences WHERE {w}
                     ORDER BY ingested_ts DESC, record_id
                     OFFSET :off LIMIT :lim
@@ -279,6 +290,110 @@ class PostgresRepository:
             """)
         with self.engine.connect() as c:
             return pd.read_sql(sql, c, params={"k": taxon_key})
+
+    # ----------------------------------------------- reference datasets
+    def _row_to_reference_dataset(self, row: Any) -> ReferenceDataset:
+        d = dict(row._mapping)
+        return ReferenceDataset(**{k: d[k] for k in _REF_DATASET_COLS if k in d})
+
+    def list_reference_datasets(self, taxon_key: int) -> list[ReferenceDataset]:
+        with self.engine.connect() as c:
+            rows = c.execute(
+                text("SELECT * FROM reference_datasets WHERE taxon_key = :k ORDER BY created_ts"),
+                {"k": taxon_key},
+            )
+            return [self._row_to_reference_dataset(r) for r in rows]
+
+    def get_reference_dataset(self, taxon_key: int, dataset_id: str) -> ReferenceDataset | None:
+        with self.engine.connect() as c:
+            row = c.execute(
+                text("SELECT * FROM reference_datasets WHERE taxon_key = :k AND dataset_id = :d"),
+                {"k": taxon_key, "d": dataset_id},
+            ).first()
+        return self._row_to_reference_dataset(row) if row else None
+
+    def save_reference_dataset(self, ds: ReferenceDataset) -> ReferenceDataset:
+        cols = [c for c in _REF_DATASET_COLS if c not in ("created_ts", "updated_ts")]
+        params = {k: getattr(ds, k) for k in cols}
+        for k in _JSON_REF_DATASET_COLS:
+            params[k] = _dumps(params[k])
+        vals = ", ".join(
+            f"CAST(:{k} AS jsonb)" if k in _JSON_REF_DATASET_COLS else f":{k}" for k in cols
+        )
+        updates = ", ".join(
+            f"{k} = EXCLUDED.{k}" for k in cols if k not in ("taxon_key", "dataset_id")
+        )
+        with self.engine.begin() as c:
+            c.execute(
+                text(f"""
+                    INSERT INTO reference_datasets ({", ".join(cols)}) VALUES ({vals})
+                    ON CONFLICT (taxon_key, dataset_id) DO UPDATE SET {updates},
+                        updated_ts = now()
+                    """),
+                params,
+            )
+        saved = self.get_reference_dataset(ds.taxon_key, ds.dataset_id)
+        assert saved is not None
+        return saved
+
+    def delete_reference_dataset(self, taxon_key: int, dataset_id: str) -> None:
+        with self.engine.begin() as c:  # records go with it (ON DELETE CASCADE)
+            c.execute(
+                text("DELETE FROM reference_datasets WHERE taxon_key = :k AND dataset_id = :d"),
+                {"k": taxon_key, "d": dataset_id},
+            )
+
+    def append_reference_records(self, records: Sequence[ReferenceRecord]) -> int:
+        if not records:
+            return 0
+        rows = [
+            {
+                "taxon_key": r.taxon_key,
+                "dataset_id": r.dataset_id,
+                "record_id": r.record_id,
+                "status": r.occurrence_status,
+                "lon": r.longitude,
+                "lat": r.latitude,
+                "event_date": r.event_date,
+                "unc": r.coordinate_uncertainty_m,
+                "bor": r.basis_of_record,
+                "cc": r.country_code,
+                "protocol": r.sampling_protocol,
+                "dskey": r.source_dataset_key,
+            }
+            for r in records
+        ]
+        sql = text("""
+            INSERT INTO reference_records (taxon_key, dataset_id, record_id, occurrence_status,
+                geom, event_date, coordinate_uncertainty_m, basis_of_record, country_code,
+                sampling_protocol, source_dataset_key)
+            VALUES (:taxon_key, :dataset_id, :record_id, :status,
+                ST_SetSRID(ST_MakePoint(:lon, :lat), 4326), :event_date, :unc, :bor, :cc,
+                :protocol, :dskey)
+            ON CONFLICT DO NOTHING
+            """)
+        inserted = 0
+        with self.engine.begin() as c:
+            for i in range(0, len(rows), 5000):
+                inserted += int(c.execute(sql, rows[i : i + 5000]).rowcount or 0)
+        return inserted
+
+    def load_reference_records(self, taxon_key: int, dataset_id: str | None = None) -> pd.DataFrame:
+        where = "taxon_key = :k" + (" AND dataset_id = :d" if dataset_id else "")
+        cols = ", ".join(
+            (
+                "ST_X(geom) AS longitude"
+                if c == "longitude"
+                else "ST_Y(geom) AS latitude" if c == "latitude" else c
+            )
+            for c in REFERENCE_COLUMNS
+        )
+        with self.engine.connect() as c:
+            return pd.read_sql(
+                text(f"SELECT {cols} FROM reference_records WHERE {where}"),
+                c,
+                params={"k": taxon_key, "d": dataset_id},
+            )
 
     # ------------------------------------------------------ native range
     def get_native_range(self, taxon_key: int) -> NativeRange | None:

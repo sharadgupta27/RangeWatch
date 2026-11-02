@@ -62,6 +62,7 @@ def build_pipeline(
             seed=s.random_seed,
             background_method=s.background_method,
             target_group_rank=s.target_group_rank,
+            target_group_weighting=s.target_group_weighting,
         ),
         step=step,
     )

@@ -78,6 +78,13 @@ def project_hires(job_id: str, taxon_key: int, bbox: list[float]) -> dict:
     return _run_job(job_id, hires_flow, taxon_key=taxon_key, bbox=bbox, job_id=job_id)
 
 
+@celery_app.task(name="sdm.evaluate_references")
+def evaluate_references(job_id: str, taxon_key: int) -> dict:
+    from src.orchestration.flows import evaluation_flow
+
+    return _run_job(job_id, evaluation_flow, taxon_key=taxon_key, job_id=job_id)
+
+
 @celery_app.task(name="sdm.run_validation_suite")
 def run_validation_suite(
     job_id: str, taxon_keys: list[int] | None = None, train: bool = True

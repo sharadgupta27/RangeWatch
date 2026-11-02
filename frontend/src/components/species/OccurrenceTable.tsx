@@ -21,6 +21,7 @@ const helper = createColumnHelper<typeof features, OccurrenceRow>()
 const EMPTY: OccurrenceRow[] = []
 
 const LABEL_VARIANT = { native: 'success', introduced: 'destructive', unknown: 'secondary' } as const
+const TIER_VARIANT = { A: 'success', B: 'secondary', C: 'warning', excluded: 'destructive' } as const
 
 export const occurrenceColumns = helper.columns([
   helper.accessor('source', {
@@ -34,6 +35,29 @@ export const occurrenceColumns = helper.columns([
   helper.accessor('range_label', {
     header: 'Range label',
     cell: (i) => <Badge variant={LABEL_VARIANT[i.getValue()]}>{i.getValue()}</Badge>,
+  }),
+  helper.accessor('quality_tier', {
+    header: 'Quality',
+    cell: (i) => {
+      const tier = i.getValue()
+      const { quality_flags: flags, issues } = i.row.original
+      if (!tier) return <span className="text-xs text-muted-foreground">not assessed</span>
+      return (
+        <div className="space-y-0.5">
+          <Badge variant={TIER_VARIANT[tier]}>{tier === 'excluded' ? 'excluded' : `tier ${tier}`}</Badge>
+          {flags && flags.length > 0 && (
+            <div className="max-w-48 text-[11px] leading-tight text-muted-foreground">
+              {flags.join(', ').replaceAll('_', ' ')}
+            </div>
+          )}
+          {issues && issues.length > 0 && (
+            <div className="max-w-48 font-mono text-[10px] leading-tight text-muted-foreground">
+              GBIF: {issues.join(', ')}
+            </div>
+          )}
+        </div>
+      )
+    },
   }),
   helper.accessor('event_date', { header: 'Observed', cell: (i) => formatDate(i.getValue()) }),
   helper.accessor((r) => `${r.latitude.toFixed(3)}, ${r.longitude.toFixed(3)}`, {
