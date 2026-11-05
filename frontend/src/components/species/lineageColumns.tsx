@@ -35,6 +35,16 @@ function Metric({ mean, std }: { mean?: number | null; std?: number | null }) {
   )
 }
 
+/** Scalars as-is; lists and objects as compact JSON (verbatim, not summarised). */
+function flatValues(values: Record<string, unknown>): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(values).map(([k, v]) => [
+      k,
+      v !== null && typeof v === 'object' ? JSON.stringify(v) : String(v),
+    ]),
+  )
+}
+
 function KeyValues({ values }: { values: Record<string, string | number> }) {
   return (
     <ul className="space-y-0.5 font-mono text-[11px] leading-tight">
@@ -65,6 +75,36 @@ export const lineageColumns = helper.columns([
         {info.getValue() === 'B' ? 'B · native+invaded' : 'A · native only'}
       </Badge>
     ),
+  }),
+  helper.accessor('algorithm', {
+    header: 'Algorithm',
+    cell: (info) => {
+      const r = info.row.original.reproducibility
+      const a = r.algorithm
+      return (
+        <div className="min-w-40 font-mono text-[11px]">
+          <div>{info.getValue()}</div>
+          <div className="text-muted-foreground">threshold {info.row.original.threshold_rule}</div>
+          {a?.fallback_reason && (
+            <div className="max-w-64 text-warning">
+              requested {a.requested}: {a.fallback_reason}
+            </div>
+          )}
+          {a?.point_process && (
+            <div className="max-w-64 break-all text-muted-foreground">
+              point process {JSON.stringify(a.point_process)}
+            </div>
+          )}
+          {r.pseudo_absences && (
+            <div className="max-w-64 break-all text-muted-foreground">
+              pseudo-absences {r.pseudo_absences.method} · n {r.pseudo_absences.n} · seed{' '}
+              {r.pseudo_absences.seed}
+              {r.pseudo_absences.fallback_reason && ` · fallback: ${r.pseudo_absences.fallback_reason}`}
+            </div>
+          )}
+        </div>
+      )
+    },
   }),
   helper.accessor('trigger', {
     header: 'Trigger',
@@ -133,6 +173,7 @@ export const lineageColumns = helper.columns([
                     ` · ${tg.n_background_cells.toLocaleString()} distinct cells`}
                 </div>
               )}
+              {tg.matched && <div className="break-all">matched {JSON.stringify(tg.matched)}</div>}
             </div>
           )}
           {bg.fallback_reason && (
@@ -262,6 +303,186 @@ export const lineageColumns = helper.columns([
         </div>
       )
     },
+  }),
+  helper.accessor((row) => row.reproducibility.bias_covariates?.method ?? '', {
+    id: 'sampling_bias',
+    header: 'Sampling bias',
+    enableSorting: false,
+    cell: (info) => {
+      const r = info.row.original.reproducibility
+      const w = r.presence_weights
+      const b = r.bias_covariates
+      if (!w && !b) {
+        return (
+          <span className="text-[11px] text-muted-foreground">
+            not recorded (trained before bias options)
+          </span>
+        )
+      }
+      return (
+        <div className="min-w-56 max-w-80 font-mono text-[11px]">
+          <div>weights {w?.method ?? 'none'}</div>
+          {w && w.method !== 'none' && (
+            <div className="text-muted-foreground">
+              {w.n_presences?.toLocaleString()} presences · min {w.min} · median {w.median} · max{' '}
+              {w.max}
+              {w.tier_weights && ` · tiers ${JSON.stringify(w.tier_weights)}`}
+              {w.density_neighbors != null && ` · k=${w.density_neighbors}`}
+            </div>
+          )}
+          <div className="mt-1">covariate {b?.method ?? 'none'}</div>
+          {b && b.method !== 'none' && (
+            <div className="break-all text-muted-foreground">
+              {b.status === 'used'
+                ? `${b.covariate} = ${b.transform}; held at ${b.condition} = ${b.conditioning_value}${
+                    b.importance ? ` · importance ${JSON.stringify(b.importance)}` : ''
+                  }`
+                : `unavailable: ${b.reason}`}
+              {b.query && <div>{b.query}</div>}
+              {b.note && <div>{b.note}</div>}
+            </div>
+          )}
+          {b?.static_layers?.map((s) => (
+            <div key={s.name} className="mt-1 break-all">
+              layer {s.name}{' '}
+              <span className="text-muted-foreground">
+                {s.status === 'used'
+                  ? `${s.covariate} (${s.direction}, ${s.transform}); held at ${s.condition} = ${s.conditioning_value} · ${s.n_missing_filled} filled · sha256 ${s.sha256}`
+                  : `unavailable: ${s.reason}`}
+              </span>
+            </div>
+          ))}
+        </div>
+      )
+    },
+  }),
+  helper.accessor((row) => row.reproducibility.thinning?.method ?? 'distance', {
+    id: 'thinning',
+    header: 'Thinning',
+    enableSorting: false,
+    cell: (info) => {
+      const t = info.row.original.reproducibility.thinning
+      if (!t) {
+        return (
+          <span className="text-[11px] text-muted-foreground">
+            not recorded (fixed-distance thinning, see training config)
+          </span>
+        )
+      }
+      return (
+        <div className="min-w-48 max-w-80 font-mono text-[11px]">
+          <div>
+            {t.method}
+            {t.distance_km != null && ` · ${t.distance_km} km`}
+            {t.reps != null && t.reps > 1 && ` · best of ${t.reps} (seed ${t.selected_seed})`}
+          </div>
+          <div className="text-muted-foreground">
+            {t.n_before.toLocaleString()} → {t.n_after.toLocaleString()} presences · seed {t.seed}
+          </div>
+          {t.autocorrelation && (
+            <div className="break-all text-muted-foreground">
+              variogram {JSON.stringify(t.autocorrelation)}
+            </div>
+          )}
+          {t.n_bins != null && (
+            <div className="text-muted-foreground">
+              {t.n_bins} bins × {t.n_axes} PCA axes · variance {JSON.stringify(t.variance_explained)} ·{' '}
+              {t.n_occupied_cells} occupied cells
+            </div>
+          )}
+          {t.reference && <div className="text-muted-foreground">{t.reference}</div>}
+          {t.fallback_reason && <div className="whitespace-normal text-warning">{t.fallback_reason}</div>}
+        </div>
+      )
+    },
+  }),
+  helper.accessor((row) => row.reproducibility.training_uploads?.length ?? 0, {
+    id: 'training_uploads',
+    header: 'Training uploads',
+    sortFn: 'basic',
+    cell: (info) => {
+      const uploads = info.row.original.reproducibility.training_uploads ?? []
+      if (!uploads.length) return <span className="text-[11px] text-muted-foreground">none</span>
+      return (
+        <ul className="min-w-56 max-w-80 space-y-1 font-mono text-[11px]">
+          {uploads.map((u) => (
+            <li key={u.dataset_id}>
+              <div>
+                {u.name} ({u.dataset_id})
+              </div>
+              {u.used_as === 'survey' ? (
+                <div className="text-muted-foreground">
+                  survey: {u.n_survey_presences?.toLocaleString()} presences ·{' '}
+                  {u.n_survey_absences?.toLocaleString()} absences (integrated model)
+                </div>
+              ) : (
+                <div className="text-muted-foreground">
+                  {u.n_added.toLocaleString()} of {u.n_presences.toLocaleString()} presences added ·{' '}
+                  {u.n_overlap_excluded.toLocaleString()} duplicates left out ·{' '}
+                  {u.n_absences_not_used.toLocaleString()} absences not used
+                </div>
+              )}
+              {u.file_sha256 && <div className="break-all text-muted-foreground">sha256 {u.file_sha256}</div>}
+            </li>
+          ))}
+        </ul>
+      )
+    },
+  }),
+  helper.accessor((row) => row.reproducibility.annotations?.n_records_annotated ?? 0, {
+    id: 'annotations',
+    header: 'Annotations',
+    sortFn: 'basic',
+    cell: (info) => {
+      const a = info.row.original.reproducibility.annotations
+      if (!a) {
+        return (
+          <span className="text-[11px] text-muted-foreground">
+            not recorded (trained before annotations)
+          </span>
+        )
+      }
+      if (!a.n_records_annotated) return <span className="text-[11px] text-muted-foreground">none</span>
+      return (
+        <div className="min-w-48 max-w-72 font-mono text-[11px]">
+          <div>
+            {a.n_records_annotated.toLocaleString()} records · {a.n_annotations.toLocaleString()}{' '}
+            annotations
+          </div>
+          <div className="text-muted-foreground">
+            excluded {a.n_excluded_suspicious} suspicious + {a.n_excluded_cultivated} cultivated ·
+            kept {a.n_kept_verified} verified · {a.n_label_overrides} labels overridden
+          </div>
+          {a.snapshot && (
+            <div className="break-all text-muted-foreground">sha256 {a.snapshot.sha256}</div>
+          )}
+        </div>
+      )
+    },
+  }),
+  helper.accessor((row) => row.reproducibility.study_region?.resolution ?? 'global', {
+    id: 'study_region',
+    header: 'Study region',
+    enableSorting: false,
+    cell: (info) => {
+      const r = info.row.original.reproducibility.study_region
+      if (!r) return <span className="text-[11px] text-muted-foreground">global</span>
+      return (
+        <div className="min-w-40 font-mono text-[11px]">
+          <div>[{r.bbox.join(', ')}]</div>
+          <div className="text-muted-foreground">
+            {r.resolution} · {r.n_cells.toLocaleString()} cells · {r.n_records_outside} records
+            outside
+          </div>
+        </div>
+      )
+    },
+  }),
+  helper.accessor((row) => row.reproducibility.training_config, {
+    id: 'training_config',
+    header: 'Training config',
+    enableSorting: false,
+    cell: (info) => <KeyValues values={flatValues(info.getValue())} />,
   }),
   helper.accessor((row) => row.reproducibility.package_versions, {
     id: 'package_versions',

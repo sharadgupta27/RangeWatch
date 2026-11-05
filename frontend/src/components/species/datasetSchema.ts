@@ -17,6 +17,7 @@ export const datasetUploadSchema = z.object({
       `Use one of ${ACCEPTED.join(', ')}`,
     ),
   name: z.string().trim().min(1, 'Name the dataset').max(200),
+  role: z.enum(['evaluation', 'training']),
   citation: optionalText,
   license: optionalText,
   note: z.string().trim().max(2000),
@@ -34,6 +35,7 @@ export type DatasetUploadForm = z.input<typeof datasetUploadSchema>
 export const EMPTY_UPLOAD: DatasetUploadForm = {
   file: null,
   name: '',
+  role: 'evaluation',
   citation: '',
   license: '',
   note: '',

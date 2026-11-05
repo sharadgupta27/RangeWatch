@@ -185,6 +185,7 @@ class FakeGbif:
     absences: list[ReferenceRecord] = field(default_factory=list)
     absence_calls: list[datetime | None] = field(default_factory=list)
     absence_error: Exception | None = None
+    effort_filters: list[dict] = field(default_factory=list)
 
     def get_taxon(self, taxon_key: int) -> TaxonSuggestion:
         return TaxonSuggestion(
@@ -202,13 +203,29 @@ class FakeGbif:
             order_key=408,
             family_key=6689,
             genus_key=9_000,
+            phylum_key=7_707_728,
         )
 
+    def match_name(self, name: str):
+        """Backbone match: the test species (fuzzy for misspellings), nothing otherwise."""
+        low = name.lower()
+        if low.startswith("testus invasivus"):
+            return self.get_taxon(TAXON_KEY), "EXACT", 99
+        if low.startswith("testus invasivs"):
+            return self.get_taxon(TAXON_KEY), "FUZZY", 90
+        return None
+
     def fetch_effort_density(
-        self, taxon_key: int, bbox: tuple[float, float, float, float], max_pixel_deg: float
+        self,
+        taxon_key: int,
+        bbox: tuple[float, float, float, float],
+        max_pixel_deg: float,
+        basis_of_record=None,
+        years=None,
     ) -> EffortDensity:
         """Synthetic observer bias: effort on every 0.5° pixel, but only south of 50°N."""
         self.effort_calls.append((taxon_key, tuple(bbox)))
+        self.effort_filters.append({"basis_of_record": basis_of_record, "years": years})
         if self.effort_error is not None:
             raise self.effort_error
         west, south, east, north = bbox

@@ -529,3 +529,54 @@ def test_institutions_are_paged_and_need_coordinates(monkeypatch):
         ("c", "BG", None),
     ]
     assert inst[0].types == ("HERBARIUM",)
+
+
+def test_record_details_are_kept_for_the_quality_tests():
+    base = {"gbifID": "5", "decimalLatitude": "45.1", "decimalLongitude": "7.2"}
+    rec = normalize_record(
+        {
+            **base,
+            "locality": " Orto Botanico, Torino ",
+            "recordedBy": ["A. Rossi", "B. Bianchi"],
+            "recordNumber": "123",
+            "institutionCode": "TO",
+            "habitat": "",
+        },
+        1,
+        1e4,
+    )
+    assert rec.details == {
+        "locality": "Orto Botanico, Torino",
+        "recorded_by": "A. Rossi | B. Bianchi",
+        "record_number": "123",
+        "institution_code": "TO",
+    }
+    assert normalize_record(base, 1, 1e4).details == {}  # recorded: nothing given
+
+    obs = {
+        "id": 9,
+        "location": [32.1, 34.8],
+        "observed_on": "2022-03-01",
+        "num_identification_agreements": 2,
+        "num_identification_disagreements": 0,
+        "owners_identification_from_vision": True,
+        "place_guess": "Tel Aviv",
+        "description": "",
+    }
+    rec = normalize_observation(obs, 1, 1e4)
+    assert rec.details == {
+        "id_agreements": 2,
+        "id_disagreements": 0,
+        "observer_id_from_vision": True,
+        "locality": "Tel Aviv",
+    }
+    # older payloads: the vision flag comes from the observer's current identification
+    legacy = {
+        **{k: v for k, v in obs.items() if k != "owners_identification_from_vision"},
+        "identifications": [
+            {"own_observation": True, "current": False, "vision": False},
+            {"own_observation": True, "current": True, "vision": True},
+            {"own_observation": False, "current": True, "vision": False},
+        ],
+    }
+    assert normalize_observation(legacy, 1, 1e4).details["observer_id_from_vision"] is True

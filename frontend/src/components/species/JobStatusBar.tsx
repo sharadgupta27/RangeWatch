@@ -16,6 +16,10 @@ const STAGE_LABEL: Record<string, string> = {
   hires_raster: 'Projecting high-resolution region',
   crosscheck: 'Refitting on the cross-check climate data',
   evaluation: 'Scoring model versions on independent data',
+  benchmark: 'Fitting bias corrections to a virtual species',
+  batch: 'Running the species of a list',
+  target_groups: 'Refitting with alternative target groups',
+  shared_bias: 'Estimating the shared observer bias',
   done: 'Finishing',
 }
 
@@ -27,6 +31,10 @@ const KIND_LABEL: Record<JobOut['kind'], string> = {
   crosscheck: 'Climate cross-check',
   hires: 'High-resolution projection',
   evaluation: 'Independent evaluation',
+  benchmark: 'Virtual-species benchmark',
+  batch: 'Batch run (species list)',
+  target_groups: 'Target-group comparison',
+  shared_bias: 'Shared bias estimate',
 }
 
 /** Live progress for the latest job (SSE stream, or polling while the stream is down). */

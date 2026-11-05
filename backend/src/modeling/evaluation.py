@@ -647,3 +647,107 @@ def binary_agreement(a: np.ndarray, b: np.ndarray) -> dict[str, float]:
     pe = float(a.mean() * b.mean() + (1 - a.mean()) * (1 - b.mean()))
     kappa = (po - pe) / (1 - pe) if pe < 1 else 1.0
     return {"agreement": po, "kappa": float(kappa)}
+
+
+# ---------------------------------------------------------------------------
+# Thresholds for binary (suitable / unsuitable) maps
+# ---------------------------------------------------------------------------
+# Rule id → label. Every rule is computed for every version; the configured one binarises the
+# zones raster and is stored as `threshold`. Background (or pseudo-absence) points stand in for
+# absences, so "specificity" here is the share of the background below the threshold.
+THRESHOLD_RULES: dict[str, str] = {
+    "p10": "10th percentile training presence",
+    "max_tss": "maximum TSS (sensitivity + specificity − 1)",
+    "equal_sens_spec": "sensitivity = specificity",
+    "min_training_presence": "minimum training presence",
+    "fixed": "user-defined value",
+}
+
+
+def _rates(pres: np.ndarray, bg: np.ndarray, t: float) -> tuple[float, float]:
+    return float(np.mean(pres >= t)), float(np.mean(bg < t)) if len(bg) else float("nan")
+
+
+def threshold_candidates(
+    presence_pred: np.ndarray, background_pred: np.ndarray, fixed_value: float | None = None
+) -> dict[str, dict[str, Any]]:
+    """Every threshold rule with its value, training sensitivity and background specificity
+    (Liu et al. 2005, 2013): the documented basis of the binary maps."""
+    p = np.asarray(presence_pred, dtype="float64")
+    b = np.asarray(background_pred, dtype="float64")
+    p, b = p[np.isfinite(p)], b[np.isfinite(b)]
+    values: dict[str, float] = {
+        "p10": p10_threshold(p),
+        "min_training_presence": float(np.min(p)),
+    }
+    if len(b):
+        values["max_tss"] = tss(p, b)[1]
+        grid = np.unique(np.r_[p, np.quantile(b, np.linspace(0, 1, 201))])
+        diff = [abs(np.mean(p >= t) - np.mean(b < t)) for t in grid]
+        values["equal_sens_spec"] = float(grid[int(np.argmin(diff))])
+    if fixed_value is not None:
+        values["fixed"] = float(fixed_value)
+    out: dict[str, dict[str, Any]] = {}
+    for rule, value in values.items():
+        sens, spec = _rates(p, b, value)
+        out[rule] = {
+            "label": THRESHOLD_RULES[rule],
+            "value": round(value, 6),
+            "sensitivity": round(sens, 4),
+            "specificity_background": None if np.isnan(spec) else round(spec, 4),
+        }
+    return out
+
+
+def choose_threshold(candidates: dict[str, dict[str, Any]], rule: str) -> tuple[float, str]:
+    if rule not in THRESHOLD_RULES:
+        raise ValueError(f"threshold rule must be one of {tuple(THRESHOLD_RULES)}, not {rule!r}")
+    if rule not in candidates:
+        raise ValueError(f"threshold rule {rule!r} could not be computed for this model")
+    return float(candidates[rule]["value"]), THRESHOLD_RULES[rule]
+
+
+# ---------------------------------------------------------------------------
+# Model-agnostic permutation importance (ensembles, integrated models)
+# ---------------------------------------------------------------------------
+def permutation_importance(
+    predict: Any,
+    x: Any,
+    y: np.ndarray,
+    columns: Sequence[str],
+    n_repeats: int,
+    seed: int,
+) -> dict[str, float]:
+    """Drop in training AUC when one column is permuted, normalised to percent contribution
+    (the same definition elapid uses for MaxEnt, for any model with a `predict`)."""
+    rng = np.random.default_rng(seed)
+    yv = np.asarray(y)
+    base_pred = np.asarray(predict(x), dtype="float64").ravel()
+    base = auc(base_pred[yv == 1], base_pred[yv == 0])
+    drops = []
+    for col in columns:
+        scores = []
+        for _ in range(max(1, n_repeats)):
+            xp = x.copy()
+            xp[col] = rng.permutation(xp[col].to_numpy())
+            pred = np.asarray(predict(xp), dtype="float64").ravel()
+            scores.append(base - auc(pred[yv == 1], pred[yv == 0]))
+        drops.append(max(0.0, float(np.mean(scores))))
+    total = sum(drops)
+    return {
+        c: round(d / total * 100 if total > 0 else 0.0, 2)
+        for c, d in zip(columns, drops, strict=True)
+    }
+
+
+# ---------------------------------------------------------------------------
+# Agreement with a known truth (virtual-species benchmark)
+# ---------------------------------------------------------------------------
+def schoeners_d(a: np.ndarray, b: np.ndarray) -> float:
+    """Schoener's D niche overlap of two suitability surfaces at the same cells (0–1)."""
+    a, b = np.asarray(a, dtype="float64"), np.asarray(b, dtype="float64")
+    ok = np.isfinite(a) & np.isfinite(b)
+    a, b = np.clip(a[ok], 0, None), np.clip(b[ok], 0, None)
+    if a.sum() <= 0 or b.sum() <= 0:
+        return float("nan")
+    return float(1 - 0.5 * np.abs(a / a.sum() - b / b.sum()).sum())

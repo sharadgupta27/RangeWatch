@@ -11,6 +11,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { formatDate, formatNumber } from '@/lib/utils'
 
@@ -32,9 +33,10 @@ function firstError(errors: unknown[]): string | null {
 }
 
 /**
- * Independent data: surveys a user uploads and absences GBIF reports. They never train the
- * model; each model version is scored on them, so the table shows whether retraining helped
- * on records the models never saw.
+ * Reference data: surveys a user uploads and absences GBIF reports. Evaluation datasets never
+ * train the model; each model version is scored on them, so the table shows whether
+ * retraining helped on records the models never saw. A training upload adds its presences to
+ * the next model's training set; only its absences can still score the model.
  */
 export function ReferenceDatasetsPanel({ taxonKey, jobActive }: { taxonKey: number; jobActive: boolean }) {
   const datasets = useReferenceDatasets(taxonKey)
@@ -97,6 +99,22 @@ function DatasetSection({ taxonKey, ds }: { taxonKey: number; ds: ReferenceDatas
       <div className="flex flex-wrap items-center gap-2">
         <h3 className="font-medium">{ds.name}</h3>
         <Badge variant="secondary">{ds.kind === 'upload' ? 'Upload' : 'GBIF absences'}</Badge>
+        {ds.role === 'training' ? (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Badge variant="warning" className="cursor-help">
+                Training data
+              </Badge>
+            </TooltipTrigger>
+            <TooltipContent className="max-w-xs">
+              Its presences join the training set of the next model version (after the same
+              data-quality tests; records duplicating a GBIF/iNaturalist record are left out).
+              They are not independent, so only its absences score the model.
+            </TooltipContent>
+          </Tooltip>
+        ) : (
+          <Badge variant="secondary">Evaluation only</Badge>
+        )}
         <Badge variant="secondary">
           {formatNumber(ds.n_present)} present · {formatNumber(ds.n_absent)} absent
         </Badge>
@@ -122,7 +140,7 @@ function DatasetSection({ taxonKey, ds }: { taxonKey: number; ds: ReferenceDatas
             aria-label={`Remove ${ds.name}`}
             disabled={remove.isPending}
             onClick={() => {
-              if (window.confirm(`Remove "${ds.name}" and its records? Scores already stored with model versions stay in their lineage.`))
+              if (window.confirm(`Remove "${ds.name}" and its records? Scores already stored with model versions stay in their lineage.${ds.role === 'training' ? ' The species will be flagged for retraining.' : ''}`))
                 remove.mutate(ds.dataset_id)
             }}
           >
@@ -144,7 +162,11 @@ function DatasetSection({ taxonKey, ds }: { taxonKey: number; ds: ReferenceDatas
       </p>
       {ds.note && <p className="text-xs text-muted-foreground">{ds.note}</p>}
       {remove.isError && <p className="text-xs text-destructive">{remove.error.message}</p>}
-      {!ds.evaluations?.length ? (
+      {ds.role === 'training' && ds.n_absent === 0 ? (
+        <p className="text-xs text-muted-foreground">
+          Training data without absences: nothing independent to score the model on.
+        </p>
+      ) : !ds.evaluations?.length ? (
         <p className="text-xs text-muted-foreground">
           Not evaluated yet. Scores appear when the evaluation job finishes (or after the next
           training run).
@@ -276,13 +298,13 @@ function UploadCard({ taxonKey }: { taxonKey: number }) {
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
-          <Upload className="size-4" /> Upload an independent survey
+          <Upload className="size-4" /> Upload a survey
         </CardTitle>
         <CardDescription>
           CSV/TSV with decimal-degree coordinates, GeoJSON, GeoPackage or a zipped shapefile
           (reprojected from its CRS). Columns are detected automatically; rows of other species
-          are dropped when the file has a species column. The data is used for evaluation only,
-          never for training.
+          are dropped when the file has a species column. By default the data only evaluates
+          models; as training data its presences join the next model version.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -351,6 +373,29 @@ function UploadCard({ taxonKey }: { taxonKey: number }) {
               </form.Field>
             ))}
           </div>
+          <form.Field name="role">
+            {(field) => (
+              <div className="space-y-2">
+                <Label id="dataset-role-label">Use the records for</Label>
+                <div className="flex flex-wrap items-center gap-3">
+                  <ToggleGroup
+                    type="single"
+                    value={field.state.value}
+                    onValueChange={(v) => v && field.handleChange(v as DatasetUploadForm['role'])}
+                    aria-labelledby="dataset-role-label"
+                  >
+                    <ToggleGroupItem value="evaluation">Independent evaluation</ToggleGroupItem>
+                    <ToggleGroupItem value="training">Training</ToggleGroupItem>
+                  </ToggleGroup>
+                  <span className="text-xs text-muted-foreground">
+                    {field.state.value === 'training'
+                      ? 'Presences are added to training and the species is flagged for retraining. Absences are kept for evaluation.'
+                      : 'Never trained on: every model version is scored on these records.'}
+                  </span>
+                </div>
+              </div>
+            )}
+          </form.Field>
           <form.Field name="note">
             {(field) => (
               <div className="space-y-2">
@@ -392,14 +437,16 @@ function UploadCard({ taxonKey }: { taxonKey: number }) {
             {([canSubmit, isSubmitting]) => (
               <div className="flex flex-wrap items-center gap-2">
                 <Button type="submit" size="sm" disabled={!canSubmit || isSubmitting}>
-                  {isSubmitting ? <Loader2 className="animate-spin" /> : <Upload />} Upload &amp;
-                  evaluate
+                  {isSubmitting ? <Loader2 className="animate-spin" /> : <Upload />} Upload
                 </Button>
                 {upload.isError && <span className="text-xs text-destructive">{upload.error.message}</span>}
                 {upload.isSuccess && !isSubmitting && (
                   <span className="text-xs text-success">
                     Uploaded {formatNumber(upload.data.dataset.n_present + upload.data.dataset.n_absent)}{' '}
-                    records — checking independence and scoring every model version.
+                    records —{' '}
+                    {upload.data.dataset.role === 'training'
+                      ? 'flagged for retraining; they join the next model version.'
+                      : 'checking independence and scoring every model version.'}
                   </span>
                 )}
               </div>

@@ -7,6 +7,7 @@ import time
 import uuid
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
+from dataclasses import asdict
 from dataclasses import fields as dc_fields
 from datetime import date, datetime, timedelta
 from typing import Any
@@ -16,25 +17,35 @@ from sqlalchemy import Engine, create_engine, text
 
 from src.domain import (
     BIOCLIM_BANDS,
+    Alert,
+    AlertSubscription,
     Job,
     JobKind,
     JobStatus,
     ModelVersionRecord,
     NativeRange,
     OccurrenceRecord,
+    RecordAnnotation,
     ReferenceDataset,
     ReferenceRecord,
+    SpeciesList,
+    SpeciesListEntry,
     SpeciesRecord,
     SpeciesStatus,
 )
 from src.persistence.repository import REFERENCE_COLUMNS, STALE_JOB_MESSAGE, NotFoundError
 
 _SPECIES_COLS = [f.name for f in dc_fields(SpeciesRecord)]
-_JSON_SPECIES_COLS = {"model_metrics", "severity_config"}
+_JSON_SPECIES_COLS = {"model_metrics", "severity_config", "study_region"}
 _JOB_COLS = [f.name for f in dc_fields(Job)]
 _REF_DATASET_COLS = [f.name for f in dc_fields(ReferenceDataset)]
 _JSON_REF_DATASET_COLS = {"parse_report", "overlap"}
 _BIO_SELECT = ", ".join(BIOCLIM_BANDS)
+_ANNOTATION_COLS = [f.name for f in dc_fields(RecordAnnotation)]
+_ALERT_COLS = [f.name for f in dc_fields(Alert)]
+_JSON_ALERT_COLS = {"records", "effort_classes", "deliveries"}
+_SUBSCRIPTION_COLS = [f.name for f in dc_fields(AlertSubscription)]
+_LIST_COLS = "list_id, name, description, source, entries, created_by, created_ts, updated_ts"
 
 
 def _json_default(o: Any) -> Any:
@@ -145,20 +156,23 @@ class PostgresRepository:
                 "cc": r.country_code,
                 "label": r.range_label,
                 "issues": list(r.issues),
+                "details": _dumps(r.details),
             }
             for r in records
         ]
-        # Existing rows are never changed, except that `issues` is filled while still NULL
-        # (rows ingested before issue flags were recorded) — the same rule as bio* features.
+        # Existing rows are never changed, except that `issues` / `details` are filled while
+        # still NULL (rows ingested before they were recorded) — the same rule as bio* features.
         sql = text("""
             INSERT INTO occurrences (taxon_key, source, record_id, inat_crossref_id, geom,
                 event_date, coordinate_uncertainty_m, basis_of_record, country_code, range_label,
-                issues)
+                issues, details)
             VALUES (:taxon_key, :source, :record_id, :inat_crossref_id,
                 ST_SetSRID(ST_MakePoint(:lon, :lat), 4326), :event_date, :unc, :bor, :cc, :label,
-                CAST(:issues AS text[]))
-            ON CONFLICT (taxon_key, source, record_id) DO UPDATE SET issues = EXCLUDED.issues
-                WHERE occurrences.issues IS NULL
+                CAST(:issues AS text[]), CAST(:details AS jsonb))
+            ON CONFLICT (taxon_key, source, record_id) DO UPDATE SET
+                issues = COALESCE(occurrences.issues, EXCLUDED.issues),
+                details = COALESCE(occurrences.details, EXCLUDED.details)
+                WHERE occurrences.issues IS NULL OR occurrences.details IS NULL
             """)
         keys = {r.taxon_key for r in records}
         with self.engine.begin() as c:
@@ -180,7 +194,7 @@ class PostgresRepository:
         sql = text(f"""
             SELECT source, record_id, ST_X(geom) AS longitude, ST_Y(geom) AS latitude,
                    event_date, coordinate_uncertainty_m, basis_of_record, country_code,
-                   range_label, inat_crossref_id, issues, ingested_ts, {_BIO_SELECT},
+                   range_label, inat_crossref_id, issues, details, ingested_ts, {_BIO_SELECT},
                    bioclim_version
             FROM occurrences WHERE taxon_key = :k
             """)
@@ -498,6 +512,143 @@ class PostgresRepository:
                 ),
                 {"s": _dumps(severity), "k": taxon_key, "v": version},
             )
+
+    # ------------------------------------------------ record annotations
+    def add_annotation(self, ann: RecordAnnotation) -> RecordAnnotation:
+        params = {k: getattr(ann, k) for k in _ANNOTATION_COLS}
+        cols = ", ".join(_ANNOTATION_COLS)
+        vals = ", ".join(f":{k}" for k in _ANNOTATION_COLS)
+        with self.engine.begin() as c:
+            c.execute(text(f"INSERT INTO record_annotations ({cols}) VALUES ({vals})"), params)
+        return ann
+
+    def list_annotations(self, taxon_key: int) -> list[RecordAnnotation]:
+        with self.engine.connect() as c:
+            rows = c.execute(
+                text(
+                    f"SELECT {', '.join(_ANNOTATION_COLS)} FROM record_annotations "
+                    "WHERE taxon_key = :k ORDER BY created_ts"
+                ),
+                {"k": taxon_key},
+            )
+            return [RecordAnnotation(**dict(r._mapping)) for r in rows]
+
+    # ------------------------------------------------------------ alerts
+    def add_alert(self, alert: Alert) -> Alert:
+        params = {
+            k: _dumps(getattr(alert, k)) if k in _JSON_ALERT_COLS else getattr(alert, k)
+            for k in _ALERT_COLS
+        }
+        cols = ", ".join(_ALERT_COLS)
+        vals = ", ".join(
+            f"CAST(:{k} AS jsonb)" if k in _JSON_ALERT_COLS else f":{k}" for k in _ALERT_COLS
+        )
+        with self.engine.begin() as c:
+            c.execute(text(f"INSERT INTO alerts ({cols}) VALUES ({vals})"), params)
+        return alert
+
+    def list_alerts(self, taxon_key: int | None = None, limit: int = 50) -> list[Alert]:
+        where = "WHERE taxon_key = :k" if taxon_key is not None else ""
+        with self.engine.connect() as c:
+            rows = c.execute(
+                text(
+                    f"SELECT {', '.join(_ALERT_COLS)} FROM alerts {where} "
+                    "ORDER BY created_ts DESC LIMIT :n"
+                ),
+                {"k": taxon_key, "n": limit},
+            )
+            return [Alert(**dict(r._mapping)) for r in rows]
+
+    def update_alert_deliveries(
+        self, alert_id: uuid.UUID, deliveries: list[dict[str, Any]]
+    ) -> None:
+        with self.engine.begin() as c:
+            res = c.execute(
+                text("UPDATE alerts SET deliveries = CAST(:d AS jsonb) WHERE alert_id = :i"),
+                {"d": _dumps(deliveries), "i": alert_id},
+            )
+            if res.rowcount == 0:
+                raise NotFoundError(alert_id)
+
+    def save_subscription(self, sub: AlertSubscription) -> AlertSubscription:
+        params = {k: getattr(sub, k) for k in _SUBSCRIPTION_COLS}
+        cols = ", ".join(_SUBSCRIPTION_COLS)
+        vals = ", ".join(f":{k}" for k in _SUBSCRIPTION_COLS)
+        with self.engine.begin() as c:
+            c.execute(text(f"INSERT INTO alert_subscriptions ({cols}) VALUES ({vals})"), params)
+        return sub
+
+    def list_subscriptions(self, taxon_key: int | None = None) -> list[AlertSubscription]:
+        where = "WHERE taxon_key IS NULL OR taxon_key = :k" if taxon_key is not None else ""
+        with self.engine.connect() as c:
+            rows = c.execute(
+                text(
+                    f"SELECT {', '.join(_SUBSCRIPTION_COLS)} FROM alert_subscriptions {where} "
+                    "ORDER BY created_ts"
+                ),
+                {"k": taxon_key},
+            )
+            return [AlertSubscription(**dict(r._mapping)) for r in rows]
+
+    # --------------------------------------------------------- species lists
+    def save_species_list(self, sl: SpeciesList) -> SpeciesList:
+        params = {
+            "i": sl.list_id,
+            "n": sl.name,
+            "d": sl.description,
+            "s": sl.source,
+            "e": json.dumps([asdict(e) for e in sl.entries]),
+            "b": sl.created_by,
+            "c": sl.created_ts,
+            "u": sl.updated_ts,
+        }
+        with self.engine.begin() as c:
+            c.execute(
+                text("""
+                    INSERT INTO species_lists (list_id, name, description, source, entries,
+                        created_by, created_ts, updated_ts)
+                    VALUES (:i, :n, :d, :s, CAST(:e AS jsonb), :b, :c, :u)
+                    ON CONFLICT (list_id) DO UPDATE SET name = EXCLUDED.name,
+                        description = EXCLUDED.description, source = EXCLUDED.source,
+                        entries = EXCLUDED.entries, updated_ts = EXCLUDED.updated_ts
+                """),
+                params,
+            )
+        return sl
+
+    @staticmethod
+    def _row_to_list(row: Any) -> SpeciesList:
+        d = dict(row._mapping)
+        raw = d.pop("entries") or []
+        entries = json.loads(raw) if isinstance(raw, str) else raw
+        return SpeciesList(**d, entries=[SpeciesListEntry(**e) for e in entries])
+
+    def get_species_list(self, list_id: uuid.UUID) -> SpeciesList | None:
+        with self.engine.connect() as c:
+            row = c.execute(
+                text(f"SELECT {_LIST_COLS} FROM species_lists WHERE list_id = :i"), {"i": list_id}
+            ).first()
+        return self._row_to_list(row) if row else None
+
+    def list_species_lists(self) -> list[SpeciesList]:
+        with self.engine.connect() as c:
+            rows = c.execute(text(f"SELECT {_LIST_COLS} FROM species_lists ORDER BY name"))
+            return [self._row_to_list(r) for r in rows]
+
+    def delete_species_list(self, list_id: uuid.UUID) -> None:
+        with self.engine.begin() as c:
+            res = c.execute(text("DELETE FROM species_lists WHERE list_id = :i"), {"i": list_id})
+            if res.rowcount == 0:
+                raise NotFoundError(list_id)
+
+    def delete_subscription(self, subscription_id: uuid.UUID) -> None:
+        with self.engine.begin() as c:
+            res = c.execute(
+                text("DELETE FROM alert_subscriptions WHERE subscription_id = :i"),
+                {"i": subscription_id},
+            )
+            if res.rowcount == 0:
+                raise NotFoundError(subscription_id)
 
     # --------------------------------------------------------- jobs
     def _row_to_job(self, row: Any) -> Job:

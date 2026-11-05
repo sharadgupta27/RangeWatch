@@ -17,10 +17,17 @@ import { useEffect, useRef, useState } from 'react'
 import { absoluteApiUrl, api, unwrap } from './client'
 import type { paths } from './schema'
 import type {
+  AlertSubscriptionIn,
+  AnnotationIn,
+  BatchRunRequest,
+  BenchmarkRequest,
   DatasetUploadFields,
   JobOut,
+  ModelCardOut,
   NativeRangeUpdate,
   SeverityConfigModel,
+  SpeciesListIn,
+  StudyRegionUpdate,
 } from './types'
 
 /** Payload of one `jobs` event on GET /jobs/events (typed from the OpenAPI contract). */
@@ -41,6 +48,17 @@ export const qk = {
   datasets: (k: number) => ['species', k, 'datasets'] as const,
   jobs: (k: number) => ['jobs', { taxonKey: k }] as const,
   bioclim: () => ['bioclim'] as const,
+  annotations: (k: number) => ['species', k, 'annotations'] as const,
+  alerts: (k: number) => ['species', k, 'alerts'] as const,
+  subscriptions: (k: number) => ['alerts', 'subscriptions', k] as const,
+  exports: (k: number, v: number) => ['species', k, 'models', v, 'exports'] as const,
+  me: () => ['me'] as const,
+  benchmark: () => ['validation', 'benchmark'] as const,
+  lists: () => ['lists'] as const,
+  listSpecies: (listId: string) => ['species', 'list', { listId }] as const,
+  modelCard: (k: number, v: number) => ['species', k, 'models', v, 'model-card'] as const,
+  targetGroups: (k: number) => ['species', k, 'target-group-comparison'] as const,
+  sharedBias: (k: number) => ['species', k, 'shared-bias'] as const,
 }
 
 const ACTIVE = new Set<JobOut['status']>(['queued', 'running'])
@@ -298,14 +316,21 @@ export function useModelVersion(taxonKey: number, version: number | null | undef
   })
 }
 
-export function useLayers(taxonKey: number, enabled = true) {
+/** Layer descriptors; `threshold` adds a binary map at a user-chosen value (U5). */
+export function useLayers(taxonKey: number, enabled = true, threshold: number | null = null) {
   return useQuery({
-    queryKey: qk.layers(taxonKey),
+    queryKey: threshold == null ? qk.layers(taxonKey) : [...qk.layers(taxonKey), { threshold }],
     queryFn: async () =>
       unwrap(
-        await api.GET('/species/{taxon_key}/layers', { params: { path: { taxon_key: taxonKey } } }),
+        await api.GET('/species/{taxon_key}/layers', {
+          params: {
+            path: { taxon_key: taxonKey },
+            query: threshold == null ? {} : { threshold },
+          },
+        }),
       ),
     enabled,
+    placeholderData: keepPreviousData,
   })
 }
 
@@ -475,6 +500,8 @@ export function useUploadDataset(taxonKey: number) {
       void qc.invalidateQueries({ queryKey: qk.datasets(taxonKey) })
       void qc.invalidateQueries({ queryKey: qk.layers(taxonKey) })
       void qc.invalidateQueries({ queryKey: qk.jobs(taxonKey) })
+      // a training upload flags the species for retraining (status badge)
+      void qc.invalidateQueries({ queryKey: qk.species(taxonKey) })
     },
   })
 }
@@ -491,6 +518,7 @@ export function useDeleteDataset(taxonKey: number) {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: qk.datasets(taxonKey) })
       void qc.invalidateQueries({ queryKey: qk.layers(taxonKey) })
+      void qc.invalidateQueries({ queryKey: qk.species(taxonKey) })
     },
   })
 }
@@ -501,6 +529,302 @@ export function useEvaluateDatasets(taxonKey: number) {
     mutationFn: async () =>
       unwrap(
         await api.POST('/species/{taxon_key}/datasets/evaluate', {
+          params: { path: { taxon_key: taxonKey } },
+        }),
+      ),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.jobs(taxonKey) }),
+  })
+}
+
+// ------------------------------------------------------------ users (U14)
+export function useMe() {
+  return useQuery({
+    queryKey: qk.me(),
+    queryFn: async () => unwrap(await api.GET('/me')),
+    staleTime: 5 * 60_000,
+  })
+}
+
+/** What the current user may do; the API enforces the same rules regardless. */
+export function usePermissions(): { run: boolean; curate: boolean } {
+  const { data } = useMe()
+  return { run: data?.permissions.run ?? false, curate: data?.permissions.curate ?? false }
+}
+
+// ------------------------------------------------------------ study region (U2)
+export function useUpdateStudyRegion(taxonKey: number) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (body: StudyRegionUpdate) =>
+      unwrap(
+        await api.PUT('/species/{taxon_key}/study-region', {
+          params: { path: { taxon_key: taxonKey } },
+          body,
+        }),
+      ),
+    onSuccess: (data) => {
+      qc.setQueryData(qk.species(taxonKey), data)
+      void qc.invalidateQueries({ queryKey: qk.speciesList() })
+    },
+  })
+}
+
+// ------------------------------------------------------------ annotations (U11)
+export function useAnnotations(taxonKey: number, enabled = true) {
+  return useQuery({
+    queryKey: qk.annotations(taxonKey),
+    queryFn: async () =>
+      unwrap(
+        await api.GET('/species/{taxon_key}/annotations', {
+          params: { path: { taxon_key: taxonKey } },
+        }),
+      ),
+    enabled,
+  })
+}
+
+export function useAnnotateRecord(taxonKey: number) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (body: AnnotationIn) =>
+      unwrap(
+        await api.POST('/species/{taxon_key}/annotations', {
+          params: { path: { taxon_key: taxonKey } },
+          body,
+        }),
+      ),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: qk.annotations(taxonKey) })
+      void qc.invalidateQueries({ queryKey: ['species', taxonKey, 'occurrences'] })
+      void qc.invalidateQueries({ queryKey: qk.species(taxonKey), exact: true })
+    },
+  })
+}
+
+// ------------------------------------------------------------ alerts (U10)
+export function useSpeciesAlerts(taxonKey: number, enabled = true) {
+  return useQuery({
+    queryKey: qk.alerts(taxonKey),
+    queryFn: async () =>
+      unwrap(
+        await api.GET('/species/{taxon_key}/alerts', {
+          params: { path: { taxon_key: taxonKey } },
+        }),
+      ),
+    enabled,
+  })
+}
+
+export function alertFeedUrl(taxonKey?: number): string {
+  return absoluteApiUrl(`/alerts/feed.xml${taxonKey ? `?taxon_key=${taxonKey}` : ''}`)
+}
+
+export function useAlertSubscriptions(taxonKey: number) {
+  return useQuery({
+    queryKey: qk.subscriptions(taxonKey),
+    queryFn: async () =>
+      unwrap(
+        await api.GET('/alerts/subscriptions', { params: { query: { taxon_key: taxonKey } } }),
+      ),
+  })
+}
+
+export function useCreateSubscription(taxonKey: number) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (body: AlertSubscriptionIn) =>
+      unwrap(await api.POST('/alerts/subscriptions', { body })),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.subscriptions(taxonKey) }),
+  })
+}
+
+export function useDeleteSubscription(taxonKey: number) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (subscriptionId: string) => {
+      const res = await api.DELETE('/alerts/subscriptions/{subscription_id}', {
+        params: { path: { subscription_id: subscriptionId } },
+      })
+      if (!res.response.ok) unwrap(res)
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.subscriptions(taxonKey) }),
+  })
+}
+
+// ------------------------------------------------------------ exports (U8)
+export function useExports(taxonKey: number, version: number | null | undefined) {
+  return useQuery({
+    queryKey: qk.exports(taxonKey, version ?? 0),
+    queryFn: async () =>
+      unwrap(
+        await api.GET('/species/{taxon_key}/models/{model_version}/exports', {
+          params: { path: { taxon_key: taxonKey, model_version: version ?? 0 } },
+        }),
+      ),
+    enabled: !!version,
+  })
+}
+
+// ------------------------------------------------------------ benchmark (§4.6)
+export function useBenchmarkReport() {
+  return useQuery({
+    queryKey: qk.benchmark(),
+    queryFn: async () => {
+      const res = await api.GET('/validation/benchmark')
+      if (res.response.status === 404) return null
+      return unwrap(res)
+    },
+  })
+}
+
+export function useRunBenchmark() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (body: BenchmarkRequest) =>
+      unwrap(await api.POST('/validation/benchmark', { body })),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['jobs', 'validation'] }),
+  })
+}
+
+/** Latest benchmark job; refreshes the report when it finishes. */
+export function useBenchmarkJob() {
+  const qc = useQueryClient()
+  return useQuery({
+    queryKey: ['jobs', 'validation', 'benchmark'],
+    queryFn: async () => {
+      const jobs = unwrap(await api.GET('/jobs', { params: { query: { limit: 50 } } }))
+      const job = jobs.find((j) => j.kind === 'benchmark') ?? null
+      if (job && !isActiveJob(job)) void qc.invalidateQueries({ queryKey: qk.benchmark() })
+      return job
+    },
+    refetchInterval: (q) => (isActiveJob(q.state.data ?? undefined) ? 3_000 : 60_000),
+  })
+}
+
+// ------------------------------------------------------------ model cards (U13)
+export function useModelCard(taxonKey: number, version: number | null | undefined) {
+  return useQuery({
+    queryKey: qk.modelCard(taxonKey, version ?? 0),
+    // The endpoint also serves Markdown (?format=md); the JSON form is the generated type.
+    queryFn: async (): Promise<ModelCardOut> =>
+      unwrap(
+        await api.GET('/species/{taxon_key}/models/{model_version}/exports/model-card', {
+          params: { path: { taxon_key: taxonKey, model_version: version ?? 0 } },
+        }),
+      ) as ModelCardOut,
+    enabled: !!version,
+  })
+}
+
+// ------------------------------------------------------------ species lists (U9)
+export function useSpeciesLists() {
+  return useQuery({
+    queryKey: qk.lists(),
+    queryFn: async () => unwrap(await api.GET('/lists')),
+    staleTime: 30_000,
+  })
+}
+
+/** The registry restricted to one species list (null = the whole registry). */
+export function useRegistry(listId: string | null) {
+  const all = useSpeciesList()
+  const filtered = useQuery({
+    queryKey: qk.listSpecies(listId ?? ''),
+    queryFn: async () =>
+      unwrap(await api.GET('/species', { params: { query: { list_id: listId ?? '' } } })),
+    enabled: !!listId,
+    refetchInterval: 60_000,
+  })
+  return listId ? filtered : all
+}
+
+export function useCreateSpeciesList() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (body: SpeciesListIn) => unwrap(await api.POST('/lists', { body })),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.lists() }),
+  })
+}
+
+export function useDeleteSpeciesList() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (listId: string) => {
+      const res = await api.DELETE('/lists/{list_id}', { params: { path: { list_id: listId } } })
+      if (!res.response.ok) unwrap(res)
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.lists() }),
+  })
+}
+
+export function useRunSpeciesList() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async ({ listId, body }: { listId: string; body: BatchRunRequest }) =>
+      unwrap(await api.POST('/lists/{list_id}/runs', { params: { path: { list_id: listId } }, body })),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['jobs', 'batch'] }),
+  })
+}
+
+/** Latest batch job (all species lists); refreshes the registry when it finishes. */
+export function useBatchJob() {
+  const qc = useQueryClient()
+  return useQuery({
+    queryKey: ['jobs', 'batch'],
+    queryFn: async () => {
+      const jobs = unwrap(await api.GET('/jobs', { params: { query: { limit: 50 } } }))
+      const job = jobs.find((j) => j.kind === 'batch') ?? null
+      if (job && !isActiveJob(job)) void qc.invalidateQueries({ queryKey: ['species'] })
+      return job
+    },
+    refetchInterval: (q) => (isActiveJob(q.state.data ?? undefined) ? 3_000 : 60_000),
+  })
+}
+
+// ------------------------------------------------------------ bias studies (B1, B9)
+function useSpeciesReport<T>(key: readonly unknown[], fetcher: () => Promise<T | null>) {
+  return useQuery({ queryKey: key, queryFn: fetcher, staleTime: 60_000 })
+}
+
+export function useTargetGroupComparison(taxonKey: number) {
+  return useSpeciesReport(qk.targetGroups(taxonKey), async () => {
+    const res = await api.GET('/species/{taxon_key}/target-group-comparison', {
+      params: { path: { taxon_key: taxonKey } },
+    })
+    if (res.response.status === 404) return null
+    return unwrap(res)
+  })
+}
+
+export function useSharedBias(taxonKey: number) {
+  return useSpeciesReport(qk.sharedBias(taxonKey), async () => {
+    const res = await api.GET('/species/{taxon_key}/shared-bias', {
+      params: { path: { taxon_key: taxonKey } },
+    })
+    if (res.response.status === 404) return null
+    return unwrap(res)
+  })
+}
+
+export function useRunTargetGroupComparison(taxonKey: number) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async () =>
+      unwrap(
+        await api.POST('/species/{taxon_key}/target-group-comparison', {
+          params: { path: { taxon_key: taxonKey } },
+        }),
+      ),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.jobs(taxonKey) }),
+  })
+}
+
+export function useRunSharedBias(taxonKey: number) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async () =>
+      unwrap(
+        await api.POST('/species/{taxon_key}/shared-bias', {
           params: { path: { taxon_key: taxonKey } },
         }),
       ),

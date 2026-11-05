@@ -260,3 +260,71 @@ def test_overlap_requires_distance_and_matching_dates():
     # same place + next day; same place, other year; 7 km away; near an undated record
     assert ref.tolist() == [True, False, False, True]
     assert overlap_with_occurrences([], [], [], occ_lon, occ_lat, occ_dates).size == 0
+
+
+def test_cultivation_wording_is_flagged_for_review_not_excluded():
+    pts = clean_points(4)
+    texts = [
+        {"locality": "Jardín Botánico de Valencia"},
+        {"habitat": "planted along the road"},
+        {"remarks": "cult. in pots"},
+        {"locality": "Parc national des Cévennes"},  # a national park is a wild site
+    ]
+    occ = frame([{**p, "details": d} for p, d in zip(pts, texts, strict=True)])
+    res = assess_quality(occ, ["bio1"], CELL_10M)
+    assert [("cultivation_text" in f) for f in res.flags] == [True, True, True, False]
+    assert not res.excluded.any() and list(res.tier[:3]) == ["C", "C", "C"]
+
+
+def test_duplicate_specimens_keep_one_record_per_collector_number_date():
+    pts = clean_points(6)
+    spec = {"basis_of_record": "PRESERVED_SPECIMEN"}
+    dup = {"recorded_by": "Smith, J.", "record_number": "1234"}
+    rows = [
+        {**pts[0], **spec, "details": dup},
+        {**pts[1], **spec, "details": {"recorded_by": "J. Smith", "record_number": "1234"}},
+        {**pts[2], **spec, "details": {"recorded_by": "smith j", "record_number": "1234"}},
+        {**pts[3], **spec, "details": {"recorded_by": "Smith, J.", "record_number": "s.n."}},
+        {**pts[4], **spec, "details": {"recorded_by": "Smith, J.", "record_number": "s.n."}},
+        {**pts[5], "details": dup},  # a human observation, not a specimen
+    ]
+    res = assess_quality(frame(rows), ["bio1"], CELL_10M)
+    dupes = ["duplicate_specimen" in f for f in res.flags]
+    # "Smith, J." / "smith j" normalise alike; "J. Smith" differs; s.n. never groups
+    assert dupes == [False, False, True, False, False, False]
+    assert res.excluded[2] and "duplicate_specimen" in DEFAULT_EXCLUDE
+
+
+def test_weak_inaturalist_identifications():
+    pts = clean_points(4)
+    inat = {"source": "iNaturalist"}
+    rows = [
+        {**pts[0], **inat, "details": {"id_agreements": 4, "id_disagreements": 1}},
+        {**pts[1], **inat, "details": {"id_agreements": 2, "observer_id_from_vision": True}},
+        {**pts[2], **inat, "details": {"id_agreements": 3, "observer_id_from_vision": True}},
+        {**pts[3], **inat, "details": {"id_agreements": 2, "observer_id_from_vision": False}},
+    ]
+    res = assess_quality(frame(rows), ["bio1"], CELL_10M)
+    assert ["weak_identification" in f for f in res.flags] == [True, True, False, False]
+    by_id = {t["id"]: t for t in res.summary["tests"]}
+    assert by_id["weak_identification"]["severity"] == "warning"
+
+
+def test_detail_tests_skip_when_details_were_never_recorded(refs):
+    res = assess_quality(frame(clean_points(5)), ["bio1"], CELL_10M, refs=refs)
+    by_id = {t["id"]: t for t in res.summary["tests"]}
+    for test_id in ("cultivation_text", "duplicate_specimen"):
+        assert by_id[test_id]["status"] == "skipped" and "re-sync" in by_id[test_id]["reason"]
+    assert by_id["weak_identification"]["reason"] == "no iNaturalist observations"
+    assert res.summary["n_details_unknown"] == 5
+
+
+def test_near_a_botanical_garden_is_a_warning(refs):
+    garden = {"longitude": 3.8790, "latitude": 43.6150}  # ~0.5 km from the garden point
+    at = {"longitude": 3.8730, "latitude": 43.6150}  # inside the institution buffer
+    res = assess_quality(
+        frame([garden, at, *clean_points(3, seed=5)]), ["bio1"], CELL_10M, refs=refs
+    )
+    assert "near_botanical_garden" in res.flags[0] and not res.excluded[0]
+    # inside the 100 m institution buffer it is an error, not also a garden warning
+    assert res.flags[1] == ["institution"] and res.excluded[1]

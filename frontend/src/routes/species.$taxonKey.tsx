@@ -3,8 +3,10 @@ import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
 import { useSelector } from '@tanstack/react-store'
 import {
   ArrowLeft,
+  BellRing,
   ChevronRight,
   DatabaseZap,
+  FileText,
   FlaskConical,
   Gauge,
   GitBranch,
@@ -17,6 +19,7 @@ import {
   RefreshCw,
   ShieldCheck,
   SlidersHorizontal,
+  Sparkles,
 } from 'lucide-react'
 import { useEffect, useRef } from 'react'
 import { z } from 'zod'
@@ -29,6 +32,7 @@ import {
   useModelVersion,
   useModelVersions,
   useNativeRange,
+  usePermissions,
   useRunPipeline,
   useTimeline,
   useUpdateNativeRange,
@@ -39,6 +43,7 @@ import { OccurrenceTimelineChart } from '@/components/charts/OccurrenceTimelineC
 import { VariableImportanceChart } from '@/components/charts/VariableImportanceChart'
 import { DualMapView } from '@/components/maps/DualMapView'
 import { NativeRangeEditor } from '@/components/maps/NativeRangeEditor'
+import { BiasStudiesCard } from '@/components/species/BiasStudiesCard'
 import { BulletinCard } from '@/components/species/BulletinCard'
 import { CaveatBanner } from '@/components/species/CaveatBanner'
 import { CrossCheckCard } from '@/components/species/CrossCheckCard'
@@ -47,7 +52,16 @@ import { ExtrapolationCard } from '@/components/species/ExtrapolationCard'
 import { HiresCard } from '@/components/species/HiresCard'
 import { JobStatusBar } from '@/components/species/JobStatusBar'
 import { MetricsCards } from '@/components/species/MetricsCards'
+import {
+  AlgorithmCard,
+  ExportsCard,
+  MonitoringProductsCard,
+  ResponseCurvesCard,
+  ThresholdsCard,
+} from '@/components/species/ModelInsightsCard'
+import { ModelCardPanel } from '@/components/species/ModelCardPanel'
 import { ModelLineageTable } from '@/components/species/ModelLineageTable'
+import { AlertsCard, StudyRegionCard } from '@/components/species/MonitoringCards'
 import { OccurrenceTable } from '@/components/species/OccurrenceTable'
 import { ReferenceDatasetsPanel } from '@/components/species/ReferenceDatasetsPanel'
 import { ScenariosCard } from '@/components/species/ScenariosCard'
@@ -65,6 +79,9 @@ import { mapActions, mapStore } from '@/store/mapStore'
 
 const TABS = [
   'overview',
+  'card',
+  'model',
+  'monitoring',
   'native-range',
   'severity',
   'lineage',
@@ -141,6 +158,7 @@ function SpeciesWorkspace() {
   const run = useRunPipeline(taxonKey)
   const updateNative = useUpdateNativeRange(taxonKey)
   const maxYear = useSelector(mapStore, (s) => s.maxYear)
+  const can = usePermissions()
 
   useEffect(() => mapActions.resetForSpecies(), [taxonKey])
   useFitNativeRange(taxonKey, nativeRange.data)
@@ -165,7 +183,7 @@ function SpeciesWorkspace() {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <Button onClick={() => run.mutate({})} disabled={run.isPending || job.active}>
+            <Button onClick={() => run.mutate({})} disabled={run.isPending || job.active || !can.run}>
               {run.isPending || job.active ? <Loader2 className="animate-spin" /> : <Play />}
               Start analysis
             </Button>
@@ -210,7 +228,7 @@ function SpeciesWorkspace() {
           </div>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={() => run.mutate({})} disabled={job.active || run.isPending}>
+          <Button variant="outline" size="sm" onClick={() => run.mutate({})} disabled={job.active || run.isPending || !can.run}>
             <RefreshCw className={job.active ? 'animate-spin' : undefined} /> Check for new records
           </Button>
           <Tooltip>
@@ -219,7 +237,7 @@ function SpeciesWorkspace() {
                 variant="ghost"
                 size="sm"
                 onClick={() => run.mutate({ fullResync: true })}
-                disabled={job.active || run.isPending}
+                disabled={job.active || run.isPending || !can.run}
               >
                 <DatabaseZap /> Re-sync all
               </Button>
@@ -229,7 +247,7 @@ function SpeciesWorkspace() {
               append any that are missing — e.g. after an interrupted or capped first ingest.
             </TooltipContent>
           </Tooltip>
-          <Button variant="secondary" size="sm" onClick={() => run.mutate({ forceRetrain: true })} disabled={job.active || run.isPending || sp.native_range_status !== 'confirmed'}>
+          <Button variant="secondary" size="sm" onClick={() => run.mutate({ forceRetrain: true })} disabled={job.active || run.isPending || !can.run || sp.native_range_status !== 'confirmed'}>
             <Play /> Force retrain
           </Button>
         </div>
@@ -272,6 +290,9 @@ function SpeciesWorkspace() {
       <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
         <TabsList className="flex-wrap">
           <TabsTrigger value="overview"><Gauge /> Overview</TabsTrigger>
+          <TabsTrigger value="card"><FileText /> Model card</TabsTrigger>
+          <TabsTrigger value="model"><Sparkles /> Model insights</TabsTrigger>
+          <TabsTrigger value="monitoring"><BellRing /> Monitoring</TabsTrigger>
           <TabsTrigger value="native-range"><MapPinned /> Native range</TabsTrigger>
           <TabsTrigger value="severity"><SlidersHorizontal /> Severity settings</TabsTrigger>
           <TabsTrigger value="lineage"><GitBranch /> Model lineage</TabsTrigger>
@@ -351,6 +372,44 @@ function SpeciesWorkspace() {
           </div>
         </TabsContent>
 
+        <TabsContent value="card">
+          {model.data ? (
+            <ModelCardPanel taxonKey={taxonKey} version={model.data.model_version} />
+          ) : (
+            <Card>
+              <CardContent className="py-8 text-center text-sm text-muted-foreground">
+                The plain-language model card appears after the first training run.
+              </CardContent>
+            </Card>
+          )}
+        </TabsContent>
+
+        <TabsContent value="model" className="space-y-4">
+          {model.data ? (
+            <>
+              <div className="grid gap-4 xl:grid-cols-2">
+                <ThresholdsCard model={model.data} />
+                <MonitoringProductsCard model={model.data} />
+              </div>
+              <AlgorithmCard model={model.data} />
+              <ResponseCurvesCard model={model.data} descriptions={bioclim.data?.descriptions} />
+              <BiasStudiesCard taxonKey={taxonKey} />
+              <ExportsCard taxonKey={taxonKey} version={model.data.model_version} />
+            </>
+          ) : (
+            <Card>
+              <CardContent className="py-8 text-center text-sm text-muted-foreground">
+                Thresholds, response curves and downloads appear after the first training run.
+              </CardContent>
+            </Card>
+          )}
+        </TabsContent>
+
+        <TabsContent value="monitoring" className="grid gap-4 xl:grid-cols-[1.4fr_1fr]">
+          <AlertsCard taxonKey={taxonKey} />
+          <StudyRegionCard key={JSON.stringify(sp.study_region)} sp={sp} bioclim={bioclim.data} />
+        </TabsContent>
+
         <TabsContent value="native-range">
           {nativeRange.data && layers.data ? (
             <NativeRangeEditor
@@ -370,6 +429,11 @@ function SpeciesWorkspace() {
                 A draft native range is proposed after occurrences have been ingested.
               </CardContent>
             </Card>
+          )}
+          {!can.curate && (
+            <p className="mt-2 text-xs text-muted-foreground">
+              You can edit and save drafts; confirming the native range needs the curator role.
+            </p>
           )}
           {updateNative.isError && (
             <p className="mt-2 text-xs text-destructive">{updateNative.error.message}</p>

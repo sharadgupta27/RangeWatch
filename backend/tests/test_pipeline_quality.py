@@ -188,7 +188,7 @@ def test_record_count_weighting_is_used_and_logged(settings):
     )
 
 
-def upload(p, csv: str, name: str = "Agency survey") -> ReferenceDataset:
+def upload(p, csv: str, name: str = "Agency survey", role: str = "evaluation") -> ReferenceDataset:
     sp = p.repo.get_species(TAXON_KEY)
     parsed = parse_upload(csv.encode(), "survey.csv", TAXON_KEY, "upload-test", [sp.canonical_name])
     ds = p.repo.save_reference_dataset(
@@ -197,6 +197,7 @@ def upload(p, csv: str, name: str = "Agency survey") -> ReferenceDataset:
             "upload-test",
             "upload",
             name,
+            role=role,
             parse_report=parsed.report,
             n_present=parsed.n_present,
             n_absent=parsed.n_absent,
@@ -249,3 +250,48 @@ def test_issues_are_filled_once_for_records_ingested_without_them():
     # once known, issues are never rewritten (append-only)
     repo.append_occurrences([replace(rec, issues=("ZERO_COORDINATE",))])
     assert list(repo.load_occurrences(TAXON_KEY)["issues"][0]) == ["TAXON_MATCH_FUZZY"]
+
+
+def test_training_uploads_join_training_and_only_their_absences_evaluate(trained):
+    p, _ = trained
+    occ = p.repo.load_occurrences(TAXON_KEY)
+    dup = occ[occ["source"] == "GBIF"].head(5)
+    rows = ["longitude,latitude,date,presence"]
+    rows += [f"{r.longitude},{r.latitude},{r.event_date},1" for r in dup.itertuples()]
+    # presences inside the native box, absences far outside the niche (tropics)
+    rows += [f"{1 + i * 1.1},{41 + (i % 13)},2021-05-01,1" for i in range(30)]
+    rows += [f"{100 + i * 0.5},5.0,2021-05-01,0" for i in range(10)]
+    upload(p, "\n".join(rows), name="Agency plots", role="training")
+
+    out = p.run(TAXON_KEY, force_retrain=True)
+    mv = p.repo.get_model_version(TAXON_KEY, out.model_version)
+    repro = mv.metrics["reproducibility"]
+    (used,) = repro["training_uploads"]
+    assert used["dataset_id"] == "upload-test"
+    assert (used["n_presences"], used["n_overlap_excluded"], used["n_added"]) == (35, 5, 30)
+    assert used["n_absences_not_used"] == 10 and used["file_sha256"] is None
+
+    source = "upload:upload-test"
+    manifest = pd.read_parquet(p.artifacts.local_path(mv.artifacts["occurrence_manifest"]))
+    assert (manifest["source"] == source).sum() == 30
+    training = pd.read_parquet(p.artifacts.local_path(mv.artifacts["training_data"]))
+    assert (training["source"] == source).any()  # some survive cell de-duplication/thinning
+
+    ev = mv.artifacts["independent_evaluation"]["upload-test"]
+    assert ev["role"] == "training" and ev["records_scored"] == "absences"
+    assert ev["metrics"]["n_presence"] == 0 and ev["metrics"]["n_absence"] == 10
+    assert ev["metrics_all_records"] is None
+
+
+def test_details_are_filled_once_for_records_ingested_without_them():
+    from src.domain import SpeciesRecord
+
+    repo = InMemoryRepository()
+    repo.create_species(SpeciesRecord(TAXON_KEY, "Testus invasivus"))
+    rec = box_records(1, (0, 1), (40, 41), start_id=1)[0]
+    repo.append_occurrences([rec])  # stored before details were kept (None)
+    assert repo.load_occurrences(TAXON_KEY)["details"][0] is None
+    repo.append_occurrences([replace(rec, details={"locality": "Botanic garden"})])
+    assert repo.load_occurrences(TAXON_KEY)["details"][0] == {"locality": "Botanic garden"}
+    repo.append_occurrences([replace(rec, details={"locality": "elsewhere"})])
+    assert repo.load_occurrences(TAXON_KEY)["details"][0] == {"locality": "Botanic garden"}

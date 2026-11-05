@@ -8,10 +8,15 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.api.routers import (
+    alerts,
+    annotations,
+    bias,
     bulletin,
     datasets,
+    exports,
     jobs,
     layers,
+    lists,
     meta,
     models,
     species,
@@ -40,8 +45,13 @@ def create_app() -> FastAPI:
     for r in (
         meta.router,
         species.router,
+        lists.router,
+        bias.router,
         datasets.router,
+        annotations.router,
+        alerts.router,
         models.router,
+        exports.router,
         layers.router,
         bulletin.router,
         jobs.router,

@@ -35,6 +35,8 @@ CREATE TABLE IF NOT EXISTS species_registry (
     created_ts              timestamptz NOT NULL DEFAULT now(),
     updated_ts              timestamptz NOT NULL DEFAULT now()
 );
+-- Regional model (U2): {"bbox": [w, s, e, n], "resolution": "30s" | null}; NULL = global.
+ALTER TABLE species_registry ADD COLUMN IF NOT EXISTS study_region jsonb;
 
 -- ---------------------------------------------------------------------------
 -- Occurrence store (append-only, partitioned by taxon_key).
@@ -74,17 +76,24 @@ CREATE INDEX IF NOT EXISTS occurrences_taxon_ingested ON occurrences (taxon_key,
 -- NULL = ingested before issues were recorded; the next fetch that returns the record fills
 -- it (only while NULL, like the bio* columns). '{}' = no issues (and every iNat record).
 ALTER TABLE occurrences ADD COLUMN IF NOT EXISTS issues text[];
+-- Free text and identification details for the data-quality tests (locality, habitat,
+-- remarks, collector + number, iNaturalist identification counts). Same rule as issues:
+-- NULL = ingested before details were kept, filled once; '{}' = none given.
+ALTER TABLE occurrences ADD COLUMN IF NOT EXISTS details jsonb;
 
 -- ---------------------------------------------------------------------------
--- Reference datasets: independent records used to *evaluate* models, never to train them.
+-- Reference datasets: records kept apart from the GBIF/iNaturalist occurrence store.
 --   kind 'gbif_absences': GBIF records with occurrenceStatus = ABSENT (one dataset per taxon)
 --   kind 'upload':        a user-supplied survey (e.g. agency field records), with provenance
+-- role 'evaluation': independent test data, never trained on (every GBIF absence dataset).
+-- role 'training':   an upload whose presences join the training set; its absences still
+--                    evaluate the model (a presence-background model cannot use them).
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS reference_datasets (
     taxon_key      integer NOT NULL REFERENCES species_registry (taxon_key),
     dataset_id     text NOT NULL,
     kind           text NOT NULL CHECK (kind IN ('gbif_absences', 'upload')),
-    role           text NOT NULL DEFAULT 'evaluation' CHECK (role IN ('evaluation')),
+    role           text NOT NULL DEFAULT 'evaluation',
     name           text NOT NULL,
     citation       text,
     license        text,
@@ -100,6 +109,10 @@ CREATE TABLE IF NOT EXISTS reference_datasets (
     updated_ts     timestamptz NOT NULL DEFAULT now(),
     PRIMARY KEY (taxon_key, dataset_id)
 );
+
+ALTER TABLE reference_datasets DROP CONSTRAINT IF EXISTS reference_datasets_role_check;
+ALTER TABLE reference_datasets ADD CONSTRAINT reference_datasets_role_check
+    CHECK (role IN ('evaluation', 'training') AND (kind = 'upload' OR role = 'evaluation'));
 
 -- Append-only like occurrences (a dataset is removed as a whole, never edited row by row).
 CREATE TABLE IF NOT EXISTS reference_records (
@@ -150,6 +163,67 @@ CREATE TABLE IF NOT EXISTS model_versions (
     severity         jsonb,
     mlflow_run_id    text,
     PRIMARY KEY (taxon_key, model_version)
+);
+
+-- ---------------------------------------------------------------------------
+-- Expert record annotations (U11): append-only, never edit `occurrences`. The latest row
+-- per (record, kind) is the effective annotation; training applies it and snapshots it.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS record_annotations (
+    annotation_id  uuid PRIMARY KEY,
+    taxon_key      integer NOT NULL REFERENCES species_registry (taxon_key),
+    source         text NOT NULL CHECK (source IN ('GBIF', 'iNaturalist')),
+    record_id      bigint NOT NULL,
+    kind           text NOT NULL
+                   CHECK (kind IN ('range_label', 'exclude', 'cultivated', 'verified')),
+    value          text NOT NULL,
+    note           text,
+    author         text NOT NULL,
+    created_ts     timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS record_annotations_record
+    ON record_annotations (taxon_key, source, record_id, created_ts);
+
+-- ---------------------------------------------------------------------------
+-- Early-detection alerts (U10) and their subscriptions (webhook / e-mail / RSS feed)
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS alerts (
+    alert_id        uuid PRIMARY KEY,
+    taxon_key       integer NOT NULL REFERENCES species_registry (taxon_key),
+    kind            text NOT NULL CHECK (kind IN ('outside_envelope', 'outside_known_range')),
+    n_records       integer NOT NULL,
+    records         jsonb NOT NULL,
+    summary         text NOT NULL,
+    model_version   integer,
+    effort_classes  jsonb NOT NULL DEFAULT '{}',
+    deliveries      jsonb NOT NULL DEFAULT '[]',
+    created_ts      timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS alerts_taxon_created ON alerts (taxon_key, created_ts DESC);
+
+CREATE TABLE IF NOT EXISTS alert_subscriptions (
+    subscription_id  uuid PRIMARY KEY,
+    taxon_key        integer REFERENCES species_registry (taxon_key),  -- NULL = all species
+    channel          text NOT NULL CHECK (channel IN ('webhook', 'email')),
+    target           text NOT NULL,
+    kinds            text[] NOT NULL,
+    created_by       text NOT NULL,
+    created_ts       timestamptz NOT NULL DEFAULT now()
+);
+
+-- ---------------------------------------------------------------------------
+-- Species lists / watch lists for batch runs and registry filters (U9). User-maintained,
+-- edited in place; entries = [{query, taxon_key, scientific_name, match_type, confidence}].
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS species_lists (
+    list_id      uuid PRIMARY KEY,
+    name         text NOT NULL,
+    description  text,
+    source       text,
+    entries      jsonb NOT NULL DEFAULT '[]'::jsonb,
+    created_by   text NOT NULL,
+    created_ts   timestamptz NOT NULL DEFAULT now(),
+    updated_ts   timestamptz NOT NULL DEFAULT now()
 );
 
 -- ---------------------------------------------------------------------------

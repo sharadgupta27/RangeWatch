@@ -1,21 +1,25 @@
-"""Reference datasets: independent records that evaluate models and are never used to train
-them. Users upload surveys (e.g. agency field records); explicit GBIF absences are added by
-the pipeline. Parsing happens in the request (bounded size); the independence check and the
-scoring of every model version run as a background job."""
+"""Reference datasets: records kept apart from the GBIF/iNaturalist occurrence store. Users
+upload surveys (e.g. agency field records) either as independent evaluation data (default) or
+as extra training data; explicit GBIF absences are added by the pipeline (evaluation only).
+Parsing happens in the request (bounded size); the independence check and the scoring of every
+model version run as a background job. Adding or removing a training upload flags the species
+for retraining (a user edit, like the native-range polygon; the retrain threshold is
+unchanged)."""
 
 from __future__ import annotations
 
 import uuid
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 
+from src.api.auth import Analyst
 from src.api.converters import job_out, reference_dataset_out
 from src.api.deps import JobQueue, queue_dep, repository_dep, settings_dep
 from src.api.schemas import DatasetUploadResult, JobOut, ReferenceDatasetOut
 from src.config import Settings
 from src.connectors.upload_client import ColumnMapping, UploadError, parse_upload
-from src.domain import Job, JobKind, ReferenceDataset
+from src.domain import Job, JobKind, ReferenceDataset, SpeciesStatus
 from src.persistence.repository import Repository
 
 router = APIRouter(prefix="/species/{taxon_key}/datasets", tags=["datasets"])
@@ -29,6 +33,13 @@ def _species_or_404(repo: Repository, taxon_key: int):
     if sp is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"Species {taxon_key} not in registry")
     return sp
+
+
+def _flag_retrain(repo: Repository, taxon_key: int) -> None:
+    """Training data changed: the current model (if any) no longer reflects it."""
+    sp = repo.get_species(taxon_key)
+    if sp is not None and sp.model_version > 0:
+        repo.update_species(taxon_key, retrain_needed=True, status=SpeciesStatus.RETRAIN_PENDING)
 
 
 def _enqueue(repo: Repository, queue: JobQueue, taxon_key: int) -> Job:
@@ -50,6 +61,7 @@ def list_datasets(taxon_key: int, repo: RepoDep) -> list[ReferenceDatasetOut]:
     response_model=DatasetUploadResult,
     status_code=status.HTTP_201_CREATED,
     operation_id="uploadReferenceDataset",
+    dependencies=[Analyst],
 )
 def upload_dataset(
     taxon_key: int,
@@ -59,6 +71,13 @@ def upload_dataset(
         UploadFile, File(description="CSV/TSV, GeoJSON, GeoPackage or zipped shapefile")
     ],
     name: Annotated[str, Form(min_length=1, max_length=200)],
+    role: Annotated[
+        Literal["evaluation", "training"],
+        Form(
+            description="evaluation (default): independent test data, never trained on. "
+            "training: presences join the next model's training set"
+        ),
+    ] = "evaluation",
     citation: OptionalForm = None,
     license: OptionalForm = None,
     note: OptionalForm = None,
@@ -71,8 +90,9 @@ def upload_dataset(
     record_id_column: OptionalForm = None,
     settings: Settings = Depends(settings_dep),
 ) -> DatasetUploadResult:
-    """Upload an independent survey as an evaluation-only dataset. Columns are detected
-    unless named; rows of other species are dropped when the file has a species column."""
+    """Upload a survey as an evaluation dataset (default) or as training data. Columns are
+    detected unless named; rows of other species are dropped when the file has a species
+    column. A training upload flags the species for retraining."""
     sp = _species_or_404(repo, taxon_key)
     content = file.file.read(settings.upload_max_bytes + 1)
     if len(content) > settings.upload_max_bytes:
@@ -106,6 +126,7 @@ def upload_dataset(
             taxon_key=taxon_key,
             dataset_id=dataset_id,
             kind="upload",
+            role=role,
             name=name.strip(),
             citation=citation,
             license=license,
@@ -118,16 +139,22 @@ def upload_dataset(
         )
     )
     repo.append_reference_records(parsed.records)
+    if role == "training":
+        _flag_retrain(repo, taxon_key)
     job = _enqueue(repo, queue, taxon_key)
     return DatasetUploadResult(dataset=reference_dataset_out(ds, []), job=job_out(job))
 
 
 @router.delete(
-    "/{dataset_id}", status_code=status.HTTP_204_NO_CONTENT, operation_id="deleteReferenceDataset"
+    "/{dataset_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    operation_id="deleteReferenceDataset",
+    dependencies=[Analyst],
 )
 def delete_dataset(taxon_key: int, dataset_id: str, repo: RepoDep) -> None:
     """Remove an uploaded dataset and its records. Scores already stored with model versions
-    stay in their lineage. GBIF absences are managed by the pipeline and cannot be removed."""
+    stay in their lineage; removing a training upload flags the species for retraining. GBIF
+    absences are managed by the pipeline and cannot be removed."""
     _species_or_404(repo, taxon_key)
     ds = repo.get_reference_dataset(taxon_key, dataset_id)
     if ds is None:
@@ -135,6 +162,8 @@ def delete_dataset(taxon_key: int, dataset_id: str, repo: RepoDep) -> None:
     if ds.kind != "upload":
         raise HTTPException(status.HTTP_409_CONFLICT, "Only uploaded datasets can be removed")
     repo.delete_reference_dataset(taxon_key, dataset_id)
+    if ds.role == "training":
+        _flag_retrain(repo, taxon_key)
 
 
 @router.post(
@@ -142,6 +171,7 @@ def delete_dataset(taxon_key: int, dataset_id: str, repo: RepoDep) -> None:
     response_model=JobOut,
     status_code=status.HTTP_202_ACCEPTED,
     operation_id="evaluateReferenceDatasets",
+    dependencies=[Analyst],
 )
 def evaluate(taxon_key: int, repo: RepoDep, queue: QueueDep) -> JobOut:
     """Re-run the independence check and score every model version on every dataset."""

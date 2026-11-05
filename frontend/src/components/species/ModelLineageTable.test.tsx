@@ -26,6 +26,8 @@ function version(v: number, overrides: Partial<ModelVersionOut> = {}): ModelVers
     beta_multiplier: 1,
     severity_score: 55,
     mlflow_run_id: `run-${v}`,
+    algorithm: 'maxent',
+    threshold_rule: '10th percentile training presence',
     reproducibility: {
       bioclim_version_used: 'bioclim_v1',
       bioclim_sha256: 'abc123',
@@ -35,8 +37,9 @@ function version(v: number, overrides: Partial<ModelVersionOut> = {}): ModelVers
       gbif_citation: 'GBIF.org (01 January 2026) GBIF Occurrence Download https://doi.org/10.15468/dl.xyz',
       package_versions: { elapid: '1.0.4', pygbif: '0.6.6', pyinaturalist: '0.21.1', rasterio: '1.5.0' },
       random_seeds: { background_sampling: 43, cv_fold_assignment: 42 },
-      training_config: {},
+      training_config: { presence_weighting: 'none', tuning_grid: [['L', 1]] },
       native_range_source: 'user_edit',
+      training_uploads: [],
     },
     ...overrides,
   }
@@ -53,6 +56,12 @@ describe('model lineage table', () => {
         'training_data',
         'package_versions',
         'random_seeds',
+        'sampling_bias',
+        'training_uploads',
+        'training_config',
+        'algorithm',
+        'annotations',
+        'study_region',
         'cbi_mean',
         'auc_mean',
         'tss_mean',
@@ -124,6 +133,48 @@ describe('model lineage table', () => {
     expect(screen.getByText(/density\/2\/\{x\}\/\{y\}\.mvt\?taxonKey=408/)).toBeInTheDocument()
     expect(screen.getByText('fallback: only 120 cells with order Lamiales records')).toBeInTheDocument()
     expect(screen.getByText('not recorded (trained before background logging)')).toBeInTheDocument()
+  })
+
+  it('renders sampling-bias options, training uploads and the training config verbatim', () => {
+    const base = version(1).reproducibility
+    render(
+      <ModelLineageTable
+        versions={[
+          version(1),
+          version(2, {
+            reproducibility: {
+              ...base,
+              presence_weights: { method: 'quality_tier', n_presences: 120, min: 0.6, median: 1, max: 1.2 },
+              bias_covariates: {
+                method: 'target_group_effort',
+                status: 'used',
+                covariate: 'bias_target_group_effort',
+                transform: 'log1p(target-group records per effort pixel)',
+                condition: 'max',
+                conditioning_value: 7.25,
+              },
+              training_uploads: [
+                {
+                  dataset_id: 'upload-abc',
+                  name: 'INPA plots',
+                  n_presences: 40,
+                  n_overlap_excluded: 4,
+                  n_added: 36,
+                  n_absences_not_used: 9,
+                  used_as: 'presence_only',
+                },
+              ],
+            },
+          }),
+        ]}
+      />,
+    )
+    expect(screen.getByText('not recorded (trained before bias options)')).toBeInTheDocument()
+    expect(screen.getByText('weights quality_tier')).toBeInTheDocument()
+    expect(screen.getByText(/held at max = 7.25/)).toBeInTheDocument()
+    expect(screen.getByText('INPA plots (upload-abc)')).toBeInTheDocument()
+    expect(screen.getByText(/36 of 40 presences added · 4 duplicates left out · 9 absences/)).toBeInTheDocument()
+    expect(screen.getAllByText('[["L",1]]')).toHaveLength(2) // training config, not summarised
   })
 
   it('shows an empty state', () => {

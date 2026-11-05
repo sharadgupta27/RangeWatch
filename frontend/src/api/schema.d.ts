@@ -38,6 +38,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/me": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Me
+         * @description The calling user and role, so the UI can offer only permitted actions (the API
+         *     enforces them regardless).
+         */
+        get: operations["getMe"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/species/search": {
         parameters: {
             query?: never;
@@ -65,7 +86,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List Species */
+        /**
+         * List Species
+         * @description The registry, optionally only the species of one species list (U9).
+         */
         get: operations["listSpecies"];
         put?: never;
         post?: never;
@@ -183,7 +207,8 @@ export interface paths {
         get: operations["getNativeRange"];
         /**
          * Put Native Range
-         * @description Save a user-reviewed polygon. Confirming it unlocks (re)training.
+         * @description Save a user-reviewed polygon (analyst). Confirming it — which unlocks (re)training —
+         *     is an expert review step and needs the curator role.
          */
         put: operations["updateNativeRange"];
         post?: never;
@@ -251,6 +276,138 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/species/{taxon_key}/study-region": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Put Study Region
+         * @description Train and project a regional model inside `bbox` (optionally at a registered high
+         *     resolution), or remove the region (bbox null) to return to the global model. Changing it
+         *     flags a retrain; the current model stays published until then.
+         */
+        put: operations["updateStudyRegion"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/lists": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Lists */
+        get: operations["listSpeciesLists"];
+        put?: never;
+        /**
+         * Create List
+         * @description Names are matched against the GBIF backbone (unmatched ones are kept, unresolved).
+         */
+        post: operations["createSpeciesList"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/lists/{list_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get List */
+        get: operations["getSpeciesList"];
+        /**
+         * Update List
+         * @description Replace the list's name, description, source and species.
+         */
+        put: operations["updateSpeciesList"];
+        post?: never;
+        /** Delete List */
+        delete: operations["deleteSpeciesList"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/lists/{list_id}/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Run List
+         * @description One batch job running the species pipeline for every resolved species of the list
+         *     (new species stop at the native-range review, as in a single run).
+         */
+        post: operations["runSpeciesList"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/species/{taxon_key}/target-group-comparison": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Comparison */
+        get: operations["getTargetGroupComparison"];
+        put?: never;
+        /**
+         * Run Comparison
+         * @description B1: refit with order / class / phylum target groups (and matched source + years).
+         */
+        post: operations["runTargetGroupComparison"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/species/{taxon_key}/shared-bias": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Shared Bias
+         * @description The shared bias estimate of the species' target group, if one was made.
+         */
+        get: operations["getSharedBias"];
+        put?: never;
+        /**
+         * Run Shared Bias
+         * @description B9: estimate the observer bias jointly from every registered species of this
+         *     species' target group (used by SDM_ALGORITHM=ppm with SDM_PPM_BIAS=shared).
+         */
+        post: operations["runSharedBias"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/species/{taxon_key}/datasets": {
         parameters: {
             query?: never;
@@ -266,8 +423,9 @@ export interface paths {
         put?: never;
         /**
          * Upload Dataset
-         * @description Upload an independent survey as an evaluation-only dataset. Columns are detected
-         *     unless named; rows of other species are dropped when the file has a species column.
+         * @description Upload a survey as an evaluation dataset (default) or as training data. Columns are
+         *     detected unless named; rows of other species are dropped when the file has a species
+         *     column. A training upload flags the species for retraining.
          */
         post: operations["uploadReferenceDataset"];
         delete?: never;
@@ -289,7 +447,8 @@ export interface paths {
         /**
          * Delete Dataset
          * @description Remove an uploaded dataset and its records. Scores already stored with model versions
-         *     stay in their lineage. GBIF absences are managed by the pipeline and cannot be removed.
+         *     stay in their lineage; removing a training upload flags the species for retraining. GBIF
+         *     absences are managed by the pipeline and cannot be removed.
          */
         delete: operations["deleteReferenceDataset"];
         options?: never;
@@ -312,6 +471,123 @@ export interface paths {
          */
         post: operations["evaluateReferenceDatasets"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/species/{taxon_key}/annotations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Annotations
+         * @description Annotation history, newest first (optionally for one record).
+         */
+        get: operations["listAnnotations"];
+        put?: never;
+        /**
+         * Create Annotation
+         * @description Annotate one GBIF / iNaturalist record (curator). A correction is a newer annotation;
+         *     nothing is ever overwritten. Flags a retrain when the species has a model.
+         */
+        post: operations["createAnnotation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/species/{taxon_key}/alerts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Species Alerts */
+        get: operations["listSpeciesAlerts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/alerts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** All Alerts */
+        get: operations["listAlerts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/alerts/feed.xml": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Feed
+         * @description RSS 2.0 feed of alerts (all species, or one).
+         */
+        get: operations["alertFeed"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/alerts/subscriptions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Subscriptions
+         * @description Subscriptions covering one species (its own + all-species), or all.
+         */
+        get: operations["listAlertSubscriptions"];
+        put?: never;
+        /** Create Subscription */
+        post: operations["createAlertSubscription"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/alerts/subscriptions/{subscription_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Subscription */
+        delete: operations["deleteAlertSubscription"];
         options?: never;
         head?: never;
         patch?: never;
@@ -346,6 +622,145 @@ export interface paths {
         };
         /** Get Model */
         get: operations["getModelVersion"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/species/{taxon_key}/models/{model_version}/exports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Index */
+        get: operations["listExports"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/species/{taxon_key}/models/{model_version}/exports/raster/{layer}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Raster */
+        get: operations["downloadExportRaster"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/species/{taxon_key}/models/{model_version}/exports/occurrences.gpkg": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Geopackage */
+        get: operations["downloadExportGeoPackage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/species/{taxon_key}/models/{model_version}/exports/odmap": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Odmap */
+        get: operations["getOdmap"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/species/{taxon_key}/models/{model_version}/exports/model-card": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Model Card
+         * @description U13: plain-language summary, the confidence label and caveats first.
+         */
+        get: operations["getModelCard"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/species/{taxon_key}/models/{model_version}/exports/stac": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Stac */
+        get: operations["getStacItem"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/species/{taxon_key}/models/{model_version}/exports/citation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Citation */
+        get: operations["getCitationBundle"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/species/{taxon_key}/models/{model_version}/exports/bundle.zip": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Bundle */
+        get: operations["downloadExportBundle"];
         put?: never;
         post?: never;
         delete?: never;
@@ -494,10 +909,280 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/validation/benchmark": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Latest Benchmark
+         * @description Latest virtual-species bias benchmark: which bias correction recovers a known niche.
+         */
+        get: operations["getVirtualSpeciesBenchmark"];
+        put?: never;
+        /** Run Benchmark */
+        post: operations["runVirtualSpeciesBenchmark"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** AlertOut */
+        AlertOut: {
+            /**
+             * Alert Id
+             * Format: uuid
+             */
+            alert_id: string;
+            /** Taxon Key */
+            taxon_key: number;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "outside_envelope" | "outside_known_range";
+            /** N Records */
+            n_records: number;
+            /** Records */
+            records: components["schemas"]["AlertRecordOut"][];
+            /** Summary */
+            summary: string;
+            /** Model Version */
+            model_version?: number | null;
+            /**
+             * Effort Classes
+             * @description B10: expansion (cell sampled before) / discovery (unsampled) / unknown
+             */
+            effort_classes: {
+                [key: string]: number;
+            };
+            /** Deliveries */
+            deliveries: {
+                [key: string]: unknown;
+            }[];
+            /**
+             * Created Ts
+             * Format: date-time
+             */
+            created_ts: string;
+        };
+        /** AlertRecordOut */
+        AlertRecordOut: {
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "GBIF" | "iNaturalist";
+            /** Record Id */
+            record_id: number;
+            /** Longitude */
+            longitude: number;
+            /** Latitude */
+            latitude: number;
+            /** Event Date */
+            event_date?: string | null;
+            /** Suitability */
+            suitability?: number | null;
+            /** Distance Km */
+            distance_km?: number | null;
+            /**
+             * Effort Class
+             * @enum {string}
+             */
+            effort_class: "expansion" | "discovery" | "unknown";
+        };
+        /** AlertSubscriptionIn */
+        AlertSubscriptionIn: {
+            /**
+             * Channel
+             * @enum {string}
+             */
+            channel: "webhook" | "email";
+            /**
+             * Target
+             * @description https URL or e-mail address
+             */
+            target: string;
+            /**
+             * Taxon Key
+             * @description null = every species
+             */
+            taxon_key?: number | null;
+            /** Kinds */
+            kinds?: ("outside_envelope" | "outside_known_range")[];
+        };
+        /** AlertSubscriptionOut */
+        AlertSubscriptionOut: {
+            /**
+             * Subscription Id
+             * Format: uuid
+             */
+            subscription_id: string;
+            /**
+             * Channel
+             * @enum {string}
+             */
+            channel: "webhook" | "email";
+            /** Target */
+            target: string;
+            /** Taxon Key */
+            taxon_key?: number | null;
+            /** Kinds */
+            kinds: ("outside_envelope" | "outside_known_range")[];
+            /** Created By */
+            created_by: string;
+            /**
+             * Created Ts
+             * Format: date-time
+             */
+            created_ts: string;
+        };
+        /** AlgorithmInfo */
+        AlgorithmInfo: {
+            /**
+             * Requested
+             * @enum {string}
+             */
+            requested: "maxent" | "ensemble" | "integrated" | "ppm";
+            /**
+             * Used
+             * @enum {string}
+             */
+            used: "maxent" | "ensemble" | "integrated" | "ppm";
+            /** Fallback Reason */
+            fallback_reason?: string | null;
+            /**
+             * Point Process
+             * @description Point process: bias mode used, shared-bias estimate, fallback
+             */
+            point_process?: {
+                [key: string]: unknown;
+            } | null;
+        };
+        /** AnnotationIn */
+        AnnotationIn: {
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "GBIF" | "iNaturalist";
+            /** Record Id */
+            record_id: number;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "range_label" | "exclude" | "cultivated" | "verified";
+            /**
+             * Value
+             * @description range_label: native | introduced | unknown; others: true | false
+             */
+            value: string;
+            /** Note */
+            note?: string | null;
+        };
+        /** AnnotationOut */
+        AnnotationOut: {
+            /**
+             * Annotation Id
+             * Format: uuid
+             */
+            annotation_id: string;
+            /** Taxon Key */
+            taxon_key: number;
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "GBIF" | "iNaturalist";
+            /** Record Id */
+            record_id: number;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "range_label" | "exclude" | "cultivated" | "verified";
+            /** Value */
+            value: string;
+            /** Note */
+            note?: string | null;
+            /** Author */
+            author: string;
+            /**
+             * Created Ts
+             * Format: date-time
+             */
+            created_ts: string;
+        };
+        /** AnnotationResult */
+        AnnotationResult: {
+            annotation: components["schemas"]["AnnotationOut"];
+            /**
+             * Retrain Flagged
+             * @description The current model no longer reflects the data
+             */
+            retrain_flagged: boolean;
+        };
+        /**
+         * AnnotationsInfo
+         * @description Expert annotations applied to this version's training set (U11).
+         */
+        AnnotationsInfo: {
+            /**
+             * N Records Annotated
+             * @default 0
+             */
+            n_records_annotated: number;
+            /**
+             * N Annotations
+             * @default 0
+             */
+            n_annotations: number;
+            /**
+             * N Excluded By Annotation
+             * @default 0
+             */
+            n_excluded_by_annotation: number;
+            /**
+             * N Excluded Suspicious
+             * @default 0
+             */
+            n_excluded_suspicious: number;
+            /**
+             * N Excluded Cultivated
+             * @default 0
+             */
+            n_excluded_cultivated: number;
+            /**
+             * N Kept Verified
+             * @default 0
+             */
+            n_kept_verified: number;
+            /**
+             * N Label Overrides
+             * @default 0
+             */
+            n_label_overrides: number;
+            /** Rules */
+            rules?: string | null;
+            snapshot?: components["schemas"]["TrainingSnapshotInfo"] | null;
+        };
+        /** AreaShareOut */
+        AreaShareOut: {
+            /** Variable */
+            variable: string;
+            /** Area Km2 */
+            area_km2: number;
+            /** Fraction */
+            fraction: number;
+        };
         /** BackgroundInfo */
         BackgroundInfo: {
             /**
@@ -515,6 +1200,170 @@ export interface components {
              * @description Why target-group background was not used, if it was requested
              */
             fallback_reason?: string | null;
+            /**
+             * Bias Covariate Override
+             * @description Bias covariate that replaced the target-group background (bias modelled explicitly; background uniform in the buffer)
+             */
+            bias_covariate_override?: string | null;
+        };
+        /** BatchRunRequest */
+        BatchRunRequest: {
+            /**
+             * Force Retrain
+             * @default false
+             */
+            force_retrain: boolean;
+            /**
+             * Only Registered
+             * @description Skip species not yet in the registry (no first-time downloads)
+             * @default false
+             */
+            only_registered: boolean;
+        };
+        /** BenchmarkReport */
+        BenchmarkReport: {
+            /** Benchmark Id */
+            benchmark_id: string;
+            /**
+             * Created Ts
+             * Format: date-time
+             */
+            created_ts: string;
+            request: components["schemas"]["BenchmarkRequest"];
+            /** Virtual Species */
+            virtual_species: {
+                [key: string]: unknown;
+            };
+            /** Bias */
+            bias: {
+                [key: string]: unknown;
+            };
+            /** N Presences */
+            n_presences: number;
+            /** N Evaluation Cells */
+            n_evaluation_cells: number;
+            /** Variants */
+            variants: components["schemas"]["BenchmarkVariant"][];
+            /** Best Variant */
+            best_variant?: string | null;
+            /** Interpretation */
+            interpretation: string;
+        };
+        /** BenchmarkRequest */
+        BenchmarkRequest: {
+            /**
+             * N Presences
+             * @default 300
+             */
+            n_presences: number;
+            /**
+             * Bias
+             * @description synthetic: effort decays from a few 'cities'; gbif_effort: the real GBIF effort of `target_group_key` (map API)
+             * @default synthetic
+             * @enum {string}
+             */
+            bias: "synthetic" | "gbif_effort";
+            /**
+             * Target Group Key
+             * @description GBIF key, e.g. an order
+             */
+            target_group_key?: number | null;
+            /**
+             * Bias Strength
+             * @description Exponent on the effort surface
+             * @default 3
+             */
+            bias_strength: number;
+            /** Variants */
+            variants?: ("no_correction" | "target_group" | "bias_covariate" | "density_weights")[];
+            /**
+             * Region
+             * @description [w, s, e, n]; null = global land
+             */
+            region?: number[] | null;
+            /**
+             * Seed
+             * @default 42
+             */
+            seed: number;
+        };
+        /** BenchmarkVariant */
+        BenchmarkVariant: {
+            /** Variant */
+            variant: string;
+            /** Description */
+            description: string;
+            /** Spearman Vs Truth */
+            spearman_vs_truth?: number | null;
+            /** Schoeners D */
+            schoeners_d?: number | null;
+            /** Auc Vs True Occupancy */
+            auc_vs_true_occupancy?: number | null;
+            /**
+             * Cv Cbi Mean
+             * @description What spatial CV on the biased data says
+             */
+            cv_cbi_mean?: number | null;
+            /** Cv Auc Mean */
+            cv_auc_mean?: number | null;
+            /** Error */
+            error?: string | null;
+        };
+        /**
+         * BiasCovariatesInfo
+         * @description Bias covariate fitted with the model and held constant for prediction.
+         */
+        BiasCovariatesInfo: {
+            /**
+             * Method
+             * @enum {string}
+             */
+            method: "none" | "target_group_effort";
+            /** Status */
+            status?: ("used" | "unavailable") | null;
+            /** Reason */
+            reason?: string | null;
+            /** Covariate */
+            covariate?: string | null;
+            /** Transform */
+            transform?: string | null;
+            /** Condition */
+            condition?: ("max" | "p95" | "estimated" | "offset") | null;
+            /** Conditioning Value */
+            conditioning_value?: number | null;
+            /** Note */
+            note?: string | null;
+            /** Reference */
+            reference?: string | null;
+            /** Target Group */
+            target_group?: {
+                [key: string]: unknown;
+            } | null;
+            /** N Records */
+            n_records?: number | null;
+            /** Pixel Deg */
+            pixel_deg?: number | null;
+            /** Map Zoom */
+            map_zoom?: number | null;
+            /** Query */
+            query?: string | null;
+            /** Fetched Ts */
+            fetched_ts?: string | null;
+            /** Presence Mean */
+            presence_mean?: number | null;
+            /** Background Mean */
+            background_mean?: number | null;
+            /** Background Note */
+            background_note?: string | null;
+            /**
+             * Importance
+             * @description Permutation importance (%) of the covariate itself
+             */
+            importance?: {
+                [key: string]: number;
+            } | null;
+            /** Static Layers */
+            static_layers?: components["schemas"]["StaticBiasLayerInfo"][] | null;
         };
         /** BioclimInfo */
         BioclimInfo: {
@@ -557,6 +1406,13 @@ export interface components {
             file: string;
             /** Name */
             name: string;
+            /**
+             * Role
+             * @description evaluation (default): independent test data, never trained on. training: presences join the next model's training set
+             * @default evaluation
+             * @enum {string}
+             */
+            role: "evaluation" | "training";
             /** Citation */
             citation?: string | null;
             /** License */
@@ -597,6 +1453,39 @@ export interface components {
             pdf_url?: string | null;
             /** Html Url */
             html_url?: string | null;
+        };
+        /** ChangeSummaryOut */
+        ChangeSummaryOut: {
+            /**
+             * Status
+             * @default available
+             * @enum {string}
+             */
+            status: "available" | "unavailable";
+            /** Reason */
+            reason?: string | null;
+            /** From Version */
+            from_version?: number | null;
+            /** To Version */
+            to_version?: number | null;
+            /** Codes */
+            codes?: {
+                [key: string]: string;
+            } | null;
+            /** Gain Km2 */
+            gain_km2?: number | null;
+            /** Loss Km2 */
+            loss_km2?: number | null;
+            /** Stable Suitable Km2 */
+            stable_suitable_km2?: number | null;
+            /** Stable Unsuitable Km2 */
+            stable_unsuitable_km2?: number | null;
+            /** Net Change Fraction */
+            net_change_fraction?: number | null;
+            /** Before Threshold */
+            before_threshold?: number | null;
+            /** After Threshold */
+            after_threshold?: number | null;
         };
         /**
          * ClimateCrossCheckOut
@@ -709,6 +1598,12 @@ export interface components {
              */
             n_issues_unknown: number;
             /**
+             * N Details Unknown
+             * @description Records ingested before locality / collector / identification details
+             * @default 0
+             */
+            n_details_unknown: number;
+            /**
              * N Undated
              * @default 0
              */
@@ -760,6 +1655,105 @@ export interface components {
             dataset: components["schemas"]["ReferenceDatasetOut"];
             /** @description Independence check + evaluation job */
             job?: components["schemas"]["JobOut"] | null;
+        };
+        /** EffectiveAnnotationOut */
+        EffectiveAnnotationOut: {
+            /** Range Label */
+            range_label?: ("native" | "introduced" | "unknown") | null;
+            /** Exclude */
+            exclude?: boolean | null;
+            /** Cultivated */
+            cultivated?: boolean | null;
+            /** Verified */
+            verified?: boolean | null;
+            /** N Annotations */
+            n_annotations: number;
+            /** Last Author */
+            last_author?: string | null;
+            /** Last Ts */
+            last_ts?: string | null;
+        };
+        /** EnsembleAgreementOut */
+        EnsembleAgreementOut: {
+            /** Rule */
+            rule: string;
+            /** Land Mean */
+            land_mean?: number | null;
+            /** Candidate Mean */
+            candidate_mean?: number | null;
+            /** Low Agreement Land Fraction */
+            low_agreement_land_fraction?: number | null;
+            /** Low Agreement Below */
+            low_agreement_below: number;
+        };
+        /** EnsembleMemberOut */
+        EnsembleMemberOut: {
+            /**
+             * Algorithm
+             * @enum {string}
+             */
+            algorithm: "maxent" | "glm" | "gam" | "rf" | "brt";
+            /** Label */
+            label: string;
+            /** Included */
+            included: boolean;
+            /** Weight */
+            weight: number;
+            /** Threshold */
+            threshold: number;
+            /** Auc Mean */
+            auc_mean?: number | null;
+            /** Auc Std */
+            auc_std?: number | null;
+            /** Cbi Mean */
+            cbi_mean?: number | null;
+            /** Cbi Std */
+            cbi_std?: number | null;
+            /** Tss Mean */
+            tss_mean?: number | null;
+            /** Tss Std */
+            tss_std?: number | null;
+            /** N Cv Folds */
+            n_cv_folds: number;
+            /** Params */
+            params: {
+                [key: string]: unknown;
+            };
+            /** Note */
+            note?: string | null;
+        };
+        /** EnsembleOut */
+        EnsembleOut: {
+            /** Members */
+            members: components["schemas"]["EnsembleMemberOut"][];
+            /** Weighting */
+            weighting: string;
+            /** Cv Test Set */
+            cv_test_set: string;
+            /** Reference */
+            reference: string;
+        };
+        /** ExportIndex */
+        ExportIndex: {
+            /** Taxon Key */
+            taxon_key: number;
+            /** Model Version */
+            model_version: number;
+            /** Items */
+            items: components["schemas"]["ExportItem"][];
+        };
+        /** ExportItem */
+        ExportItem: {
+            /** Id */
+            id: string;
+            /** Label */
+            label: string;
+            /** Url */
+            url: string;
+            /** Media Type */
+            media_type: string;
+            /** Description */
+            description: string;
         };
         /** ExtrapolationDiagnosticOut */
         ExtrapolationDiagnosticOut: {
@@ -866,6 +1860,51 @@ export interface components {
             tss: number | null;
             /** Cbi */
             cbi: number | null;
+        };
+        /**
+         * GcmEnsembleOut
+         * @description U7: one SSP × period combined across GCMs (the scenario entry `ensemble_<ssp>_<period>`).
+         */
+        GcmEnsembleOut: {
+            /** Ssp */
+            ssp: string;
+            /** Period */
+            period: string;
+            /** Gcms */
+            gcms: string[];
+            /** N Gcms */
+            n_gcms: number;
+            /**
+             * Threshold
+             * @description Model threshold each GCM's map is binarised at
+             */
+            threshold: number;
+            /** Combination */
+            combination: string;
+            /** Suitable All Gcms Land Fraction */
+            suitable_all_gcms_land_fraction: number;
+            /** Suitable Majority Land Fraction */
+            suitable_majority_land_fraction: number;
+            /** Suitable Any Gcm Land Fraction */
+            suitable_any_gcm_land_fraction: number;
+            /**
+             * Gcm Disagreement Land Fraction
+             * @description Share of land suitable under some but not all GCMs
+             */
+            gcm_disagreement_land_fraction: number;
+            /** Extrapolated Any Gcm Land Fraction */
+            extrapolated_any_gcm_land_fraction: number;
+            /** Extrapolated All Gcms Land Fraction */
+            extrapolated_all_gcms_land_fraction: number;
+            /**
+             * Land Fraction By Votes
+             * @description Share of land by number of GCMs calling it suitable
+             */
+            land_fraction_by_votes: {
+                [key: string]: number;
+            };
+            /** @description Number of GCMs calling each cell suitable (map layer) */
+            agreement?: components["schemas"]["RasterLayer"] | null;
         };
         /** GeoJSONMultiPolygon */
         GeoJSONMultiPolygon: {
@@ -987,11 +2026,102 @@ export interface components {
             /** N Presence Extrapolated */
             n_presence_extrapolated?: number | null;
         };
+        /** InferredAbsencesOut */
+        InferredAbsencesOut: {
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "evaluated" | "insufficient" | "unavailable" | "disabled";
+            /** Reason */
+            reason?: string | null;
+            /** Note */
+            note?: string | null;
+            /** Zone */
+            zone?: string | null;
+            /** Min Records */
+            min_records?: number | null;
+            /** Min Distance Km */
+            min_distance_km?: number | null;
+            /** Target Group */
+            target_group?: {
+                [key: string]: unknown;
+            } | null;
+            /** N Effort Pixels */
+            n_effort_pixels?: number | null;
+            /** N Well Sampled */
+            n_well_sampled?: number | null;
+            /** N Without Presence */
+            n_without_presence?: number | null;
+            /** N Sampled */
+            n_sampled?: number | null;
+            /** N */
+            n?: number | null;
+            /** Threshold */
+            threshold?: number | null;
+            /**
+             * Specificity
+             * @description Share of inferred absences < threshold
+             */
+            specificity?: number | null;
+            /** Mean Suitability */
+            mean_suitability?: number | null;
+            /** Auc Training Presence Vs Inferred */
+            auc_training_presence_vs_inferred?: number | null;
+        };
+        /** IntegratedOut */
+        IntegratedOut: {
+            /** Method */
+            method: string;
+            /** Reference */
+            reference: string;
+            /** Features */
+            features: string;
+            /** L2 Penalty */
+            l2_penalty: number;
+            /** Converged */
+            converged: boolean;
+            /** Iterations */
+            iterations: number;
+            /** Neg Log Likelihood */
+            neg_log_likelihood: number;
+            /** N Presence Only */
+            n_presence_only: number;
+            /** N Quadrature */
+            n_quadrature: number;
+            /** N Pa Present */
+            n_pa_present: number;
+            /** N Pa Absent */
+            n_pa_absent: number;
+            /** Intercept Presence Absence */
+            intercept_presence_absence: number;
+            /** Intercept Presence Only */
+            intercept_presence_only: number;
+            /** Coefficients */
+            coefficients: {
+                [key: string]: number;
+            };
+            /**
+             * Bias Coefficients
+             * @description Estimated observer-bias coefficients (presence-only data only)
+             */
+            bias_coefficients: {
+                [key: string]: number;
+            };
+            /** Prediction */
+            prediction: string;
+            /** Cv Survey Auc */
+            cv_survey_auc: (number | null)[];
+            /** Cv Survey Auc Mean */
+            cv_survey_auc_mean?: number | null;
+            /** Presence Weights Used */
+            presence_weights_used: boolean;
+        };
         /**
          * JobKind
          * @enum {string}
          */
-        JobKind: "pipeline" | "bulletin" | "scenarios" | "validation" | "crosscheck" | "hires" | "evaluation";
+        JobKind: "pipeline" | "bulletin" | "scenarios" | "validation" | "crosscheck" | "hires" | "evaluation" | "benchmark" | "batch" | "target_groups" | "shared_bias";
         /** JobOut */
         JobOut: {
             /**
@@ -1088,6 +2218,11 @@ export interface components {
             effort?: components["schemas"]["RasterLayer"] | null;
             /** @description Evaluation-only reference records (uploads, GBIF absences) */
             reference?: components["schemas"]["VectorLayer"] | null;
+            /**
+             * Products
+             * @description Further map products: binary maps per threshold rule, limiting factor, ensemble agreement, change since the previous version, survey priority
+             */
+            products?: components["schemas"]["RasterLayer"][];
             caveats?: components["schemas"]["LayerCaveats"] | null;
         };
         /** LegendEntry */
@@ -1098,6 +2233,94 @@ export interface components {
             color: string;
             /** Label */
             label: string;
+        };
+        /** LimitingFactorOut */
+        LimitingFactorOut: {
+            /** Rule */
+            rule: string;
+            /** Land */
+            land: components["schemas"]["AreaShareOut"][];
+            /** Candidate */
+            candidate: components["schemas"]["AreaShareOut"][];
+        };
+        /** MeOut */
+        MeOut: {
+            /** User */
+            user: string;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "viewer" | "analyst" | "curator";
+            /**
+             * Auth Mode
+             * @enum {string}
+             */
+            auth_mode: "none" | "header";
+            /**
+             * Permissions
+             * @description What this user may do: run (analyst), curate (confirm native ranges, annotate records)
+             */
+            permissions: {
+                [key: string]: boolean;
+            };
+        };
+        /** ModelCardFact */
+        ModelCardFact: {
+            /** Label */
+            label: string;
+            /** Value */
+            value: string;
+        };
+        /**
+         * ModelCardOut
+         * @description Plain-language summary of one model version; confidence and caveats come first.
+         */
+        ModelCardOut: {
+            /** Taxon Key */
+            taxon_key: number;
+            /** Scientific Name */
+            scientific_name: string;
+            /** Model Version */
+            model_version: number;
+            /** Generated Ts */
+            generated_ts: string;
+            /**
+             * Confidence Label
+             * @enum {string}
+             */
+            confidence_label: "standard" | "lower";
+            /**
+             * Model Type
+             * @enum {string}
+             */
+            model_type: "A" | "B";
+            /** Headline */
+            headline: string;
+            /** Transferability Caveat */
+            transferability_caveat: string;
+            /**
+             * Caveats
+             * @description Shown before anything else, in this order
+             */
+            caveats: string[];
+            /** Sections */
+            sections: components["schemas"]["ModelCardSection"][];
+            /** Citation */
+            citation: string;
+            /** Source */
+            source: string;
+        };
+        /** ModelCardSection */
+        ModelCardSection: {
+            /** Id */
+            id: string;
+            /** Title */
+            title: string;
+            /** Paragraphs */
+            paragraphs: string[];
+            /** Facts */
+            facts?: components["schemas"]["ModelCardFact"][];
         };
         /** ModelSummary */
         ModelSummary: {
@@ -1177,11 +2400,27 @@ export interface components {
             severity_score?: number | null;
             /** Mlflow Run Id */
             mlflow_run_id?: string | null;
+            /**
+             * Algorithm
+             * @default maxent
+             * @enum {string}
+             */
+            algorithm: "maxent" | "ensemble" | "integrated" | "ppm";
+            /**
+             * Threshold Rule
+             * @default 10th percentile training presence
+             */
+            threshold_rule: string;
             reproducibility: components["schemas"]["ReproducibilityInfo"];
             /** Threshold */
             threshold: number;
-            /** Threshold Rule */
-            threshold_rule: string;
+            /**
+             * Thresholds
+             * @description Every threshold rule (empty for older versions)
+             */
+            thresholds?: {
+                [key: string]: components["schemas"]["ThresholdOut"];
+            };
             /** Cv Method */
             cv_method: string;
             /** Predictors */
@@ -1206,6 +2445,14 @@ export interface components {
             };
             /** Crosschecks */
             crosschecks?: components["schemas"]["ClimateCrossCheckOut"][];
+            response_curves?: components["schemas"]["ResponseCurvesOut"] | null;
+            ensemble?: components["schemas"]["EnsembleOut"] | null;
+            integrated?: components["schemas"]["IntegratedOut"] | null;
+            point_process?: components["schemas"]["PointProcessOut"] | null;
+            inferred_absences?: components["schemas"]["InferredAbsencesOut"] | null;
+            /** @description Binary change against the previous version (U6) */
+            change_previous?: components["schemas"]["ChangeSummaryOut"] | null;
+            survey_priority?: components["schemas"]["SurveyPriorityOut"] | null;
             /** @description Absent for versions trained before the effort layer existed */
             sampling_effort?: components["schemas"]["SamplingEffortOut"] | null;
         };
@@ -1256,6 +2503,17 @@ export interface components {
             severity_score?: number | null;
             /** Mlflow Run Id */
             mlflow_run_id?: string | null;
+            /**
+             * Algorithm
+             * @default maxent
+             * @enum {string}
+             */
+            algorithm: "maxent" | "ensemble" | "integrated" | "ppm";
+            /**
+             * Threshold Rule
+             * @default 10th percentile training presence
+             */
+            threshold_rule: string;
             reproducibility: components["schemas"]["ReproducibilityInfo"];
         };
         /** NativeRangeOut */
@@ -1353,6 +2611,8 @@ export interface components {
             quality_flags?: string[] | null;
             /** Quality Tier */
             quality_tier?: ("A" | "B" | "C" | "excluded") | null;
+            /** @description Effective expert annotation (latest per kind), if any */
+            annotation?: components["schemas"]["EffectiveAnnotationOut"] | null;
             /**
              * Ingested Ts
              * Format: date-time
@@ -1382,6 +2642,51 @@ export interface components {
             /** Last Inat Fetch Ts */
             last_inat_fetch_ts?: string | null;
         };
+        /**
+         * OdmapReport
+         * @description ODMAP protocol (Zurell et al. 2020) generated from the version's stored metadata.
+         */
+        OdmapReport: {
+            /** Protocol */
+            protocol: string;
+            /** Taxon Key */
+            taxon_key: number;
+            /** Model Version */
+            model_version: number;
+            /**
+             * Generated Ts
+             * Format: date-time
+             */
+            generated_ts: string;
+            /** Sections */
+            sections: components["schemas"]["OdmapSection"][];
+        };
+        /** OdmapSection */
+        OdmapSection: {
+            /** Section */
+            section: string;
+            /** Entries */
+            entries: {
+                [key: string]: unknown;
+            };
+        };
+        /** OffsetTestOut */
+        OffsetTestOut: {
+            /** Column */
+            column: string;
+            /** Assumed Coefficient */
+            assumed_coefficient: number;
+            /** Free Coefficient */
+            free_coefficient: number;
+            /** Lr Statistic */
+            lr_statistic: number;
+            /** P Value */
+            p_value: number;
+            /** Interpretation */
+            interpretation: string;
+            /** Penalty Note */
+            penalty_note?: string | null;
+        };
         /** OverlapOut */
         OverlapOut: {
             /** N Checked */
@@ -1400,6 +2705,54 @@ export interface components {
             checked_ts: string;
             /** Rule */
             rule: string;
+        };
+        /**
+         * PointProcessOut
+         * @description Point-process model with an effort offset (B8) or a shared bias (B9).
+         */
+        PointProcessOut: {
+            /** Method */
+            method: string;
+            /** Reference */
+            reference: string;
+            /** Features */
+            features: string;
+            /**
+             * Bias Mode
+             * @enum {string}
+             */
+            bias_mode: "offset" | "estimated" | "shared";
+            /** L2 Penalty */
+            l2_penalty: number;
+            /** Converged */
+            converged: boolean;
+            /** Iterations */
+            iterations: number;
+            /** Neg Log Likelihood */
+            neg_log_likelihood: number;
+            /** N Presences */
+            n_presences: number;
+            /** N Quadrature */
+            n_quadrature: number;
+            /** Coefficients */
+            coefficients: {
+                [key: string]: number;
+            };
+            /** Free Bias Coefficients */
+            free_bias_coefficients: {
+                [key: string]: number;
+            };
+            /** Fixed Bias Coefficients */
+            fixed_bias_coefficients: {
+                [key: string]: number;
+            };
+            /** Offset */
+            offset: string;
+            offset_test?: components["schemas"]["OffsetTestOut"] | null;
+            /** Prediction */
+            prediction: string;
+            /** Presence Weights Used */
+            presence_weights_used: boolean;
         };
         /** PredictorAgreementOut */
         PredictorAgreementOut: {
@@ -1421,6 +2774,54 @@ export interface components {
             scale_ratio: number | null;
             /** Units Suspect */
             units_suspect: boolean;
+        };
+        /**
+         * PresenceWeightsInfo
+         * @description Observation weights given to presences (features/sampling_bias.py).
+         */
+        PresenceWeightsInfo: {
+            /**
+             * Method
+             * @enum {string}
+             */
+            method: "none" | "quality_tier" | "density" | "quality_tier_density";
+            /** Tier Weights */
+            tier_weights?: {
+                [key: string]: number;
+            } | null;
+            /** N By Tier */
+            n_by_tier?: {
+                [key: string]: number;
+            } | null;
+            /** Density Neighbors */
+            density_neighbors?: number | null;
+            /** N Presences */
+            n_presences?: number | null;
+            /** Rescaled To Mean */
+            rescaled_to_mean?: number | null;
+            /** Min */
+            min?: number | null;
+            /** Median */
+            median?: number | null;
+            /** Max */
+            max?: number | null;
+        };
+        /** PriorityCellOut */
+        PriorityCellOut: {
+            /** Rank */
+            rank: number;
+            /** Longitude */
+            longitude: number;
+            /** Latitude */
+            latitude: number;
+            /** Priority */
+            priority: number;
+            /** Suitability */
+            suitability: number;
+            /** Effort */
+            effort: number;
+            /** Uncertainty */
+            uncertainty: number;
         };
         /** ProjectionSummaryOut */
         ProjectionSummaryOut: {
@@ -1452,8 +2853,63 @@ export interface components {
             top_limiting_variables: {
                 [key: string]: unknown;
             }[];
+            /** @description Limiting factor per area (Elith et al. 2010); null for older versions */
+            limiting_factor?: components["schemas"]["LimitingFactorOut"] | null;
+            ensemble_agreement?: components["schemas"]["EnsembleAgreementOut"] | null;
             /** @description MESS, exDet, MOP, Shape and AOA verdicts (null for models trained before the advanced diagnostics existed) */
             extrapolation?: components["schemas"]["ExtrapolationSummaryOut"] | null;
+        };
+        /**
+         * PseudoAbsenceInfo
+         * @description Pseudo-absences of the presence–absence ensemble members (Barbet-Massin et al. 2012).
+         */
+        PseudoAbsenceInfo: {
+            /**
+             * Strategy
+             * @enum {string}
+             */
+            strategy: "background" | "disk" | "environmental_profile" | "completeness";
+            /**
+             * Method
+             * @description What was actually drawn (after any fallback)
+             */
+            method: string;
+            /** N */
+            n: number;
+            /** N Requested */
+            n_requested: number;
+            /** Buffer Km */
+            buffer_km: number;
+            /** Seed */
+            seed: number;
+            /** Min Distance Km */
+            min_distance_km?: number | null;
+            /** Fallback Reason */
+            fallback_reason?: string | null;
+            /** Reference */
+            reference?: string | null;
+            /** Envelope */
+            envelope?: string | null;
+            /** Caveat */
+            caveat?: string | null;
+            /** Zone */
+            zone?: string | null;
+            /** Min Records */
+            min_records?: number | null;
+            /** Target Group */
+            target_group?: {
+                [key: string]: unknown;
+            } | null;
+            /** Query */
+            query?: string | null;
+            /** N Effort Pixels */
+            n_effort_pixels?: number | null;
+            /** N Well Sampled */
+            n_well_sampled?: number | null;
+            /** N Without Presence */
+            n_without_presence?: number | null;
+            /** N Sampled */
+            n_sampled?: number | null;
         };
         /** RasterLayer */
         RasterLayer: {
@@ -1489,9 +2945,10 @@ export interface components {
             kind: "gbif_absences" | "upload";
             /**
              * Role
-             * @constant
+             * @description evaluation: independent test data, never trained on. training: its presences join the training set; only its absences evaluate the model
+             * @enum {string}
              */
-            role: "evaluation";
+            role: "evaluation" | "training";
             /** Name */
             name: string;
             /** Citation */
@@ -1542,6 +2999,13 @@ export interface components {
             trained_ts?: string | null;
             /** Evaluated Ts */
             evaluated_ts: string;
+            /**
+             * Records Scored
+             * @description absences: a training dataset, whose presences are not independent
+             * @default all
+             * @enum {string}
+             */
+            records_scored: "all" | "absences";
             /** N Records */
             n_records: number;
             /**
@@ -1598,6 +3062,45 @@ export interface components {
             occurrence_manifest?: components["schemas"]["TrainingSnapshotInfo"] | null;
             /** @description Data-quality tests and exclusions; absent for older versions */
             data_quality?: components["schemas"]["DataQualityOut"] | null;
+            /**
+             * Training Uploads
+             * @description Uploads whose presences joined the training set
+             */
+            training_uploads?: components["schemas"]["TrainingUploadInfo"][];
+            /** @description Presence observation weights; absent for older versions */
+            presence_weights?: components["schemas"]["PresenceWeightsInfo"] | null;
+            /** @description Requested and used algorithm (null: MaxEnt, before the option) */
+            algorithm?: components["schemas"]["AlgorithmInfo"] | null;
+            pseudo_absences?: components["schemas"]["PseudoAbsenceInfo"] | null;
+            /** @description null for versions trained before record annotations existed */
+            annotations?: components["schemas"]["AnnotationsInfo"] | null;
+            /** @description null = global model */
+            study_region?: components["schemas"]["StudyRegionInfo"] | null;
+            /** @description Bias covariate + conditioning; absent for older versions */
+            bias_covariates?: components["schemas"]["BiasCovariatesInfo"] | null;
+            /** @description Thinning method and result; absent for older versions (distance) */
+            thinning?: components["schemas"]["ThinningInfo"] | null;
+        };
+        /** ResponseCurveOut */
+        ResponseCurveOut: {
+            /** Predictor */
+            predictor: string;
+            /** X */
+            x: number[];
+            /** Y */
+            y: number[];
+            /**
+             * Presence Range
+             * @description 5th–95th percentile at presences
+             */
+            presence_range: number[];
+        };
+        /** ResponseCurvesOut */
+        ResponseCurvesOut: {
+            /** Method */
+            method: string;
+            /** Curves */
+            curves: components["schemas"]["ResponseCurveOut"][];
         };
         /** RunRequest */
         RunRequest: {
@@ -1683,6 +3186,11 @@ export interface components {
             diagnostics_land_fraction?: {
                 [key: string]: number;
             } | null;
+            /** @description Present → scenario gain / loss / stable at the model threshold */
+            change?: components["schemas"]["RasterLayer"] | null;
+            change_summary?: components["schemas"]["ChangeSummaryOut"] | null;
+            /** @description Set for multi-GCM ensembles (U7): suitability is the GCM mean, the extrapolation mask flags MESS < 0 under any GCM */
+            gcm_ensemble?: components["schemas"]["GcmEnsembleOut"] | null;
         };
         /** SeverityComponents */
         SeverityComponents: {
@@ -1839,6 +3347,71 @@ export interface components {
              */
             ecological_impact_prior: number;
         };
+        /** SharedBiasOut */
+        SharedBiasOut: {
+            /** Estimate Id */
+            estimate_id: string;
+            /** Created Ts */
+            created_ts: string;
+            /** Target Group */
+            target_group: {
+                [key: string]: unknown;
+            };
+            /**
+             * Coefficients
+             * @description Per raw unit of each bias column
+             */
+            coefficients: {
+                [key: string]: number;
+            };
+            /** Standardised Coefficients */
+            standardised_coefficients: {
+                [key: string]: number;
+            };
+            /** Converged */
+            converged: boolean;
+            /** Iterations */
+            iterations: number;
+            /** Neg Log Likelihood */
+            neg_log_likelihood: number;
+            /** L2 Penalty */
+            l2_penalty: number;
+            /** Species */
+            species: components["schemas"]["SharedBiasSpeciesOut"][];
+            /** Skipped */
+            skipped?: {
+                [key: string]: unknown;
+            }[];
+            /** Columns */
+            columns: string[];
+            /** Static Layers */
+            static_layers?: {
+                [key: string]: unknown;
+            }[];
+            /** Effort Query */
+            effort_query: string;
+            /** Effort Pixel Deg */
+            effort_pixel_deg: number;
+            /** Quadrature */
+            quadrature: string;
+            /** Method */
+            method: string;
+            /** Reference */
+            reference: string;
+            /** Use */
+            use: string;
+        };
+        /** SharedBiasSpeciesOut */
+        SharedBiasSpeciesOut: {
+            /** Taxon Key */
+            taxon_key: number;
+            /** Scientific Name */
+            scientific_name?: string | null;
+            /** N Presences */
+            n_presences: number;
+            /** N Quadrature */
+            n_quadrature: number;
+        };
         /** SpeciesDetail */
         SpeciesDetail: {
             /** Taxon Key */
@@ -1891,6 +3464,94 @@ export interface components {
             sources: components["schemas"]["OccurrenceSources"];
             current_model?: components["schemas"]["ModelSummary"] | null;
             severity_config: components["schemas"]["SeverityConfigModel"];
+            /** @description Regional model area (U2); null = global model */
+            study_region?: components["schemas"]["StudyRegionOut"] | null;
+        };
+        /** SpeciesListEntryOut */
+        SpeciesListEntryOut: {
+            /**
+             * Query
+             * @description As given: a scientific name or a GBIF taxon key
+             */
+            query: string;
+            /**
+             * Taxon Key
+             * @description null: no GBIF backbone match
+             */
+            taxon_key?: number | null;
+            /** Scientific Name */
+            scientific_name?: string | null;
+            /**
+             * Match Type
+             * @description EXACT, FUZZY, HIGHERRANK, KEY or NONE
+             */
+            match_type?: string | null;
+            /** Confidence */
+            confidence?: number | null;
+            /**
+             * Registered
+             * @default false
+             */
+            registered: boolean;
+            /**
+             * Status
+             * @description Registry status of a registered species
+             */
+            status?: string | null;
+            /** Model Version */
+            model_version?: number | null;
+        };
+        /** SpeciesListIn */
+        SpeciesListIn: {
+            /** Name */
+            name: string;
+            /** Description */
+            description?: string | null;
+            /**
+             * Source
+             * @description Citation / URL of the list
+             */
+            source?: string | null;
+            /**
+             * Names
+             * @description Scientific names to resolve
+             */
+            names?: string[];
+            /** Taxon Keys */
+            taxon_keys?: number[];
+        };
+        /** SpeciesListOut */
+        SpeciesListOut: {
+            /** List Id */
+            list_id: string;
+            /** Name */
+            name: string;
+            /** Description */
+            description?: string | null;
+            /** Source */
+            source?: string | null;
+            /** Created By */
+            created_by: string;
+            /**
+             * Created Ts
+             * Format: date-time
+             */
+            created_ts: string;
+            /**
+             * Updated Ts
+             * Format: date-time
+             */
+            updated_ts: string;
+            /** Entries */
+            entries: components["schemas"]["SpeciesListEntryOut"][];
+            /** N Species */
+            n_species: number;
+            /** N Unresolved */
+            n_unresolved: number;
+            /** N Registered */
+            n_registered: number;
+            /** N Trained */
+            n_trained: number;
         };
         /**
          * SpeciesStatus
@@ -1930,6 +3591,173 @@ export interface components {
             severity_score?: number | null;
             /** Model Type */
             model_type?: ("A" | "B") | null;
+        };
+        /** StacAsset */
+        StacAsset: {
+            /** Href */
+            href: string;
+            /** Type */
+            type: string;
+            /** Title */
+            title: string;
+            /** Roles */
+            roles: string[];
+        };
+        /**
+         * StacItem
+         * @description STAC 1.0 Item describing one model version's outputs.
+         */
+        StacItem: {
+            /**
+             * Type
+             * @default Feature
+             * @constant
+             */
+            type: "Feature";
+            /** Stac Version */
+            stac_version: string;
+            /** Stac Extensions */
+            stac_extensions?: string[];
+            /** Id */
+            id: string;
+            /** Bbox */
+            bbox: number[];
+            /** Geometry */
+            geometry: {
+                [key: string]: unknown;
+            };
+            /** Properties */
+            properties: {
+                [key: string]: unknown;
+            };
+            /** Links */
+            links: {
+                [key: string]: unknown;
+            }[];
+            /** Assets */
+            assets: {
+                [key: string]: components["schemas"]["StacAsset"];
+            };
+        };
+        /**
+         * StaticBiasLayerInfo
+         * @description A registered static observer-bias raster used as a covariate (travel time, roads, …).
+         */
+        StaticBiasLayerInfo: {
+            /** Name */
+            name: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "used" | "unavailable";
+            /** Reason */
+            reason?: string | null;
+            /** Covariate */
+            covariate?: string | null;
+            /**
+             * Direction
+             * @description Whether larger values mean more (increasing) or less effort
+             */
+            direction?: ("increasing" | "decreasing") | null;
+            /** Transform */
+            transform?: string | null;
+            /** Condition */
+            condition?: string | null;
+            /** Conditioning Value */
+            conditioning_value?: number | null;
+            /** N Missing Filled */
+            n_missing_filled?: number | null;
+            /** Presence Mean */
+            presence_mean?: number | null;
+            /** Background Mean */
+            background_mean?: number | null;
+            /** Citation */
+            citation?: string | null;
+            /** Sha256 */
+            sha256?: string | null;
+        };
+        /** StudyRegionInfo */
+        StudyRegionInfo: {
+            /** Bbox */
+            bbox: number[];
+            /** Resolution */
+            resolution: string;
+            /** Grid Bbox */
+            grid_bbox: number[];
+            /** N Cells */
+            n_cells: number;
+            /** Cell Deg */
+            cell_deg: number;
+            /**
+             * N Records Outside
+             * @default 0
+             */
+            n_records_outside: number;
+        };
+        /** StudyRegionOut */
+        StudyRegionOut: {
+            /**
+             * Bbox
+             * @description [west, south, east, north] in degrees
+             */
+            bbox: number[];
+            /**
+             * Resolution
+             * @description Registered high-resolution stack (e.g. 30s); null = base grid
+             */
+            resolution?: string | null;
+        };
+        /** StudyRegionUpdate */
+        StudyRegionUpdate: {
+            /**
+             * Bbox
+             * @description [west, south, east, north]; null removes the region (global model)
+             */
+            bbox?: number[] | null;
+            /** Resolution */
+            resolution?: string | null;
+        };
+        /** SurveyPriorityOut */
+        SurveyPriorityOut: {
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "available" | "unavailable";
+            /** Reason */
+            reason?: string | null;
+            /** Formula */
+            formula?: string | null;
+            /** Uncertainty Source */
+            uncertainty_source?: string | null;
+            /** Suitable Area Km2 */
+            suitable_area_km2?: number | null;
+            /** Top Cells */
+            top_cells?: components["schemas"]["PriorityCellOut"][];
+        };
+        /** TargetGroupComparisonOut */
+        TargetGroupComparisonOut: {
+            /** Comparison Id */
+            comparison_id: string;
+            /** Taxon Key */
+            taxon_key: number;
+            /** Created Ts */
+            created_ts: string;
+            /** Bioclim Version */
+            bioclim_version: string;
+            /** Configured Rank */
+            configured_rank: string;
+            /** Options */
+            options: components["schemas"]["TargetGroupOptionOut"][];
+            /** Best By Cv Cbi */
+            best_by_cv_cbi?: string | null;
+            /** Criterion */
+            criterion: string;
+            /** Note */
+            note: string;
+            /** Reference */
+            reference: string;
         };
         /** TargetGroupInfo */
         TargetGroupInfo: {
@@ -1972,6 +3800,48 @@ export interface components {
              * @description Distinct cells in the background sample
              */
             n_background_cells?: number | null;
+            /**
+             * Matched
+             * @description B1: effort restricted to the presences' basis of record and year window
+             */
+            matched?: {
+                [key: string]: unknown;
+            } | null;
+        };
+        /** TargetGroupOptionOut */
+        TargetGroupOptionOut: {
+            /** Option */
+            option: string;
+            /** Rank */
+            rank: string;
+            /** Match */
+            match: boolean;
+            /** Error */
+            error?: string | null;
+            /** Background Method */
+            background_method?: string | null;
+            /** Fallback Reason */
+            fallback_reason?: string | null;
+            /** Target Group Name */
+            target_group_name?: string | null;
+            /** Target Group Taxon Key */
+            target_group_taxon_key?: number | null;
+            /** Target Group Records */
+            target_group_records?: number | null;
+            /** Matched */
+            matched?: {
+                [key: string]: unknown;
+            } | null;
+            /** N Presence */
+            n_presence?: number | null;
+            /** Cv Auc Mean */
+            cv_auc_mean?: number | null;
+            /** Cv Cbi Mean */
+            cv_cbi_mean?: number | null;
+            /** Independent */
+            independent?: {
+                [key: string]: unknown;
+            }[];
         };
         /** TaxonSearchResult */
         TaxonSearchResult: {
@@ -2000,6 +3870,69 @@ export interface components {
              */
             in_registry: boolean;
             status?: components["schemas"]["SpeciesStatus"] | null;
+        };
+        /**
+         * ThinningInfo
+         * @description How presences were thinned (features/thinning.py; B3, B4).
+         */
+        ThinningInfo: {
+            /**
+             * Method
+             * @enum {string}
+             */
+            method: "distance" | "autocorrelation" | "environmental";
+            /** N Before */
+            n_before: number;
+            /** N After */
+            n_after: number;
+            /** Seed */
+            seed: number;
+            /** Distance Km */
+            distance_km?: number | null;
+            /** Reps */
+            reps?: number | null;
+            /** Selected Seed */
+            selected_seed?: number | null;
+            /** N Kept Min */
+            n_kept_min?: number | null;
+            /** N Kept Max */
+            n_kept_max?: number | null;
+            /**
+             * Autocorrelation
+             * @description Variogram ranges per predictor and the clamped distance (B3)
+             */
+            autocorrelation?: {
+                [key: string]: unknown;
+            } | null;
+            /** Fallback Reason */
+            fallback_reason?: string | null;
+            /** Reference */
+            reference?: string | null;
+            /** N Axes */
+            n_axes?: number | null;
+            /** N Bins */
+            n_bins?: number | null;
+            /** Variance Explained */
+            variance_explained?: number[] | null;
+            /** N Occupied Cells */
+            n_occupied_cells?: number | null;
+        };
+        /** ThresholdOut */
+        ThresholdOut: {
+            /** Label */
+            label: string;
+            /** Value */
+            value: number;
+            /**
+             * Sensitivity
+             * @description Share of training presences ≥ threshold
+             */
+            sensitivity: number;
+            /**
+             * Specificity Background
+             * @description Share of background (pseudo-absence) points below the threshold
+             */
+            specificity_background?: number | null;
         };
         /** Timeline */
         Timeline: {
@@ -2039,6 +3972,50 @@ export interface components {
             n_rows: number;
             /** Bytes */
             bytes: number;
+        };
+        /**
+         * TrainingUploadInfo
+         * @description An upload with role "training" whose presences joined this version's training set.
+         */
+        TrainingUploadInfo: {
+            /** Dataset Id */
+            dataset_id: string;
+            /** Name */
+            name: string;
+            /** File Name */
+            file_name?: string | null;
+            /** File Sha256 */
+            file_sha256?: string | null;
+            /** Citation */
+            citation?: string | null;
+            /** N Presences */
+            n_presences: number;
+            /**
+             * N Overlap Excluded
+             * @description Duplicates of a GBIF/iNaturalist record, left out
+             */
+            n_overlap_excluded: number;
+            /**
+             * N Added
+             * @description Presences appended before quality tests and thinning
+             */
+            n_added: number;
+            /**
+             * Used As
+             * @description survey: presence–absence data of an integrated model (presences not added to the presence-only set)
+             * @default presence_only
+             * @enum {string}
+             */
+            used_as: "presence_only" | "survey";
+            /** N Survey Presences */
+            n_survey_presences?: number | null;
+            /** N Survey Absences */
+            n_survey_absences?: number | null;
+            /**
+             * N Absences Not Used
+             * @description Absences: a presence-background model cannot use them (they evaluate it)
+             */
+            n_absences_not_used: number;
         };
         /** TransferabilityResult */
         TransferabilityResult: {
@@ -2236,6 +4213,26 @@ export interface operations {
             };
         };
     };
+    getMe: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MeOut"];
+                };
+            };
+        };
+    };
     searchSpecies: {
         parameters: {
             query: {
@@ -2270,7 +4267,9 @@ export interface operations {
     };
     listSpecies: {
         parameters: {
-            query?: never;
+            query?: {
+                list_id?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -2284,6 +4283,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SpeciesSummary"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -2619,6 +4627,348 @@ export interface operations {
             };
         };
     };
+    updateStudyRegion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                taxon_key: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StudyRegionUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SpeciesDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    listSpeciesLists: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SpeciesListOut"][];
+                };
+            };
+        };
+    };
+    createSpeciesList: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SpeciesListIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SpeciesListOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    getSpeciesList: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                list_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SpeciesListOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    updateSpeciesList: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                list_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SpeciesListIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SpeciesListOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    deleteSpeciesList: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                list_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    runSpeciesList: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                list_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["BatchRunRequest"] | null;
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    getTargetGroupComparison: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                taxon_key: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TargetGroupComparisonOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    runTargetGroupComparison: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                taxon_key: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    getSharedBias: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                taxon_key: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SharedBiasOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    runSharedBias: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                taxon_key: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     listReferenceDatasets: {
         parameters: {
             query?: never;
@@ -2746,6 +5096,264 @@ export interface operations {
             };
         };
     };
+    listAnnotations: {
+        parameters: {
+            query?: {
+                source?: ("GBIF" | "iNaturalist") | null;
+                record_id?: number | null;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                taxon_key: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AnnotationOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    createAnnotation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                taxon_key: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AnnotationIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AnnotationResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    listSpeciesAlerts: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                taxon_key: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AlertOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    listAlerts: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AlertOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    alertFeed: {
+        parameters: {
+            query?: {
+                taxon_key?: number | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/rss+xml": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    listAlertSubscriptions: {
+        parameters: {
+            query?: {
+                taxon_key?: number | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AlertSubscriptionOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    createAlertSubscription: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AlertSubscriptionIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AlertSubscriptionOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    deleteAlertSubscription: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                subscription_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     listModelVersions: {
         parameters: {
             query?: never;
@@ -2809,10 +5417,274 @@ export interface operations {
             };
         };
     };
+    listExports: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                taxon_key: number;
+                model_version: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExportIndex"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    downloadExportRaster: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                taxon_key: number;
+                model_version: number;
+                layer: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/tiff": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    downloadExportGeoPackage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                taxon_key: number;
+                model_version: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/geopackage+sqlite3": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    getOdmap: {
+        parameters: {
+            query?: {
+                format?: "json" | "md";
+            };
+            header?: never;
+            path: {
+                taxon_key: number;
+                model_version: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OdmapReport"];
+                    "text/markdown": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    getModelCard: {
+        parameters: {
+            query?: {
+                format?: "json" | "md";
+            };
+            header?: never;
+            path: {
+                taxon_key: number;
+                model_version: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelCardOut"];
+                    "text/markdown": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    getStacItem: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                taxon_key: number;
+                model_version: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StacItem"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    getCitationBundle: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                taxon_key: number;
+                model_version: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/plain": string;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    downloadExportBundle: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                taxon_key: number;
+                model_version: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/zip": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     getLayers: {
         parameters: {
             query?: {
                 model_version?: number | null;
+                threshold?: number | null;
             };
             header?: never;
             path: {
@@ -3070,6 +5942,59 @@ export interface operations {
         requestBody?: {
             content: {
                 "application/json": components["schemas"]["ValidationRunRequest"] | null;
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    getVirtualSpeciesBenchmark: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BenchmarkReport"];
+                };
+            };
+        };
+    };
+    runVirtualSpeciesBenchmark: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BenchmarkRequest"];
             };
         };
         responses: {

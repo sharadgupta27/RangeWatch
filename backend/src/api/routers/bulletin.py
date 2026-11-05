@@ -7,6 +7,7 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import FileResponse
 
+from src.api.auth import Analyst
 from src.api.converters import job_out
 from src.api.deps import JobQueue, artifacts_dep, queue_dep, repository_dep
 from src.api.schemas import BulletinRequest, BulletinStatus, JobOut
@@ -30,7 +31,11 @@ def _resolve_version(repo: Repository, taxon_key: int, model_version: int | None
 
 
 @router.post(
-    "", response_model=JobOut, status_code=status.HTTP_202_ACCEPTED, operation_id="generateBulletin"
+    "",
+    response_model=JobOut,
+    status_code=status.HTTP_202_ACCEPTED,
+    operation_id="generateBulletin",
+    dependencies=[Analyst],
 )
 def generate(
     taxon_key: int,

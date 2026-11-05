@@ -7,6 +7,8 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { mapActions } from '@/store/mapStore'
 
+const pct = (v: number) => `${(v * 100).toFixed(1)}%`
+
 /** CMIP6 "what-if" projections of the current model (no retraining), each with its own MESS. */
 export function ScenariosCard({
   taxonKey,
@@ -21,6 +23,7 @@ export function ScenariosCard({
   const available = layers.scenarios_available ?? []
   const projected = new Map((layers.scenarios ?? []).map((s) => [s.name, s]))
   const missing = available.filter((n) => !projected.get(n)?.extrapolation)
+  const ensembles = (layers.scenarios ?? []).filter((s) => s.gcm_ensemble)
 
   return (
     <Card>
@@ -64,6 +67,30 @@ export function ScenariosCard({
               )
             })}
           </ul>
+        )}
+        {ensembles.length > 0 && (
+          <div className="space-y-1.5 border-t pt-3 text-xs">
+            <div className="font-medium">Multi-GCM ensembles</div>
+            {ensembles.map((s) => {
+              const e = s.gcm_ensemble!
+              return (
+                <div key={s.id} className="space-y-0.5">
+                  <button
+                    type="button"
+                    className="text-left font-mono hover:text-primary"
+                    onClick={() => mapActions.setProjection(s.id as `scenario:${string}`)}
+                  >
+                    {s.label}
+                  </button>
+                  <div className="text-muted-foreground">
+                    Suitable under all GCMs {pct(e.suitable_all_gcms_land_fraction)} of land · some
+                    but not all {pct(e.gcm_disagreement_land_fraction)} · extrapolated under any GCM{' '}
+                    {pct(e.extrapolated_any_gcm_land_fraction)}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
         )}
         {missing.length > 0 && (
           <Button size="sm" onClick={() => project.mutate()} disabled={project.isPending || jobActive}>

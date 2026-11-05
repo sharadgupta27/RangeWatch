@@ -8,7 +8,7 @@ so a small haversine thinning routine is provided here.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 import numpy as np
@@ -90,9 +90,11 @@ def sample_buffered_background(
     seed: int,
     bands: Sequence[str],
     max_rounds: int = 50,
+    region: shapely.Geometry | None = None,
 ) -> BackgroundSample:
-    """Uniform (area-corrected) random background inside a buffer around presences, on land."""
-    region = buffer_region(presence_lon, presence_lat, buffer_km)
+    """Uniform (area-corrected) random background inside a buffer around presences, on land.
+    `region` overrides the buffer (e.g. the buffer clipped to a regional study area)."""
+    region = region if region is not None else buffer_region(presence_lon, presence_lat, buffer_km)
     shapely.prepare(region)
     minx, miny, maxx, maxy = region.bounds
     rng = np.random.default_rng(seed)
@@ -185,3 +187,186 @@ def sample_target_group_background(
         seed,
         n_cells=len(np.unique(take[valid])),
     )
+
+
+# ---------------------------------------------------------------------------
+# Pseudo-absences for presence–absence algorithms (§3.3; Barbet-Massin et al. 2012)
+# ---------------------------------------------------------------------------
+# background: the MaxEnt background reused · disk: uniform in the buffer, at least
+# `min_distance_km` from any presence · environmental_profile: outside the presences' climatic
+# envelope (elapid.NicheEnvelopeModel, 2.5–97.5 percentiles of every predictor; Senay et al.
+# 2013) · completeness: well-surveyed cells (target-group records ≥ `min_records`) without
+# a presence nearby — inferred absences (Lobo et al. 2018), see `sample_completeness_absences`.
+PSEUDO_ABSENCE_STRATEGIES = ("background", "disk", "environmental_profile", "completeness")
+
+
+def distance_to_nearest_km(
+    lon: Sequence[float], lat: Sequence[float], ref_lon: Sequence[float], ref_lat: Sequence[float]
+) -> np.ndarray:
+    """Great-circle distance from each point to the nearest reference point."""
+    pts = np.deg2rad(np.column_stack([np.asarray(lat, "float64"), np.asarray(lon, "float64")]))
+    ref = np.deg2rad(
+        np.column_stack([np.asarray(ref_lat, "float64"), np.asarray(ref_lon, "float64")])
+    )
+    if len(pts) == 0:
+        return np.zeros(0)
+    if len(ref) == 0:
+        return np.full(len(pts), np.inf)
+    d, _ = BallTree(ref, metric="haversine").query(pts, k=1)
+    return d[:, 0] * EARTH_RADIUS_KM
+
+
+def _filtered_buffer_sample(
+    presence_lon: Sequence[float],
+    presence_lat: Sequence[float],
+    stack: BioclimStack,
+    n: int,
+    buffer_km: float,
+    seed: int,
+    bands: Sequence[str],
+    keep: Callable[[np.ndarray, np.ndarray, pd.DataFrame], np.ndarray],
+    method: str,
+    region: shapely.Geometry | None,
+    max_rounds: int = 8,
+) -> BackgroundSample:
+    lon_parts: list[np.ndarray] = []
+    lat_parts: list[np.ndarray] = []
+    feat_parts: list[pd.DataFrame] = []
+    have = 0
+    for r in range(max_rounds):
+        cand = sample_buffered_background(
+            presence_lon,
+            presence_lat,
+            stack,
+            max(2 * n, 2000),
+            buffer_km,
+            seed + r,
+            bands,
+            region=region,
+        )
+        ok = keep(cand.lon, cand.lat, cand.features)
+        lon_parts.append(cand.lon[ok])
+        lat_parts.append(cand.lat[ok])
+        feat_parts.append(cand.features[ok])
+        have += int(ok.sum())
+        if have >= n:
+            break
+    if have == 0:
+        raise ValueError(f"No pseudo-absence candidates left for {method}")
+    return BackgroundSample(
+        np.concatenate(lon_parts)[:n],
+        np.concatenate(lat_parts)[:n],
+        pd.concat(feat_parts, ignore_index=True).iloc[:n].reset_index(drop=True),
+        method,
+        seed,
+    )
+
+
+def sample_disk_pseudo_absences(
+    presence_lon: Sequence[float],
+    presence_lat: Sequence[float],
+    stack: BioclimStack,
+    n: int,
+    buffer_km: float,
+    min_distance_km: float,
+    seed: int,
+    bands: Sequence[str],
+    region: shapely.Geometry | None = None,
+) -> BackgroundSample:
+    """Uniform in the accessible area (buffer) but at least `min_distance_km` from every
+    presence, so pseudo-absences do not fall in occupied habitat."""
+    return _filtered_buffer_sample(
+        presence_lon,
+        presence_lat,
+        stack,
+        n,
+        buffer_km,
+        seed,
+        bands,
+        lambda lo, la, _: distance_to_nearest_km(lo, la, presence_lon, presence_lat)
+        >= min_distance_km,
+        f"disk_{int(min_distance_km)}-{int(buffer_km)}km",
+        region,
+    )
+
+
+def sample_profile_pseudo_absences(
+    presence_lon: Sequence[float],
+    presence_lat: Sequence[float],
+    presence_x: pd.DataFrame,
+    stack: BioclimStack,
+    n: int,
+    buffer_km: float,
+    seed: int,
+    bands: Sequence[str],
+    percentile_range: tuple[float, float] = (2.5, 97.5),
+    region: shapely.Geometry | None = None,
+) -> BackgroundSample:
+    """Environmental profiling: candidates inside the presences' climatic envelope (every
+    predictor within its presence percentile range) are dropped. Can inflate accuracy."""
+    import elapid
+
+    env = elapid.NicheEnvelopeModel(percentile_range=percentile_range, overlay="intersection")
+    x = presence_x[list(bands)]
+    env.fit(x, np.ones(len(x)))
+    return _filtered_buffer_sample(
+        presence_lon,
+        presence_lat,
+        stack,
+        n,
+        buffer_km,
+        seed,
+        bands,
+        lambda lo, la, feats: np.asarray(env.predict(feats[list(bands)])).ravel() < 0.5,
+        "environmental_profile",
+        region,
+    )
+
+
+def sample_completeness_absences(
+    effort_lon: Sequence[float],
+    effort_lat: Sequence[float],
+    effort_count: Sequence[float],
+    presence_lon: Sequence[float],
+    presence_lat: Sequence[float],
+    stack: BioclimStack,
+    n: int,
+    seed: int,
+    bands: Sequence[str],
+    min_records: float,
+    min_distance_km: float,
+    region: shapely.Geometry | None = None,
+) -> tuple[BackgroundSample, dict[str, int]]:
+    """Inferred absences: effort pixels where the target group has ≥ `min_records` GBIF
+    records (a completeness proxy: the GBIF map API gives record counts, not species lists)
+    but no presence of the species lies within `min_distance_km`. Assumes detectability like
+    the target group's; weaker than surveyed absences, stronger than random background."""
+    lon = np.asarray(effort_lon, dtype="float64")
+    lat = np.asarray(effort_lat, dtype="float64")
+    cnt = np.asarray(effort_count, dtype="float64")
+    counts = {"n_effort_pixels": len(lon)}
+    if region is not None and len(lon):
+        inside = shapely.contains_xy(region, lon, lat)
+        lon, lat, cnt = lon[inside], lat[inside], cnt[inside]
+    well = cnt >= min_records
+    counts["n_well_sampled"] = int(well.sum())
+    lon, lat = lon[well], lat[well]
+    far = distance_to_nearest_km(lon, lat, presence_lon, presence_lat) >= min_distance_km
+    lon, lat = lon[far], lat[far]
+    counts["n_without_presence"] = len(lon)
+    idx = cell_dedupe(lon, lat, stack.transform) if len(lon) else np.array([], dtype=int)
+    lon, lat = lon[idx], lat[idx]
+    rng = np.random.default_rng(seed)
+    take = rng.choice(len(lon), size=min(n, len(lon)), replace=False) if len(lon) else []
+    feats = stack.sample(lon[take], lat[take], bands)
+    valid = ~feats.isna().any(axis=1).to_numpy()
+    counts["n_sampled"] = int(valid.sum())
+    sample = BackgroundSample(
+        lon[take][valid],
+        lat[take][valid],
+        feats[valid].reset_index(drop=True),
+        f"completeness_{int(min_records)}rec",
+        seed,
+        n_cells=int(valid.sum()),
+    )
+    return sample, counts

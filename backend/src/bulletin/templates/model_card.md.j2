@@ -1,0 +1,34 @@
+# Model card — *{{ card.scientific_name }}*, version {{ card.model_version }}
+
+**{{ card.headline }}**
+
+> **Confidence: {{ card.confidence_label }}.** {{ card.transferability_caveat }}
+
+**Before you use this map:**
+
+{% for c in card.caveats[1:] %}
+- {{ c }}
+{% endfor %}
+{% for s in card.sections %}
+
+## {{ s.title }}
+
+{% for p in s.paragraphs %}
+{{ p }}
+
+{% endfor %}
+{% if s.facts %}
+| | |
+|---|---|
+{% for f in s.facts %}
+| {{ f.label }} | {{ f.value }} |
+{% endfor %}
+{% endif %}
+{% endfor %}
+
+## How to cite
+
+{{ card.citation }}
+
+---
+*{{ card.source }} Generated {{ card.generated_ts }}.*

@@ -548,3 +548,31 @@ def test_dataset_evaluations_are_listed_per_model_version(client, trained):
     assert ev["metrics"]["n_presence"] == 25 and ev["model_type"] == "B"
     assert ds["overlap"]["n_checked"] == 25
     client.delete(f"/species/{TAXON_KEY}/datasets/{dataset_id}")
+
+
+def test_training_upload_flags_a_retrain_and_removal_does_too(client, trained):
+    _, repo, _ = trained
+    before = repo.get_species(TAXON_KEY)
+    csv = "lon,lat\n" + "\n".join(f"{5 + i * 0.4},{42 + (i % 6)}" for i in range(10))
+    res = client.post(
+        f"/species/{TAXON_KEY}/datasets",
+        data={"name": "Extra presences", "role": "training"},
+        files={"file": ("extra.csv", csv, "text/csv")},
+    )
+    assert res.status_code == 201, res.text
+    ds = res.json()["dataset"]
+    assert ds["role"] == "training"
+    sp = repo.get_species(TAXON_KEY)
+    assert sp.retrain_needed and sp.status == "retrain_pending"
+
+    repo.update_species(TAXON_KEY, retrain_needed=False, status=before.status)
+    assert client.delete(f"/species/{TAXON_KEY}/datasets/{ds['dataset_id']}").status_code == 204
+    assert repo.get_species(TAXON_KEY).retrain_needed
+    repo.update_species(TAXON_KEY, retrain_needed=before.retrain_needed, status=before.status)
+
+    bad = client.post(
+        f"/species/{TAXON_KEY}/datasets",
+        data={"name": "x", "role": "absence"},
+        files={"file": ("extra.csv", csv, "text/csv")},
+    )
+    assert bad.status_code == 422

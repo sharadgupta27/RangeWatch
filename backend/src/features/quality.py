@@ -3,13 +3,16 @@
 The tests follow CoordinateCleaner (Zizka et al. 2019) where it has a counterpart:
 capitals, country/province centroids, biodiversity institutions, GBIF headquarters, equal
 coordinates. They are complemented by GBIF's own interpretation issue flags, a
-coordinate-precision test scaled to the model grid, a date test against the climate baseline
-and two outlier tests (environmental and spatial).
+coordinate-precision test scaled to the model grid, a date test against the climate baseline,
+two outlier tests (environmental and spatial), cultivation tests (locality / habitat text and
+nearness to a botanical garden), an identification-support test for iNaturalist observations
+and a duplicate-specimen test.
 
 Two kinds of test:
 
-* **error** tests mark records whose location is very likely wrong. Records they flag are
-  excluded from training by default (`QualityConfig.exclude`).
+* **error** tests mark records that should not enter training: the location is very likely
+  wrong, or the record duplicates another one. Records they flag are excluded from training
+  by default (`QualityConfig.exclude`).
 * **warning** tests mark records worth a look. They are reported and lower the record's
   quality tier but are never excluded by default: for an invading species an isolated or
   climatically unusual record is often the invasion front, not an error.
@@ -23,6 +26,7 @@ configuration and the reference data version the tests used.
 from __future__ import annotations
 
 import math
+import re
 from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -66,6 +70,20 @@ GBIF_COORDINATE_CORRECTED = frozenset(
 )
 GBIF_TAXON_MATCH = frozenset({"TAXON_MATCH_FUZZY", "TAXON_MATCH_HIGHERRANK"})
 GBIF_DATE_ISSUES = frozenset({"RECORDED_DATE_INVALID", "RECORDED_DATE_UNLIKELY"})
+
+# Locality / habitat / remarks wording of cultivated or planted individuals (English plus the
+# commonest herbarium languages). "Garden escape" and similar still match: they are flagged for
+# review, not excluded. "Park" alone is left out (national / nature parks are wild sites).
+CULTIVATION_PATTERN = re.compile(
+    r"\b(?:cultivated|cultivad[ao]s?|cultiv[ée]e?s?|kultiviert|planted|plantation|ornamental|"
+    r"gardens?|jard[ií]n(?:es)?|jardim|giardino|garten|nursery|arboretum|botanic\w*|hortus|"
+    r"(?:city|urban|public|municipal) park)\b|\b(?:cult|hort)\.",
+    re.IGNORECASE,
+)
+DETAIL_TEXT_FIELDS = ("locality", "habitat", "remarks")
+GRSCICOLL_GARDEN_TYPE = "BOTANICAL_GARDEN"
+# Record numbers meaning "no number" (sine numero), which cannot identify duplicates.
+_NO_NUMBER = {"", "sn", "none", "na", "nan", "unknown", "0"}
 
 Severity = Literal["error", "warning"]
 
@@ -157,6 +175,15 @@ TESTS: dict[str, QualityTest] = {
             "CoordinateCleaner cd_round (record-level analogue)",
         ),
         QualityTest(
+            "duplicate_specimen",
+            "Duplicate specimen",
+            "error",
+            "Same collector, collector number and date as another specimen (herbarium "
+            "duplicates sent to several institutions). One record of each set is kept; the "
+            "others would inflate local density.",
+            "CoordinateCleaner cc_dupl (collector / number / date variant)",
+        ),
+        QualityTest(
             "gbif_coordinate_corrected",
             "Coordinates corrected by GBIF",
             "warning",
@@ -183,6 +210,31 @@ TESTS: dict[str, QualityTest] = {
             "warning",
             "Recorded before the climate baseline period starts, so the climate at the time "
             "may differ from the predictors.",
+        ),
+        QualityTest(
+            "cultivation_text",
+            "Cultivation wording",
+            "warning",
+            "Locality, habitat or remarks mention a garden, planting, nursery or cultivation "
+            "('cult.', 'planted', 'botanic garden'...). Flagged for review only: "
+            "'garden escape' records are wild.",
+        ),
+        QualityTest(
+            "near_botanical_garden",
+            "Near a botanical garden",
+            "warning",
+            "Within the botanical-garden buffer of a GRSciColl institution of type botanical "
+            "garden: possibly a cultivated plant (or an escape from the collection).",
+            "GBIF GRSciColl (type BOTANICAL_GARDEN)",
+        ),
+        QualityTest(
+            "weak_identification",
+            "Weak identification",
+            "warning",
+            "iNaturalist observation whose identification is contested (at least one "
+            "disagreeing identification), or whose observer took a computer-vision suggestion "
+            "confirmed by no more than one other person.",
+            "iNaturalist identification counts",
         ),
         QualityTest(
             "environmental_outlier",
@@ -215,6 +267,9 @@ class QualityConfig:
     capital_vicinity_m: float = 10_000.0
     centroid_buffer_m: float = 1_000.0
     institution_buffer_m: float = 100.0
+    botanical_garden_buffer_m: float = 1_000.0
+    # Agreements include the observer's own identification (research grade needs two).
+    weak_id_max_agreements: int = 2
     gbif_hq_buffer_m: float = 1_000.0
     # First year of the climate baseline (WorldClim v2.1: 1970–2000).
     baseline_start_year: int = 1970
@@ -236,6 +291,8 @@ class QualityConfig:
             "capital_vicinity_m": self.capital_vicinity_m,
             "centroid_buffer_m": self.centroid_buffer_m,
             "institution_buffer_m": self.institution_buffer_m,
+            "botanical_garden_buffer_m": self.botanical_garden_buffer_m,
+            "weak_id_max_agreements": self.weak_id_max_agreements,
             "gbif_hq_buffer_m": self.gbif_hq_buffer_m,
             "baseline_start_year": self.baseline_start_year,
             "outlier_probability": self.outlier_probability,
@@ -308,6 +365,50 @@ def _issue_sets(values: Sequence[Any]) -> list[set[str] | None]:
     return out
 
 
+def _record_details(occ: pd.DataFrame) -> list[dict[str, Any] | None]:
+    if "details" not in occ:
+        return [None] * len(occ)
+    return [v if isinstance(v, dict) else None for v in occ["details"].tolist()]
+
+
+def _norm_key(value: Any) -> str:
+    return re.sub(r"[^0-9a-z]", "", str(value).lower())
+
+
+def _duplicate_specimens(
+    occ: pd.DataFrame, rec_details: list[dict[str, Any] | None], basis: np.ndarray
+) -> np.ndarray:
+    """All but the first (by source, record id) of each set of specimens sharing collector,
+    collector number and event date."""
+    n = len(occ)
+    dates = (
+        occ["event_date"].astype("string").fillna("").to_numpy()
+        if "event_date" in occ
+        else np.full(n, "")
+    )
+    keys: list[tuple[str, str, str] | None] = []
+    for i, d in enumerate(rec_details):
+        d = d or {}
+        number = _norm_key(d.get("record_number", ""))
+        collector = _norm_key(d.get("recorded_by", ""))
+        usable = basis[i] in SPECIMEN_BASIS and collector and number not in _NO_NUMBER
+        keys.append((collector, number, str(dates[i])) if usable and dates[i] else None)
+    sources = occ["source"].astype(str).tolist() if "source" in occ else [""] * n
+    ids = pd.to_numeric(occ["record_id"], errors="coerce").tolist() if "record_id" in occ else []
+    order = sorted(range(n), key=lambda i: (sources[i], ids[i] if ids else i))
+    seen: set[tuple[str, str, str]] = set()
+    out = np.zeros(n, dtype=bool)
+    for i in order:
+        k = keys[i]
+        if k is None:
+            continue
+        if k in seen:
+            out[i] = True
+        else:
+            seen.add(k)
+    return out
+
+
 # ------------------------------------------------------------------- tests
 def assess_quality(
     occ: pd.DataFrame,
@@ -318,7 +419,7 @@ def assess_quality(
     seed: int = 0,
 ) -> QualityResult:
     """Run every test on `occ` (needs longitude/latitude; uses event_date, basis_of_record,
-    coordinate_uncertainty_m, issues and the predictor columns when present).
+    coordinate_uncertainty_m, issues, details and the predictor columns when present).
 
     Tests whose inputs are missing (no reference table installed, too few records, issues
     not recorded) are reported as skipped with the reason, never silently passed.
@@ -380,6 +481,82 @@ def assess_quality(
     # The vicinity ring excludes the capital point itself (already an error there).
     flagged["near_capital"] &= ~flagged["capital"]
 
+    basis = (
+        occ["basis_of_record"].fillna("").astype(str).str.upper().to_numpy()
+        if "basis_of_record" in occ
+        else np.full(n, "")
+    )
+    source = occ["source"].astype(str).to_numpy() if "source" in occ else np.full(n, "GBIF")
+    rec_details = _record_details(occ)
+    has_details = np.array([d is not None for d in rec_details], dtype=bool)
+    details["n_details_unknown"] = int((~has_details).sum())
+    no_details = (
+        "record details (locality, collector, identifications) not recorded for these "
+        "records yet (re-sync)"
+    )
+
+    # Cultivated / planted individuals and herbarium duplicates.
+    if not has_details.any():
+        skip("cultivation_text", no_details)
+        skip("duplicate_specimen", no_details)
+    else:
+        run(
+            "cultivation_text",
+            np.array(
+                [
+                    d is not None
+                    and any(
+                        CULTIVATION_PATTERN.search(str(d.get(f) or "")) for f in DETAIL_TEXT_FIELDS
+                    )
+                    for d in rec_details
+                ],
+                dtype=bool,
+            ),
+        )
+        run("duplicate_specimen", _duplicate_specimens(occ, rec_details, basis))
+
+    inst = refs.table("institutions") if refs is not None else None
+    gardens = (
+        inst[inst["types"].fillna("").astype(str).str.upper().str.contains(GRSCICOLL_GARDEN_TYPE)]
+        if inst is not None and not inst.empty and "types" in inst
+        else None
+    )
+    if gardens is None or gardens.empty:
+        skip(
+            "near_botanical_garden",
+            "no botanical gardens in reference table 'institutions' "
+            "(python -m src.features.quality_refs build)",
+        )
+    else:
+        near = _within(
+            lon,
+            lat,
+            gardens["longitude"].to_numpy(float),
+            gardens["latitude"].to_numpy(float),
+            cfg.botanical_garden_buffer_m,
+        )
+        # Inside the (much smaller) institution buffer it is already an error.
+        run("near_botanical_garden", near & ~flagged["institution"])
+
+    # Identification support of iNaturalist observations.
+    inat = source == "iNaturalist"
+    inat_known = inat & np.array(
+        [d is not None and "id_agreements" in d for d in rec_details], dtype=bool
+    )
+    if not inat.any():
+        skip("weak_identification", "no iNaturalist observations")
+    elif not inat_known.any():
+        skip("weak_identification", "identification counts not recorded yet (re-sync)")
+    else:
+        weak = np.zeros(n, dtype=bool)
+        for i in np.flatnonzero(inat_known):
+            d = rec_details[i] or {}
+            disagreements = int(d.get("id_disagreements") or 0)
+            agreements = int(d.get("id_agreements") or 0)
+            vision = bool(d.get("observer_id_from_vision"))
+            weak[i] = disagreements > 0 or (vision and agreements <= cfg.weak_id_max_agreements)
+        run("weak_identification", weak)
+
     # GBIF issue flags (iNaturalist records carry none; NULL = ingested before they were kept)
     issue_sets = _issue_sets(occ["issues"].tolist()) if "issues" in occ else [None] * n
     gbif = (occ["source"] == "GBIF").to_numpy() if "source" in occ else np.ones(n, dtype=bool)
@@ -433,11 +610,6 @@ def assess_quality(
     flags = [[t for t in order if flagged[t][i]] for i in range(n)]
     excluded = np.array([any(f in cfg.exclude for f in fl) for fl in flags], dtype=bool)
     warned = np.array([any(f not in cfg.exclude for f in fl) for fl in flags], dtype=bool)
-    basis = (
-        occ["basis_of_record"].fillna("").astype(str).str.upper().to_numpy()
-        if "basis_of_record" in occ
-        else np.full(n, "")
-    )
     tier = np.where(
         excluded,
         "excluded",

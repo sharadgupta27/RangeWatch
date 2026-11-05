@@ -62,6 +62,7 @@ const quality: DataQualityOut = {
   ],
   issue_counts: {},
   n_issues_unknown: 0,
+  n_details_unknown: 0,
   n_undated: 0,
   grid_cell_m: 18_553,
 }
@@ -123,11 +124,20 @@ describe('independent evaluation table', () => {
       created_ts: '2026-10-01T00:00:00Z',
       updated_ts: '2026-10-01T00:00:00Z',
       evaluations: [
-        { model_version: 2, model_type: 'B', evaluated_ts: 'x', n_records: 45, n_excluded_overlap: 3, metrics: metrics() },
+        {
+          model_version: 2,
+          model_type: 'B',
+          evaluated_ts: 'x',
+          records_scored: 'all',
+          n_records: 45,
+          n_excluded_overlap: 3,
+          metrics: metrics(),
+        },
         {
           model_version: 1,
           model_type: 'A',
           evaluated_ts: 'x',
+          records_scored: 'all',
           n_records: 45,
           n_excluded_overlap: 3,
           metrics: { ...metrics(), sensitivity: 0.5 },
@@ -152,13 +162,22 @@ describe('dataset upload', () => {
     expect(datasetUploadSchema.safeParse({ ...EMPTY_UPLOAD, file: bad, name: 'x' }).success).toBe(false)
     const ok = new File(['lon,lat\n1,2'], 'survey.csv')
     expect(datasetUploadSchema.safeParse({ ...EMPTY_UPLOAD, file: ok, name: 'Survey' }).success).toBe(true)
+    expect(EMPTY_UPLOAD.role).toBe('evaluation')
+    const role = { ...EMPTY_UPLOAD, file: ok, name: 'Survey', role: 'absence' }
+    expect(datasetUploadSchema.safeParse(role).success).toBe(false)
   })
 
   it('sends the file plus only the filled-in fields as multipart', () => {
     const file = new File(['lon,lat\n1,2'], 'survey.csv')
-    const fd = datasetFormData(file, { name: ' Survey ', citation: '', latitude_column: 'Y' })
+    const fd = datasetFormData(file, {
+      name: ' Survey ',
+      role: 'training',
+      citation: '',
+      latitude_column: 'Y',
+    })
     expect((fd.get('file') as File).name).toBe('survey.csv')
     expect(fd.get('name')).toBe('Survey')
+    expect(fd.get('role')).toBe('training')
     expect(fd.get('latitude_column')).toBe('Y')
     expect(fd.has('citation')).toBe(false)
   })

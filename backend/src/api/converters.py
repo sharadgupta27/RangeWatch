@@ -102,6 +102,8 @@ def _version_fields(mv: ModelVersionRecord) -> dict[str, Any]:
         "beta_multiplier": m["beta_multiplier"],
         "severity_score": (mv.severity or {}).get("score_0_100"),
         "mlflow_run_id": mv.mlflow_run_id,
+        "algorithm": m.get("algorithm", "maxent"),
+        "threshold_rule": m.get("threshold_rule", "10th percentile training presence"),
         "reproducibility": m["reproducibility"],
     }
 
@@ -116,7 +118,7 @@ def model_version_detail(mv: ModelVersionRecord) -> ModelVersionDetail:
         {
             **_version_fields(mv),
             "threshold": m["threshold"],
-            "threshold_rule": m["threshold_rule"],
+            "thresholds": m.get("thresholds") or {},
             "cv_method": m["cv_method"],
             "predictors": m["predictors"],
             "variable_importance": m["variable_importance"],
@@ -128,6 +130,13 @@ def model_version_detail(mv: ModelVersionRecord) -> ModelVersionDetail:
             "n_records_by_effective_label": m["n_records_by_effective_label"],
             "crosschecks": list(mv.artifacts.get("crosschecks", {}).values()),
             "sampling_effort": m.get("sampling_effort"),
+            "response_curves": m.get("response_curves"),
+            "ensemble": m.get("ensemble"),
+            "integrated": m.get("integrated"),
+            "point_process": m.get("point_process"),
+            "inferred_absences": m.get("inferred_absences"),
+            "change_previous": m.get("change_previous"),
+            "survey_priority": m.get("survey_priority"),
         }
     )
 

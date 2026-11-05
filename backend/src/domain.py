@@ -37,14 +37,32 @@ ZONE_LABELS: dict[int, str] = {
     2: "established outside native range",
     3: "candidate invasion / expansion zone",
 }
+# Binary change maps (U6): after + 2 × before, each 1 when suitable.
+CHANGE_LABELS: dict[int, str] = {0: "stable unsuitable", 1: "gain", 2: "loss", 3: "stable suitable"}
 
 RangeLabel = Literal["native", "introduced", "unknown"]
 OccurrenceSource = Literal["GBIF", "iNaturalist"]
+# Training rows from an uploaded dataset carry source "upload:<dataset_id>" (never stored in
+# `occurrences`; see the reference datasets below).
+UPLOAD_SOURCE_PREFIX = "upload:"
 ModelType = Literal["A", "B"]
 OccurrenceStatus = Literal["present", "absent"]
-# Reference datasets are never training data: they evaluate models independently.
 ReferenceKind = Literal["gbif_absences", "upload"]
-ReferenceRole = Literal["evaluation"]
+# "evaluation": independent test data, never trained on (GBIF absences are always this).
+# "training": an upload whose presences join the training set (after the same data-quality
+# tests); its absences, which a presence-background model cannot use, still evaluate it.
+ReferenceRole = Literal["evaluation", "training"]
+# Expert annotations of single records (U11), append-only; the latest per record and kind wins:
+#   range_label: override the polygon-derived label (value native | introduced | unknown)
+#   exclude:     "true" = suspicious, left out of training ("false" withdraws it)
+#   cultivated:  "true" = planted / cultivated, left out of training
+#   verified:    "true" = keep despite a data-quality exclusion
+AnnotationKind = Literal["range_label", "exclude", "cultivated", "verified"]
+# Early-detection alerts (U10): new records outside the suitability envelope or far from
+# every known record. B10 classifies each record by the target group's prior effort there.
+AlertKind = Literal["outside_envelope", "outside_known_range"]
+AlertChannel = Literal["webhook", "email"]
+Role = Literal["viewer", "analyst", "curator"]
 
 
 def utcnow() -> datetime:
@@ -79,6 +97,10 @@ class JobKind(StrEnum):
     CROSSCHECK = "crosscheck"
     HIRES = "hires"
     EVALUATION = "evaluation"
+    BENCHMARK = "benchmark"
+    BATCH = "batch"
+    TARGET_GROUPS = "target_groups"
+    SHARED_BIAS = "shared_bias"
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,12 +119,18 @@ class OccurrenceRecord:
     # GBIF interpretation issue flags (e.g. COUNTRY_COORDINATE_MISMATCH). Empty for records
     # without any (and for iNaturalist, which has none); see features/quality.py.
     issues: tuple[str, ...] = ()
+    # Free-text and identification details used by the data-quality tests: GBIF locality,
+    # habitat, occurrenceRemarks, recordedBy, recordNumber, institutionCode; iNaturalist
+    # place_guess, description and identification counts. None = ingested before details
+    # were kept (filled once by the next fetch, like `issues`); {} = none given.
+    details: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class ReferenceRecord:
     """One record of a reference dataset: an explicit GBIF absence or a row of an uploaded
-    survey. Stored apart from `occurrences` and never used for training."""
+    survey. Stored apart from `occurrences` (append-only); only presences of a dataset with
+    role "training" are used for training."""
 
     taxon_key: int
     dataset_id: str
@@ -166,6 +194,9 @@ class SpeciesRecord:
     retrain_needed: bool = False
     severity_config: dict[str, Any] | None = None
     last_error: str | None = None
+    # Regional model (U2): {"bbox": [west, south, east, north], "resolution": "30s" | None}.
+    # None = the global model at the bioclim version's own resolution.
+    study_region: dict[str, Any] | None = None
     created_ts: datetime = field(default_factory=utcnow)
     updated_ts: datetime = field(default_factory=utcnow)
 
@@ -207,3 +238,77 @@ class Job:
     result: dict[str, Any] | None = None
     created_ts: datetime = field(default_factory=utcnow)
     updated_ts: datetime = field(default_factory=utcnow)
+
+
+@dataclass(slots=True)
+class RecordAnnotation:
+    """One expert annotation of one occurrence record (append-only; never edits the record)."""
+
+    taxon_key: int
+    source: OccurrenceSource
+    record_id: int
+    kind: AnnotationKind
+    value: str
+    note: str | None = None
+    author: str = "anonymous"
+    annotation_id: uuid.UUID = field(default_factory=uuid.uuid4)
+    created_ts: datetime = field(default_factory=utcnow)
+
+
+@dataclass(slots=True)
+class Alert:
+    taxon_key: int
+    kind: AlertKind
+    n_records: int
+    # [{source, record_id, longitude, latitude, event_date, suitability?, distance_km?,
+    #   effort_class: expansion | discovery | unknown}]
+    records: list[dict[str, Any]]
+    summary: str
+    model_version: int | None = None
+    # B10 counts: expansion (previously well sampled) / discovery (previously unsampled)
+    effort_classes: dict[str, int] = field(default_factory=dict)
+    # Delivery outcome per subscription (updated after sending)
+    deliveries: list[dict[str, Any]] = field(default_factory=list)
+    alert_id: uuid.UUID = field(default_factory=uuid.uuid4)
+    created_ts: datetime = field(default_factory=utcnow)
+
+
+@dataclass(slots=True)
+class SpeciesListEntry:
+    """One species of a list: as given (name or key) and its GBIF backbone resolution."""
+
+    query: str
+    taxon_key: int | None = None
+    scientific_name: str | None = None
+    match_type: str | None = None  # EXACT / FUZZY / HIGHERRANK / KEY / NONE
+    confidence: int | None = None
+
+
+@dataclass(slots=True)
+class SpeciesList:
+    """A watch list (e.g. the EU list of invasive alien species of concern) for batch runs
+    and registry filtering (U9). Edited in place; it holds no occurrence data."""
+
+    name: str
+    entries: list[SpeciesListEntry] = field(default_factory=list)
+    description: str | None = None
+    source: str | None = None  # citation / URL of the official list
+    created_by: str = "anonymous"
+    list_id: uuid.UUID = field(default_factory=uuid.uuid4)
+    created_ts: datetime = field(default_factory=utcnow)
+    updated_ts: datetime = field(default_factory=utcnow)
+
+    @property
+    def taxon_keys(self) -> list[int]:
+        return [e.taxon_key for e in self.entries if e.taxon_key is not None]
+
+
+@dataclass(slots=True)
+class AlertSubscription:
+    channel: AlertChannel
+    target: str  # webhook URL or e-mail address
+    taxon_key: int | None = None  # None = every species
+    kinds: list[str] = field(default_factory=lambda: ["outside_envelope", "outside_known_range"])
+    created_by: str = "anonymous"
+    subscription_id: uuid.UUID = field(default_factory=uuid.uuid4)
+    created_ts: datetime = field(default_factory=utcnow)

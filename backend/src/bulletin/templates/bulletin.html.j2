@@ -183,7 +183,19 @@
   <p>Presence-background MaxEnt (elapid {{ repro.package_versions.elapid }}) with feature
     classes and regularisation selected from the Wallace/ENMeval default grid by spatially
     block-cross-validated CBI. Occurrences were cleaned, de-duplicated to one per raster cell
-    and distance-thinned ({{ repro.training_config.thin_km }} km);
+    {% set th = repro.thinning %}
+    {% if th and th.method == 'environmental' %}
+    environmentally thinned to one record per cell of a {{ th.n_bins }}-bin grid on the first
+    {{ th.n_axes }} principal axes of the predictors (Varela et al. 2014; {{ th.n_before | num }}
+    → {{ th.n_after | num }} presences);
+    {% elif th and th.method == 'autocorrelation' %}
+    distance-thinned at {{ th.distance_km }} km, the spatial autocorrelation range of the
+    predictors (median variogram range{% if th.autocorrelation %} {{ th.autocorrelation.range_km }} km,
+    clamped to {{ th.autocorrelation.clamped_to_km | join('–') }} km{% endif %}; Valavi et al. 2019){% if th.reps and th.reps > 1 %},
+    best of {{ th.reps }} passes (spThin){% endif %};
+    {% else %}
+    and distance-thinned ({{ th.distance_km if th else repro.training_config.thin_km }} km{% if th and th.reps and th.reps > 1 %}, best of {{ th.reps }} passes (spThin){% endif %});
+    {% endif %}
     {% set bgi = repro.background %}
     {% if bgi and bgi.target_group and not bgi.fallback_reason %}
     background points were drawn from raster cells holding GBIF records of the target group
@@ -200,6 +212,79 @@
     Target-group cells were drawn with probability proportional to
     {{ 'the square root of ' if bgi.target_group.weighting == 'sqrt_record_count' else '' }}their
     record count (bias file).
+    {% endif %}
+    {% set pw = repro.presence_weights %}
+    {% if pw and pw.method != 'none' %}
+    Presences were weighted ({{ pw.method | replace('_', ' ') }}; rescaled to mean 1, range
+    {{ pw.min }}–{{ pw.max }}) so that heavily recorded clusters and lower-quality records count
+    less.
+    {% endif %}
+    {% set bc = repro.bias_covariates %}
+    {% if bc and bc.status == 'used' %}
+    Observer bias was modelled explicitly: target-group GBIF effort ({{ bc.transform }}) was a
+    model covariate, held at its {{ bc.condition }} ({{ bc.conditioning_value }}) for every
+    prediction, so the maps show suitability as if sampled everywhere at that effort
+    (Warton et al. 2013).
+    {% elif bc and bc.status == 'unavailable' %}
+    The requested effort bias covariate was not used ({{ bc.reason }}).
+    {% endif %}
+    {% if bc and bc.static_layers %}
+    {% for s in bc.static_layers if s.status == 'used' %}{% if loop.first %}Static observer-bias layers were model covariates held at their most-sampled end:
+    {% endif %}{{ s.name | replace('_', ' ') }} ({{ s.direction }} effort, {{ s.transform }}, held at {{ s.conditioning_value }}{% if s.citation %}; {{ s.citation }}{% endif %}){% if not loop.last %}; {% else %}.{% endif %}{% endfor %}
+    {% endif %}
+    {% set matched = (bgi.target_group.matched if bgi and bgi.target_group else none) or (bc.target_group.matched if bc and bc.target_group else none) %}
+    {% if matched %}
+    Target-group effort was restricted to the presences' data sources / years
+    ({{ matched.basis_of_record | join(', ') if matched.basis_of_record else 'all sources' }}{% if matched.years %}, {{ matched.years | join('–') }}{% endif %}; Phillips et al. 2009).
+    {% endif %}
+    {% if repro.training_uploads %}
+    Uploaded training data:
+    {% for u in repro.training_uploads %}{% if u.used_as == 'survey' %}{{ u.name }} (presence–absence survey: {{ u.n_survey_presences | num }} presences, {{ u.n_survey_absences | num }} absences){% else %}{{ u.name }} ({{ u.n_added | num }} presences{% if u.n_overlap_excluded %}, {{ u.n_overlap_excluded | num }} duplicates of GBIF/iNaturalist records left out{% endif %}){% endif %}{% if not loop.last %}; {% endif %}{% endfor %}.
+    {% endif %}
+    {% set algo = repro.algorithm %}
+    {% if m.algorithm == 'ensemble' and m.ensemble %}
+    Algorithm: CV-weighted ensemble ({{ m.ensemble.weighting }}) of
+    {% for e in m.ensemble.members %}{{ e.label }}{% if e.included %} (weight {{ e.weight | num(2) }}, CV AUC {{ e.auc_mean | num(2) }}){% else %} (left out){% endif %}{% if not loop.last %}; {% endif %}{% endfor %}.
+    {% set pa = repro.pseudo_absences %}
+    {% if pa %}Presence–absence members used {{ pa.n | num }} pseudo-absences ({{ pa.method }}{% if pa.fallback_reason %}; {{ pa.fallback_reason }}{% endif %}; Barbet-Massin et al. 2012).{% endif %}
+    The ensemble-agreement layer shows where the members disagree.
+    {% elif m.algorithm == 'integrated' and m.integrated %}
+    Algorithm: integrated SDM (experimental) — presence-only records as a Poisson point process
+    and survey records as presence–absence data sharing one climate response
+    ({{ m.integrated.n_pa_present | num }} survey presences, {{ m.integrated.n_pa_absent | num }}
+    survey absences); observer bias estimated{% if m.integrated.bias_coefficients %}
+    (effort coefficient {% for k, v in m.integrated.bias_coefficients.items() %}{{ v | num(2) }}{% endfor %}){% endif %}
+    and dropped for prediction (Fithian et al. 2015; Isaac et al. 2020).
+    {% elif m.algorithm == 'ppm' and m.point_process %}
+    {% set pp = m.point_process %}
+    Algorithm: Poisson point process (experimental) with uniform quadrature and bias mode
+    {{ pp.bias_mode }} — offset {{ pp.offset }}, dropped for prediction (constant effort;
+    Renner et al. 2015{% if pp.bias_mode == 'shared' %}; bias coefficients shared by the target
+    group's tracked species, Fithian et al. 2015{% endif %}).
+    {% if pp.offset_test %}Likelihood-ratio test of the offset coefficient: estimated
+    {{ pp.offset_test.free_coefficient | num(2) }} vs assumed {{ pp.offset_test.assumed_coefficient | num(2) }}
+    (p = {{ pp.offset_test.p_value | num(3) }}): {{ pp.offset_test.interpretation }}.{% endif %}
+    {% endif %}
+    {% if algo and algo.fallback_reason %}Requested algorithm {{ algo.requested }} not used: {{ algo.fallback_reason }}.{% endif %}
+    {% set ann = repro.annotations %}
+    {% if ann and ann.n_records_annotated %}
+    Expert annotations ({{ ann.n_records_annotated | num }} records): {{ ann.n_excluded_by_annotation | num }}
+    left out (suspicious or cultivated), {{ ann.n_kept_verified | num }} kept despite a quality
+    flag, {{ ann.n_label_overrides | num }} range labels overridden.
+    {% endif %}
+    {% if repro.study_region %}
+    Regional model: trained and projected inside {{ repro.study_region.bbox | join(', ') }}
+    (W, S, E, N) at {{ repro.study_region.resolution }}; {{ repro.study_region.n_records_outside | num }}
+    records outside the region were not used.
+    {% endif %}
+    {% if m.thresholds %}
+    Binary maps use the {{ m.threshold_rule }} threshold; alternatives (max TSS, sensitivity =
+    specificity, minimum training presence) are listed with the model version.
+    {% endif %}
+    {% set ia = m.inferred_absences %}
+    {% if ia and ia.status == 'evaluated' %}
+    On {{ ia.n | num }} inferred absences (well-surveyed native-range cells without the species)
+    specificity was {{ ia.specificity | num(2) }}.
     {% endif %}
     Predictors: {{ m.predictors | join(', ') | upper }} (global VIF &lt; 5 screen of
     {{ repro.bioclim_version_used }}, {{ repro.bioclim_source }}). Native-range polygon:

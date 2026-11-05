@@ -6,7 +6,10 @@ feature values for the bioclim version used, and on seeded thinning / background
 Each model version therefore stores, next to `model.pkl`:
 
 - `training_data.parquet` — the exact MaxEnt input: every presence (with its source/record id)
-  and background point, with coordinates and predictor values.
+  and background point, with coordinates and predictor values (plus any bias covariate, and
+  `sample_weight` when presences were weighted; background weight 1). Ensemble versions add
+  their pseudo-absences (role `pseudo_absence`), integrated versions their presence–absence
+  survey records (roles `survey_presence` / `survey_absence`).
 - `occurrence_manifest.parquet` — every valid record considered, with the ingested and the
   effective (polygon-derived) range label; this is what severity/spread and MESS were built on.
 
@@ -28,6 +31,7 @@ import pandas as pd
 TRAINING_DATA_FILE = "training_data.parquet"
 OCCURRENCE_MANIFEST_FILE = "occurrence_manifest.parquet"
 QUALITY_FLAGS_FILE = "quality_flags.parquet"
+ANNOTATIONS_FILE = "annotations.parquet"
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,6 +70,13 @@ def write_quality_snapshot(vdir: Path, flags: pd.DataFrame) -> SnapshotFile:
     return _write(flags, vdir / QUALITY_FLAGS_FILE)
 
 
+def write_annotations_snapshot(vdir: Path, effective: pd.DataFrame) -> SnapshotFile:
+    """`annotations.parquet`: the effective expert annotation of every annotated record at
+    training time (latest per record and kind), i.e. what the training set reflects."""
+    vdir.mkdir(parents=True, exist_ok=True)
+    return _write(effective.reset_index(drop=True), vdir / ANNOTATIONS_FILE)
+
+
 def write_training_snapshot(
     vdir: Path,
     presences: pd.DataFrame,
@@ -75,9 +86,12 @@ def write_training_snapshot(
     predictors: Sequence[str],
     occurrences: pd.DataFrame,
     effective_labels: pd.Series,
+    extra_rows: pd.DataFrame | None = None,
 ) -> dict[str, SnapshotFile]:
     preds = list(predictors)
-    pres = presences[["source", "record_id", "longitude", "latitude", *preds]].copy()
+    weighted = "sample_weight" in presences
+    extra = ["sample_weight"] if weighted else []
+    pres = presences[["source", "record_id", "longitude", "latitude", *preds, *extra]].copy()
     pres.insert(0, "role", "presence")
     bg = pd.DataFrame(
         {
@@ -89,8 +103,18 @@ def write_training_snapshot(
         }
     )
     bg = pd.concat([bg, background_x[preds].reset_index(drop=True)], axis=1)
+    if weighted:
+        bg["sample_weight"] = 1.0
     pres = pres.astype({"source": "string", "record_id": "Int64"})
-    training = pd.concat([pres, bg], ignore_index=True)
+    parts = [pres, bg]
+    if extra_rows is not None and len(extra_rows):
+        ext = extra_rows.reindex(columns=[*pres.columns], fill_value=None).copy()
+        ext["record_id"] = pd.array(extra_rows.get("record_id", [pd.NA] * len(ext)), "Int64")
+        ext["source"] = pd.array(extra_rows.get("source", [None] * len(ext)), "string")
+        if weighted:
+            ext["sample_weight"] = 1.0
+        parts.append(ext.astype({c: "float64" for c in [*preds, "longitude", "latitude"]}))
+    training = pd.concat(parts, ignore_index=True)
 
     wanted = ("source", "record_id", "longitude", "latitude", "event_date")
     cols = [c for c in wanted if c in occurrences]

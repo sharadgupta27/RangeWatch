@@ -64,6 +64,49 @@ def _parse_obs_date(value: Any) -> date | None:
         return None
 
 
+def _int_or_none(value: Any) -> int | None:
+    try:
+        return None if value in (None, "") else int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _observer_id_from_vision(obs: Mapping[str, Any]) -> bool | None:
+    """Whether the observer's current identification was a computer-vision suggestion."""
+    flag = obs.get("owners_identification_from_vision")
+    if flag is not None:
+        return bool(flag)
+    idents = obs.get("identifications")
+    if not isinstance(idents, list):
+        return None
+    own = [
+        i
+        for i in idents
+        if isinstance(i, Mapping) and i.get("own_observation") and i.get("current", True)
+    ]
+    return bool(own[-1].get("vision")) if own else None
+
+
+def observation_details(obs: Mapping[str, Any]) -> dict[str, Any]:
+    """Identification support and free text, for the data-quality tests (features/quality.py).
+    Agreements count every identification matching the community taxon, the observer's
+    included (research grade needs at least two)."""
+    raw = {
+        "id_agreements": _int_or_none(obs.get("num_identification_agreements")),
+        "id_disagreements": _int_or_none(obs.get("num_identification_disagreements")),
+        "observer_id_from_vision": _observer_id_from_vision(obs),
+        "locality": obs.get("place_guess"),
+        "remarks": obs.get("description"),
+    }
+    out: dict[str, Any] = {}
+    for k, v in raw.items():
+        if isinstance(v, str):
+            v = v.strip()[:500] or None
+        if v is not None:
+            out[k] = v
+    return out
+
+
 def normalize_observation(
     obs: Mapping[str, Any],
     taxon_key: int,
@@ -93,6 +136,7 @@ def normalize_observation(
         basis_of_record="HUMAN_OBSERVATION",
         country_code=None,
         range_label=label,
+        details=observation_details(obs),
     )
 
 

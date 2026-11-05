@@ -6,10 +6,10 @@ import {
   type PaginationState,
 } from '@tanstack/react-table'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
-import { useState } from 'react'
+import { createContext, useContext, useState } from 'react'
 
-import { useOccurrences } from '@/api/queries'
-import type { OccurrenceRow } from '@/api/types'
+import { useAnnotateRecord, useOccurrences, usePermissions } from '@/api/queries'
+import type { AnnotationIn, OccurrenceRow } from '@/api/types'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -22,6 +22,73 @@ const EMPTY: OccurrenceRow[] = []
 
 const LABEL_VARIANT = { native: 'success', introduced: 'destructive', unknown: 'secondary' } as const
 const TIER_VARIANT = { A: 'success', B: 'secondary', C: 'warning', excluded: 'destructive' } as const
+
+const TaxonKeyContext = createContext<number>(0)
+
+/** Expert actions on one record (U11): each choice is a new, append-only annotation. */
+export const ANNOTATION_ACTIONS: { value: string; label: string; body: Pick<AnnotationIn, 'kind' | 'value'> }[] = [
+  { value: 'cultivated', label: 'Mark planted / cultivated', body: { kind: 'cultivated', value: 'true' } },
+  { value: 'exclude', label: 'Exclude as suspicious', body: { kind: 'exclude', value: 'true' } },
+  { value: 'include', label: 'Withdraw exclusion', body: { kind: 'exclude', value: 'false' } },
+  { value: 'verified', label: 'Verified: keep despite flags', body: { kind: 'verified', value: 'true' } },
+  { value: 'native', label: 'Label: native', body: { kind: 'range_label', value: 'native' } },
+  { value: 'introduced', label: 'Label: introduced', body: { kind: 'range_label', value: 'introduced' } },
+  { value: 'unknown', label: 'Label: unknown', body: { kind: 'range_label', value: 'unknown' } },
+]
+
+/** Short description of a record's effective annotation (null = none). */
+export function annotationSummary(a: OccurrenceRow['annotation']): string[] {
+  if (!a) return []
+  const out: string[] = []
+  if (a.cultivated) out.push('cultivated')
+  if (a.exclude) out.push('excluded')
+  if (a.verified) out.push('verified')
+  if (a.range_label) out.push(`label → ${a.range_label}`)
+  return out
+}
+
+function AnnotationCell({ row }: { row: OccurrenceRow }) {
+  const taxonKey = useContext(TaxonKeyContext)
+  const annotate = useAnnotateRecord(taxonKey)
+  const { curate } = usePermissions()
+  const tags = annotationSummary(row.annotation)
+  return (
+    <div className="min-w-40 space-y-1">
+      {tags.map((t) => (
+        <Badge key={t} variant={t === 'verified' ? 'success' : 'warning'} className="mr-1">
+          {t}
+        </Badge>
+      ))}
+      {row.annotation && (
+        <div className="text-[10px] text-muted-foreground">
+          {row.annotation.n_annotations} by {row.annotation.last_author}
+        </div>
+      )}
+      {curate && (
+        <Select
+          value=""
+          onValueChange={(v) => {
+            const action = ANNOTATION_ACTIONS.find((a) => a.value === v)
+            if (action) annotate.mutate({ source: row.source, record_id: row.record_id, ...action.body })
+          }}
+          disabled={annotate.isPending}
+        >
+          <SelectTrigger className="h-7 w-36 text-xs" aria-label={`Annotate record ${row.record_id}`}>
+            <SelectValue placeholder="Annotate…" />
+          </SelectTrigger>
+          <SelectContent>
+            {ANNOTATION_ACTIONS.map((a) => (
+              <SelectItem key={a.value} value={a.value}>
+                {a.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      )}
+      {annotate.isError && <div className="text-[10px] text-destructive">{annotate.error.message}</div>}
+    </div>
+  )
+}
 
 export const occurrenceColumns = helper.columns([
   helper.accessor('source', {
@@ -58,6 +125,11 @@ export const occurrenceColumns = helper.columns([
         </div>
       )
     },
+  }),
+  helper.accessor((r) => annotationSummary(r.annotation).join(', '), {
+    id: 'annotation',
+    header: 'Expert review',
+    cell: (i) => <AnnotationCell row={i.row.original} />,
   }),
   helper.accessor('event_date', { header: 'Observed', cell: (i) => formatDate(i.getValue()) }),
   helper.accessor((r) => `${r.latitude.toFixed(3)}, ${r.longitude.toFixed(3)}`, {
@@ -135,9 +207,10 @@ export function OccurrenceTable({ taxonKey }: { taxonKey: number }) {
         </Select>
         <span className="ml-auto text-xs text-muted-foreground">
           Labels shown are as ingested from GBIF/iNaturalist; training uses them together with the
-          confirmed native-range polygon.
+          confirmed native-range polygon and the expert annotations (which flag a retrain).
         </span>
       </div>
+      <TaxonKeyContext.Provider value={taxonKey}>
       <div className="rounded-xl border">
         <Table>
           <TableHeader>
@@ -171,6 +244,7 @@ export function OccurrenceTable({ taxonKey }: { taxonKey: number }) {
           </TableBody>
         </Table>
       </div>
+      </TaxonKeyContext.Provider>
       <div className="flex items-center justify-end gap-2 text-xs text-muted-foreground">
         <span className="tabular-nums">
           {formatNumber(from)}–{formatNumber(to)} of {formatNumber(total)}

@@ -28,6 +28,7 @@ import tempfile
 import zipfile
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import rasterio
@@ -41,6 +42,7 @@ from src.config import get_settings
 from src.domain import BIOCLIM_BANDS
 from src.features.collinearity import select_low_collinearity
 from src.features.raster_sampler import (
+    BIAS_LAYER_TRANSFORMS,
     METADATA_FILENAME,
     STACK_FILENAME,
     BioclimMetadata,
@@ -396,6 +398,104 @@ def build_chelsa(
     return root
 
 
+# Defaults for common observer-bias rasters (the file itself must be supplied: the providers
+# have no stable direct-download URL). Values are resampled (average) onto the version grid.
+BIAS_LAYER_PRESETS: dict[str, dict[str, str]] = {
+    "travel_time": {
+        "direction": "decreasing",
+        "transform": "log1p",
+        "citation": "Weiss, D. J. et al. (2018). A global map of travel time to cities to "
+        "assess inequalities in accessibility in 2015. Nature 553, 333–336.",
+    },
+    "road_distance": {
+        "direction": "decreasing",
+        "transform": "log1p",
+        "citation": "Meijer, J. R. et al. (2018). Global patterns of current and future road "
+        "infrastructure. Environ. Res. Lett. 13, 064006 (GRIP4).",
+    },
+    "population_density": {
+        "direction": "increasing",
+        "transform": "log1p",
+        "citation": "CIESIN (2018). Gridded Population of the World, Version 4.11.",
+    },
+}
+
+
+def add_bias_layer(
+    version: str,
+    name: str,
+    src: Path,
+    bioclim_root: Path,
+    direction: str | None = None,
+    transform: str | None = None,
+    citation: str | None = None,
+) -> dict[str, Any]:
+    """Register a static observer-bias raster (B6) on a version's grid and land mask."""
+    preset = BIAS_LAYER_PRESETS.get(name, {})
+    direction = direction or preset.get("direction")
+    transform = transform or preset.get("transform", "none")
+    if direction not in ("increasing", "decreasing"):
+        raise ValueError("direction must be 'increasing' or 'decreasing' (more / less effort)")
+    if transform not in BIAS_LAYER_TRANSFORMS:
+        raise ValueError(f"transform must be one of {BIAS_LAYER_TRANSFORMS}")
+    root = bioclim_root / version
+    meta = BioclimMetadata.load(root / METADATA_FILENAME)
+    target = BioclimStack.open_version(bioclim_root, version)
+    rel = f"bias_layers/{name}.tif"
+    out = root / rel
+    out.parent.mkdir(parents=True, exist_ok=True)
+    profile = {
+        "driver": "GTiff",
+        "width": target.width,
+        "height": target.height,
+        "count": 1,
+        "dtype": "float32",
+        "crs": target.crs,
+        "transform": target.transform,
+        "nodata": _NODATA,
+        "tiled": True,
+        "blockxsize": 256,
+        "blockysize": 256,
+        "compress": "deflate",
+    }
+    with tempfile.TemporaryDirectory() as tmp, rasterio.open(src) as source:
+        tmp_path = Path(tmp) / f"{name}.tif"
+        with rasterio.open(tmp_path, "w", **profile) as dst:
+            for block in target.iter_blocks(["bio1"]):
+                raw = np.full((block.height, block.width), np.nan, dtype="float32")
+                reproject(
+                    source=rasterio.band(source, 1),
+                    destination=raw,
+                    src_transform=source.transform,
+                    src_crs=source.crs,
+                    src_nodata=source.nodata,
+                    dst_transform=block.transform,
+                    dst_crs=target.crs,
+                    dst_nodata=np.nan,
+                    resampling=Resampling.average,
+                )
+                raw[np.isnan(block.data[0])] = np.nan
+                dst.write(
+                    np.where(np.isnan(raw), _NODATA, raw).astype("float32"),
+                    1,
+                    window=Window(0, block.row_off, block.width, block.height),
+                )
+        rio_copy(tmp_path, out, driver="COG", **COG_OPTIONS)
+    entry = {
+        "path": rel,
+        "direction": direction,
+        "transform": transform,
+        "citation": citation or preset.get("citation"),
+        "source": src.name,
+        "sha256": sha256_file(out),
+        "added": datetime.now(UTC).isoformat(),
+    }
+    layers = {**meta.bias_layers, name: entry}
+    write_metadata(root, BioclimMetadata(**{**meta.__dict__, "bias_layers": layers}))
+    log.info("Registered bias layer %s on %s", name, version)
+    return entry
+
+
 def _resample_chelsa_band(
     src_path: Path, band: str, target: BioclimStack, dst: rasterio.io.DatasetWriter, index: int
 ) -> None:
@@ -455,6 +555,13 @@ def main() -> None:
     h.add_argument("--version", default=settings.bioclim_version)
     h.add_argument("--resolution", default="30s", choices=RESOLUTIONS)
     h.add_argument("--src", type=Path, help="local 19-band stack instead of downloading")
+    bl = sub.add_parser("add-bias-layer", help="static observer-bias raster (travel time, …)")
+    bl.add_argument("--version", default=settings.bioclim_version)
+    bl.add_argument("--name", required=True, help=f"presets: {', '.join(BIAS_LAYER_PRESETS)}")
+    bl.add_argument("--src", type=Path, required=True, help="single-band raster (any CRS)")
+    bl.add_argument("--direction", choices=("increasing", "decreasing"))
+    bl.add_argument("--transform", choices=BIAS_LAYER_TRANSFORMS)
+    bl.add_argument("--citation")
     c = sub.add_parser("build-chelsa", help="CHELSA V2.1 cross-check stack on a version's grid")
     c.add_argument("--version", required=True)
     c.add_argument("--match", default=settings.bioclim_version)
@@ -462,6 +569,16 @@ def main() -> None:
     args = p.parse_args()
     if args.cmd == "build":
         build(args.version, args.resolution, settings.bioclim_root, settings.random_seed)
+    elif args.cmd == "add-bias-layer":
+        add_bias_layer(
+            args.version,
+            args.name,
+            args.src,
+            settings.bioclim_root,
+            args.direction,
+            args.transform,
+            args.citation,
+        )
     elif args.cmd == "add-hires":
         add_hires(args.version, args.resolution, settings.bioclim_root, args.src)
     elif args.cmd == "build-chelsa":

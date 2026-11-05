@@ -132,3 +132,33 @@ def archive_inactive_species() -> list[int]:
     if days <= 0:
         return []
     return archive_inactive_features(get_repository(), get_artifact_store(), timedelta(days=days))
+
+
+@celery_app.task(name="sdm.run_virtual_species_benchmark")
+def run_virtual_species_benchmark(job_id: str, request: dict) -> dict:
+    from src.orchestration.flows import benchmark_flow
+
+    return _run_job(job_id, benchmark_flow, request=request, job_id=job_id)
+
+
+@celery_app.task(name="sdm.run_batch")
+def run_batch(job_id: str, taxon_keys: list[int], force_retrain: bool = False) -> dict:
+    from src.orchestration.flows import batch_flow
+
+    return _run_job(
+        job_id, batch_flow, taxon_keys=taxon_keys, force_retrain=force_retrain, job_id=job_id
+    )
+
+
+@celery_app.task(name="sdm.compare_target_groups")
+def compare_target_groups(job_id: str, taxon_key: int) -> dict:
+    from src.orchestration.flows import target_group_flow
+
+    return _run_job(job_id, target_group_flow, taxon_key=taxon_key, job_id=job_id)
+
+
+@celery_app.task(name="sdm.estimate_shared_bias")
+def estimate_shared_bias(job_id: str, taxon_key: int) -> dict:
+    from src.orchestration.flows import shared_bias_flow
+
+    return _run_job(job_id, shared_bias_flow, taxon_key=taxon_key, job_id=job_id)

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import importlib.util
-
 import numpy as np
 import pytest
 
@@ -44,9 +42,17 @@ def test_bulletin_html_contains_all_sections(trained):  # noqa: F811
     assert order == sorted(order)  # fixed component order regardless of jsonb key order
 
 
+def _weasyprint_usable() -> bool:
+    try:
+        import weasyprint  # noqa: F401  (also needs the Pango system libraries)
+    except (ImportError, OSError):
+        return False
+    return True
+
+
 @pytest.mark.skipif(
-    importlib.util.find_spec("weasyprint") is None,
-    reason="WeasyPrint not installed (runs in the backend Docker image)",
+    not _weasyprint_usable(),
+    reason="WeasyPrint or its system libraries missing (runs in the backend Docker image)",
 )
 def test_bulletin_pdf(trained):  # noqa: F811
     settings, repo, artifacts = trained
@@ -88,3 +94,33 @@ def test_bulletin_reports_data_quality_effort_and_independent_evaluation(trained
         assert "85%" in html and "85% / –" in html
     finally:
         repo.update_model_artifacts(TAXON_KEY, 1, mv.artifacts)
+
+
+def test_bulletin_methods_describe_weights_bias_covariate_and_training_uploads(
+    trained,  # noqa: F811
+):
+    settings, repo, artifacts = trained
+    mv = repo._models[TAXON_KEY][1]
+    original = mv.metrics
+    repro = {
+        **original["reproducibility"],
+        "presence_weights": {"method": "quality_tier_density", "min": 0.4, "max": 2.1},
+        "bias_covariates": {
+            "method": "target_group_effort",
+            "status": "used",
+            "transform": "log1p(target-group records per effort pixel)",
+            "condition": "max",
+            "conditioning_value": 7.25,
+        },
+        "training_uploads": [
+            {"name": "INPA plots", "n_added": 36, "n_overlap_excluded": 4},
+        ],
+    }
+    mv.metrics = {**original, "reproducibility": repro}
+    try:
+        html = BulletinGenerator(repo, artifacts, settings).render_html(TAXON_KEY, 1)
+        assert "Presences were weighted (quality tier density" in html
+        assert "held at its max (7.25)" in html
+        assert "INPA plots (36 presences, 4 duplicates" in html
+    finally:
+        mv.metrics = original

@@ -25,7 +25,7 @@ from src.api.schemas import (
     VectorLayer,
 )
 from src.config import Settings
-from src.domain import ZONE_LABELS
+from src.domain import BIOCLIM_DESCRIPTIONS, CHANGE_LABELS, ZONE_LABELS
 from src.features.raster_sampler import METADATA_FILENAME, BioclimMetadata
 from src.persistence.artifact_store import ArtifactStore
 from src.persistence.repository import Repository
@@ -67,6 +67,33 @@ EXDET_BINS = [
     (2.0, _BIG, "#e66101", "NT2 > 2 · strongly novel combination"),
 ]
 CONSENSUS_COLORS = ["#4393c3", "#fee5d9", "#fcae91", "#fb6a4a", "#de2d26", "#a50f15"]
+# Categorical palette for the limiting-factor map (Okabe–Ito + extensions), "none" in grey.
+LIMITING_COLORS = [
+    "#e69f00",
+    "#56b4e9",
+    "#009e73",
+    "#f0e442",
+    "#0072b2",
+    "#d55e00",
+    "#cc79a7",
+    "#999933",
+    "#882255",
+    "#44aa99",
+    "#117733",
+    "#332288",
+    "#aa4499",
+    "#88ccee",
+    "#ddcc77",
+    "#661100",
+    "#6699cc",
+    "#aa4466",
+    "#4477aa",
+]
+LIMITING_NONE_COLOR = "#bdbdbd"
+CHANGE_COLORS = {0: "#00000000", 1: "#1a9850", 2: "#d73027", 3: "#91bfdb"}
+# GCM agreement (U7): 0 GCMs transparent, then a purple ramp up to "all GCMs".
+GCM_AGREEMENT_RAMP = ["#dadaeb", "#bcbddc", "#9e9ac8", "#807dba", "#6a51a3", "#54278f", "#3f007d"]
+BINARY_COLORS = {0: "#00000000", 1: "#2a9d8f"}
 # Haze in the colour of the MESS overlay, denser the more diagnostics agree on extrapolation.
 CONSENSUS_HAZE_ALPHA = [0, 50, 85, 120, 155, 190]
 HAZE_RGB = (226, 232, 240)
@@ -252,11 +279,194 @@ def _diagnostic_layers(
     return out
 
 
+def _categorical(
+    settings: Settings,
+    artifacts: ArtifactStore,
+    uri: str,
+    lid: str,
+    label: str,
+    classes: dict[int, tuple[str, str]],
+    description: str,
+) -> RasterLayer:
+    """uint8 raster with a fixed class → colour map (nodata 255)."""
+    cmap = {
+        str(k): _rgba(c[:7], int(c[7:9], 16) if len(c) > 7 else 220)
+        for k, (c, _) in classes.items()
+    }
+    return RasterLayer(
+        id=lid,
+        label=label,
+        kind="categorical",
+        tile_url=_cog_tiles(
+            settings,
+            artifacts,
+            uri,
+            f"colormap={quote(json.dumps(cmap), safe='')}&nodata=255&resampling=nearest",
+        ),
+        legend=[
+            LegendEntry(value=k, color=c[:7], label=t)
+            for k, (c, t) in classes.items()
+            if not c.endswith("00") or len(c) == 7
+        ],
+        description=description,
+    )
+
+
+def _gcm_agreement_layer(
+    settings: Settings, artifacts: ArtifactStore, name: str, label: str, ens: dict[str, Any]
+) -> RasterLayer:
+    n = int(ens["n_gcms"])
+    ramp = GCM_AGREEMENT_RAMP
+    classes = {0: ("#00000000", "no GCM")}
+    for v in range(1, n + 1):
+        color = ramp[round((v - 1) * (len(ramp) - 1) / max(n - 1, 1))]
+        classes[v] = (color, f"{v} of {n} GCMs" + (" (all)" if v == n else ""))
+    return _categorical(
+        settings,
+        artifacts,
+        ens["agreement"],
+        f"gcm-agreement:{name}",
+        f"GCM agreement — {label}",
+        classes,
+        f"How many of the {n} GCMs ({', '.join(ens['gcms'])}) call the cell suitable at the "
+        "model threshold. Low agreement = the projection depends on the climate model; check "
+        "the ensemble's extrapolation mask too.",
+    )
+
+
+def _product_layers(
+    settings: Settings, artifacts: ArtifactStore, mv: Any, threshold: float | None
+) -> list[RasterLayer]:
+    """Binary maps per threshold rule, limiting factor, ensemble agreement, change since the
+    previous version and survey priority."""
+    a, m = mv.artifacts, mv.metrics
+    out: list[RasterLayer] = []
+    rules = dict(m.get("thresholds") or {})
+    if threshold is not None:
+        rules["custom"] = {"label": "custom threshold", "value": threshold}
+    for rule, t in rules.items():
+        value = float(t["value"])
+        cmap = quote(
+            json.dumps(
+                [[[-_BIG, value], [0, 0, 0, 0]], [[value, _BIG], _rgba(BINARY_COLORS[1], 210)]]
+            ),
+            safe="",
+        )
+        out.append(
+            RasterLayer(
+                id=f"binary:{rule}",
+                label=f"Binary — {t['label']}",
+                kind="categorical",
+                tile_url=_cog_tiles(
+                    settings,
+                    artifacts,
+                    a["suitability"],
+                    f"colormap={cmap}&nodata=-9999&resampling=nearest",
+                ),
+                legend=[
+                    LegendEntry(value=1, color=BINARY_COLORS[1], label=f"suitable (≥ {value:.3g})")
+                ],
+                description=f"Suitable / unsuitable at the {t['label']} threshold ({value:.4g})."
+                + (
+                    f" Training sensitivity {t['sensitivity']:.0%}."
+                    if t.get("sensitivity") is not None
+                    else ""
+                )
+                + " A binary map hides the gradient and the extrapolation layers still apply.",
+            )
+        )
+    if "limiting" in a:
+        preds = list(m.get("predictors") or [])
+        classes = {
+            i: (
+                LIMITING_COLORS[i % len(LIMITING_COLORS)],
+                f"{p} · {BIOCLIM_DESCRIPTIONS.get(p, p)}",
+            )
+            for i, p in enumerate(preds)
+        }
+        classes[254] = (LIMITING_NONE_COLOR, "none (no single predictor raises suitability)")
+        out.append(
+            _categorical(
+                settings,
+                artifacts,
+                a["limiting"],
+                "limiting",
+                "Limiting factor",
+                classes,
+                "The predictor whose change to its mean over the training presences would "
+                "raise suitability most at each cell (Elith et al. 2010): which climate "
+                "variable limits the species there.",
+            )
+        )
+    if "agreement" in a:
+        out.append(
+            RasterLayer(
+                id="agreement",
+                label="Ensemble agreement",
+                kind="continuous",
+                tile_url=_cog_tiles(
+                    settings,
+                    artifacts,
+                    a["agreement"],
+                    "rescale=0.5,1&colormap_name=rdylbu&nodata=-9999&resampling=nearest",
+                ),
+                legend=[
+                    LegendEntry(value=0.5, color="#d73027", label="≤ 50% · members disagree"),
+                    LegendEntry(value=0.75, color="#ffffbf", label="75%"),
+                    LegendEntry(value=1.0, color="#4575b4", label="100% · unanimous"),
+                ],
+                description="Weighted share of ensemble members whose own suitable / "
+                "unsuitable call agrees with the ensemble. Low agreement = algorithm-dependent "
+                "prediction: treat as uncertain, like extrapolation.",
+            )
+        )
+    if "change_previous" in a:
+        ch = m.get("change_previous") or {}
+        out.append(
+            _categorical(
+                settings,
+                artifacts,
+                a["change_previous"],
+                "change_previous",
+                f"Change since v{ch.get('from_version', '?')}",
+                {k: (CHANGE_COLORS[k], CHANGE_LABELS[k]) for k in (1, 2, 3)},
+                f"What retraining changed: cells that became suitable (gain) or unsuitable "
+                f"(loss) since v{ch.get('from_version', '?')}, each version at its own threshold.",
+            )
+        )
+    if "priority" in a:
+        out.append(
+            RasterLayer(
+                id="priority",
+                label="Survey priority",
+                kind="continuous",
+                tile_url=_cog_tiles(
+                    settings,
+                    artifacts,
+                    a["priority"],
+                    "rescale=0,0.6&colormap_name=inferno&nodata=-9999&resampling=nearest",
+                ),
+                legend=[
+                    LegendEntry(value=0.0, color="#000004", label="low"),
+                    LegendEntry(value=0.3, color="#bc3754", label="medium"),
+                    LegendEntry(value=0.6, color="#fcffa4", label="high"),
+                ],
+                description=(m.get("survey_priority") or {}).get(
+                    "formula", "Suitable, little-surveyed, uncertain cells score highest."
+                )
+                + ". Where to look next: high suitability where target-group observers have "
+                "rarely recorded.",
+            )
+        )
+    return out
+
+
 @router.get("", response_model=LayerSet, operation_id="getLayers")
 def get_layers(
     taxon_key: int,
     repo: RepoDep,
     model_version: int | None = None,
+    threshold: float | None = None,
     settings: Settings = Depends(settings_dep),
     artifacts: ArtifactStore = Depends(artifacts_dep),
 ) -> LayerSet:
@@ -336,7 +546,8 @@ def get_layers(
             for k in (1, 2, 3)
         ],
         description="Suitable cells classified by position relative to the confirmed native "
-        "range and known occurrences (threshold: 10th-percentile training presence).",
+        "range and known occurrences (threshold: "
+        f"{mv.metrics.get('threshold_rule', '10th percentile training presence')}).",
     )
     # Light "uncertainty haze" that stays visible over the suitability ramp on either basemap.
     extra_cmap = quote(json.dumps({"0": [0, 0, 0, 0], "1": [226, 232, 240, 165]}), safe="")
@@ -414,7 +625,12 @@ def get_layers(
         # Legacy entries were a bare suitability path without a paired extrapolation mask.
         suit_uri = entry["suitability"] if isinstance(entry, dict) else entry
         extra_uri = entry.get("extrapolation") if isinstance(entry, dict) else None
-        label = name.replace("_", " ")
+        ens = entry.get("gcm_ensemble") if isinstance(entry, dict) else None
+        label = (
+            f"GCM ensemble {ens['ssp']} {ens['period']} ({ens['n_gcms']} GCMs)"
+            if ens
+            else name.replace("_", " ")
+        )
         scenario_layers.append(
             ScenarioLayer(
                 id=f"scenario:{name}",
@@ -426,8 +642,15 @@ def get_layers(
                     suit_uri,
                     f"scenario:{name}",
                     f"Suitability — {label}",
-                    "Same model projected onto a CMIP6 future climate (no retraining). "
-                    "Extrapolation risk is typically higher than for current climate.",
+                    (
+                        f"Mean suitability of the same model projected onto {ens['n_gcms']} "
+                        "CMIP6 GCMs (no retraining). See the GCM agreement map; the "
+                        "extrapolation mask flags cells extrapolated under any GCM."
+                        if ens
+                        else "Same model projected onto a CMIP6 future climate (no "
+                        "retraining). Extrapolation risk is typically higher than for "
+                        "current climate."
+                    ),
                 ),
                 extrapolation=(
                     extrapolation_layer(
@@ -445,9 +668,34 @@ def get_layers(
                 diagnostics_land_fraction=(
                     entry.get("diagnostics_land_fraction") if isinstance(entry, dict) else None
                 ),
+                change=(
+                    _categorical(
+                        settings,
+                        artifacts,
+                        entry["change"],
+                        f"change:{name}",
+                        f"Change — current → {label}",
+                        {k: (CHANGE_COLORS[k], CHANGE_LABELS[k]) for k in (1, 2, 3)},
+                        "Cells gained or lost as suitable between current climate and this "
+                        "scenario (same model and threshold). Check this scenario's own "
+                        "extrapolation mask: change in extrapolated cells is unreliable.",
+                    )
+                    if isinstance(entry, dict) and entry.get("change")
+                    else None
+                ),
+                change_summary=(entry.get("change_summary") if isinstance(entry, dict) else None),
+                gcm_ensemble=(
+                    {
+                        **ens,
+                        "agreement": _gcm_agreement_layer(settings, artifacts, name, label, ens),
+                    }
+                    if ens
+                    else None
+                ),
             )
         )
     layers.scenarios = scenario_layers
+    layers.products = _product_layers(settings, artifacts, mv, threshold)
     hires = a.get("hires")
     if hires:
         res_label = hires["resolution"].replace("s", "″").replace("m", "′")

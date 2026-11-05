@@ -1,9 +1,11 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { Activity, AlertTriangle, Database, GitBranch } from 'lucide-react'
+import { useState } from 'react'
 
-import { speciesListOptions, useSpeciesList } from '@/api/queries'
+import { speciesListOptions, useRegistry } from '@/api/queries'
 import { RegistryTable } from '@/components/species/RegistryTable'
 import { SpeciesSearch } from '@/components/species/SpeciesSearch'
+import { ListFilter, SpeciesListsCard } from '@/components/species/SpeciesListsCard'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { formatCompact } from '@/lib/utils'
@@ -28,7 +30,9 @@ function Kpi({ icon: Icon, label, value }: { icon: typeof Activity; label: strin
 }
 
 function RegistryPage() {
-  const list = useSpeciesList()
+  // Ephemeral UI state: which species list filters the registry (null = all).
+  const [listId, setListId] = useState<string | null>(null)
+  const list = useRegistry(listId)
   const species = list.data ?? []
   const records = species.reduce((a, s) => a + s.n_occurrences_total, 0)
   const pending = species.filter((s) =>
@@ -61,11 +65,14 @@ function RegistryPage() {
       </div>
 
       <Card>
-        <CardHeader>
-          <CardTitle>Species registry</CardTitle>
-          <CardDescription>
-            Sorted by severity. Model A (native-only) scores are flagged as lower confidence.
-          </CardDescription>
+        <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-3">
+          <div className="space-y-1.5">
+            <CardTitle>Species registry</CardTitle>
+            <CardDescription>
+              Sorted by severity. Model A (native-only) scores are flagged as lower confidence.
+            </CardDescription>
+          </div>
+          <ListFilter value={listId} onChange={setListId} />
         </CardHeader>
         <CardContent className="px-2 pb-2">
           {list.isLoading ? (
@@ -78,13 +85,17 @@ function RegistryPage() {
             <p className="p-6 text-sm text-destructive">Could not reach the API: {list.error.message}</p>
           ) : species.length === 0 ? (
             <p className="p-6 text-sm text-muted-foreground">
-              No species tracked yet — search for one above to start.
+              {listId
+                ? 'No species of this list are tracked yet — run the list to start.'
+                : 'No species tracked yet — search for one above to start.'}
             </p>
           ) : (
             <RegistryTable species={species} />
           )}
         </CardContent>
       </Card>
+
+      <SpeciesListsCard />
     </div>
   )
 }

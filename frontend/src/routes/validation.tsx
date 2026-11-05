@@ -4,6 +4,7 @@ import { CheckCircle2, FlaskConical, Loader2, RefreshCw, XCircle } from 'lucide-
 
 import { useRunValidation, useValidationJob, useValidationReport } from '@/api/queries'
 import type { ValidationSpecies } from '@/api/types'
+import { BenchmarkCard } from '@/components/species/BenchmarkCard'
 import { JobStatusBar } from '@/components/species/JobStatusBar'
 import { validationColumns, validationFeatures } from '@/components/species/validationColumns'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -173,6 +174,7 @@ function ValidationPage() {
           </div>
         </>
       )}
+      <BenchmarkCard />
     </div>
   )
 }

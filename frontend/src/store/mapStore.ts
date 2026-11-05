@@ -28,8 +28,14 @@ export function isDiagnosticLayer(id: string): id is DiagnosticLayerId {
   return (DIAGNOSTIC_LAYER_IDS as readonly string[]).includes(id)
 }
 
-/** 'suitability' | 'zones' | a diagnostic | 'scenario:<name>' */
-export type ProjectionLayerId = 'suitability' | 'zones' | DiagnosticLayerId | `scenario:${string}`
+/** 'suitability' | 'zones' | a diagnostic | 'scenario:<name>' | 'product:<layer id>' (binary
+ * maps, limiting factor, ensemble agreement, change maps, survey priority) */
+export type ProjectionLayerId =
+  | 'suitability'
+  | 'zones'
+  | DiagnosticLayerId
+  | `scenario:${string}`
+  | `product:${string}`
 
 /** What the extrapolation overlay draws: the MESS < 0 mask or the graded diagnostic consensus. */
 export type OverlaySource = 'mess' | 'consensus'

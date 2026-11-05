@@ -4,12 +4,14 @@ severity configuration."""
 from __future__ import annotations
 
 import logging
+import uuid
 from functools import lru_cache
 from typing import Annotated, Literal
 
 import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
+from src.api.auth import Analyst, CurrentUser
 from src.api.converters import job_out, model_summary, native_range_out, species_summary
 from src.api.deps import (
     InatSearch,
@@ -23,6 +25,7 @@ from src.api.deps import (
     settings_dep,
 )
 from src.api.schemas import (
+    EffectiveAnnotationOut,
     HiresRequest,
     JobOut,
     NativeRangeOut,
@@ -36,12 +39,15 @@ from src.api.schemas import (
     SeverityResult,
     SpeciesDetail,
     SpeciesSummary,
+    StudyRegionOut,
+    StudyRegionUpdate,
     TaxonSearchResult,
     Timeline,
     TimelineYear,
 )
 from src.config import Settings
-from src.domain import Job, JobKind
+from src.domain import Job, JobKind, SpeciesStatus
+from src.features.annotations import effective_annotations
 from src.features.raster_sampler import METADATA_FILENAME, RESOLUTION_DEG, BioclimMetadata
 from src.modeling.severity_index import SeverityConfig
 from src.orchestration.registry_ops import recompute_severity, update_native_range
@@ -107,8 +113,16 @@ def search_species(
 
 
 @router.get("", response_model=list[SpeciesSummary], operation_id="listSpecies")
-def list_species(repo: RepoDep) -> list[SpeciesSummary]:
-    return [species_summary(repo, sp) for sp in repo.list_species()]
+def list_species(repo: RepoDep, list_id: uuid.UUID | None = None) -> list[SpeciesSummary]:
+    """The registry, optionally only the species of one species list (U9)."""
+    species = repo.list_species()
+    if list_id is not None:
+        sl = repo.get_species_list(list_id)
+        if sl is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Species list not found")
+        keys = set(sl.taxon_keys)
+        species = [sp for sp in species if sp.taxon_key in keys]
+    return [species_summary(repo, sp) for sp in species]
 
 
 @router.get("/{taxon_key}", response_model=SpeciesDetail, operation_id="getSpecies")
@@ -132,6 +146,7 @@ def get_species(taxon_key: int, repo: RepoDep) -> SpeciesDetail:
         severity_config=SeverityConfigModel.model_validate(
             SeverityConfig.from_dict(sp.severity_config).to_dict()
         ),
+        study_region=_study_region_out(sp.study_region),
     )
 
 
@@ -140,6 +155,7 @@ def get_species(taxon_key: int, repo: RepoDep) -> SpeciesDetail:
     response_model=JobOut,
     status_code=status.HTTP_202_ACCEPTED,
     operation_id="runSpeciesPipeline",
+    dependencies=[Analyst],
 )
 def run_pipeline(
     taxon_key: int, repo: RepoDep, queue: QueueDep, body: RunRequest | None = None
@@ -156,6 +172,7 @@ def run_pipeline(
     response_model=JobOut,
     status_code=status.HTTP_202_ACCEPTED,
     operation_id="projectScenarios",
+    dependencies=[Analyst],
 )
 def project_scenarios(taxon_key: int, repo: RepoDep, queue: QueueDep) -> JobOut:
     """Project the current model onto registered climate scenarios (no retraining)."""
@@ -172,6 +189,7 @@ def project_scenarios(taxon_key: int, repo: RepoDep, queue: QueueDep) -> JobOut:
     response_model=JobOut,
     status_code=status.HTTP_202_ACCEPTED,
     operation_id="runClimateCrossCheck",
+    dependencies=[Analyst],
 )
 def run_crosscheck(
     taxon_key: int,
@@ -200,6 +218,7 @@ def run_crosscheck(
     response_model=JobOut,
     status_code=status.HTTP_202_ACCEPTED,
     operation_id="projectHighResolution",
+    dependencies=[Analyst],
 )
 def project_hires(
     taxon_key: int,
@@ -259,10 +278,18 @@ def get_native_range(taxon_key: int, repo: RepoDep) -> NativeRangeOut:
     operation_id="updateNativeRange",
 )
 def put_native_range(
-    taxon_key: int, body: NativeRangeUpdate, repo: RepoDep, queue: QueueDep
+    taxon_key: int, body: NativeRangeUpdate, repo: RepoDep, queue: QueueDep, user: CurrentUser
 ) -> NativeRangeUpdateResult:
-    """Save a user-reviewed polygon. Confirming it unlocks (re)training."""
+    """Save a user-reviewed polygon (analyst). Confirming it — which unlocks (re)training —
+    is an expert review step and needs the curator role."""
     _get_species_or_404(repo, taxon_key)
+    if not user.can("curator" if body.confirm else "analyst"):
+        needed = "curator" if body.confirm else "analyst"
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            f"{'Confirming' if body.confirm else 'Editing'} the native range needs the "
+            f"{needed} role (you: {user.role})",
+        )
     # Reject before saving: a rejected request must not downgrade a confirmed range to draft.
     if body.train and not body.confirm:
         raise HTTPException(
@@ -300,9 +327,15 @@ def list_occurrences(
     sp = _get_species_or_404(repo, taxon_key)
     df, total = repo.page_occurrences(taxon_key, offset, limit, source, range_label)
     lookup = _quality_lookup(repo, artifacts, sp.taxon_key, sp.model_version)
+    eff = effective_annotations(repo.list_annotations(taxon_key))
+    notes = {
+        (a["source"], int(a["record_id"])): a
+        for a in eff.astype(object).where(pd.notna(eff), None).to_dict(orient="records")
+    }
     rows = []
     for r in df.astype(object).where(pd.notna(df), None).to_dict(orient="records"):
-        flags, tier = lookup.get((r["source"], int(r["record_id"])), (None, None))
+        key = (r["source"], int(r["record_id"]))
+        flags, tier = lookup.get(key, (None, None))
         issues = r.get("issues")
         rows.append(
             OccurrenceRow.model_validate(
@@ -311,6 +344,9 @@ def list_occurrences(
                     "issues": list(issues) if issues is not None else None,
                     "quality_flags": flags,
                     "quality_tier": tier,
+                    "annotation": (
+                        EffectiveAnnotationOut.model_validate(notes[key]) if key in notes else None
+                    ),
                 }
             )
         )
@@ -379,6 +415,7 @@ def occurrence_timeline(taxon_key: int, repo: RepoDep) -> Timeline:
     "/{taxon_key}/severity-config",
     response_model=SeverityResult | None,
     operation_id="updateSeverityConfig",
+    dependencies=[Analyst],
 )
 def put_severity_config(
     taxon_key: int, body: SeverityConfigModel, repo: RepoDep
@@ -392,3 +429,56 @@ def put_severity_config(
         raise HTTPException(422, str(exc)) from exc
     result = recompute_severity(repo, taxon_key, cfg)
     return SeverityResult.model_validate(result) if result else None
+
+
+# ------------------------------------------------------------- study region (U2)
+@router.put(
+    "/{taxon_key}/study-region",
+    response_model=SpeciesDetail,
+    operation_id="updateStudyRegion",
+    dependencies=[Analyst],
+)
+def put_study_region(
+    taxon_key: int,
+    body: StudyRegionUpdate,
+    repo: RepoDep,
+    settings: Settings = Depends(settings_dep),
+) -> SpeciesDetail:
+    """Train and project a regional model inside `bbox` (optionally at a registered high
+    resolution), or remove the region (bbox null) to return to the global model. Changing it
+    flags a retrain; the current model stays published until then."""
+    sp = _get_species_or_404(repo, taxon_key)
+    region = None
+    if body.bbox is not None:
+        west, south, east, north = body.bbox
+        west, east = max(west, -180.0), min(east, 180.0)
+        south, north = max(south, -90.0), min(north, 90.0)
+        if not (west < east and south < north):
+            raise HTTPException(422, "bbox must be [west, south, east, north] inside the globe")
+        meta_path = settings.bioclim_root / settings.bioclim_version / METADATA_FILENAME
+        meta = BioclimMetadata.load(meta_path) if meta_path.exists() else None
+        if body.resolution is not None and (meta is None or body.resolution not in meta.hires):
+            raise HTTPException(
+                422,
+                f"No {body.resolution} high-resolution stack registered for "
+                f"{settings.bioclim_version} (bioclim_store add-hires)",
+            )
+        res = body.resolution or (meta.resolution if meta else None)
+        cell = RESOLUTION_DEG.get(res or "")
+        n_cells = round((east - west) / cell) * round((north - south) / cell) if cell else 0
+        if n_cells > settings.hires_max_cells:
+            raise HTTPException(
+                422,
+                f"Region too large: ~{n_cells:,} cells (max {settings.hires_max_cells:,}).",
+            )
+        region = {"bbox": [west, south, east, north], "resolution": body.resolution}
+    if region != sp.study_region:
+        fields: dict = {"study_region": region}
+        if sp.model_version > 0:
+            fields.update(retrain_needed=True, status=SpeciesStatus.RETRAIN_PENDING)
+        repo.update_species(taxon_key, **fields)
+    return get_species(taxon_key, repo)
+
+
+def _study_region_out(region: dict | None) -> StudyRegionOut | None:
+    return StudyRegionOut.model_validate(region) if region else None

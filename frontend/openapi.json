@@ -48,6 +48,28 @@
         }
       }
     },
+    "/me": {
+      "get": {
+        "tags": [
+          "meta"
+        ],
+        "summary": "Me",
+        "description": "The calling user and role, so the UI can offer only permitted actions (the API\nenforces them regardless).",
+        "operationId": "getMe",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeOut"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/species/search": {
       "get": {
         "tags": [
@@ -115,18 +137,48 @@
           "species"
         ],
         "summary": "List Species",
+        "description": "The registry, optionally only the species of one species list (U9).",
         "operationId": "listSpecies",
+        "parameters": [
+          {
+            "name": "list_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "List Id"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
+                  "type": "array",
                   "items": {
                     "$ref": "#/components/schemas/SpeciesSummary"
                   },
-                  "type": "array",
                   "title": "Response Listspecies"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             }
@@ -421,7 +473,7 @@
           "species"
         ],
         "summary": "Put Native Range",
-        "description": "Save a user-reviewed polygon. Confirming it unlocks (re)training.",
+        "description": "Save a user-reviewed polygon (analyst). Confirming it \u2014 which unlocks (re)training \u2014\nis an expert review step and needs the curator role.",
         "operationId": "updateNativeRange",
         "parameters": [
           {
@@ -678,6 +730,481 @@
         }
       }
     },
+    "/species/{taxon_key}/study-region": {
+      "put": {
+        "tags": [
+          "species"
+        ],
+        "summary": "Put Study Region",
+        "description": "Train and project a regional model inside `bbox` (optionally at a registered high\nresolution), or remove the region (bbox null) to return to the global model. Changing it\nflags a retrain; the current model stays published until then.",
+        "operationId": "updateStudyRegion",
+        "parameters": [
+          {
+            "name": "taxon_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Taxon Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StudyRegionUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpeciesDetail"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/lists": {
+      "get": {
+        "tags": [
+          "lists"
+        ],
+        "summary": "List Lists",
+        "operationId": "listSpeciesLists",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/SpeciesListOut"
+                  },
+                  "type": "array",
+                  "title": "Response Listspecieslists"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "lists"
+        ],
+        "summary": "Create List",
+        "description": "Names are matched against the GBIF backbone (unmatched ones are kept, unresolved).",
+        "operationId": "createSpeciesList",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SpeciesListIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpeciesListOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/lists/{list_id}": {
+      "get": {
+        "tags": [
+          "lists"
+        ],
+        "summary": "Get List",
+        "operationId": "getSpeciesList",
+        "parameters": [
+          {
+            "name": "list_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "List Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpeciesListOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "lists"
+        ],
+        "summary": "Update List",
+        "description": "Replace the list's name, description, source and species.",
+        "operationId": "updateSpeciesList",
+        "parameters": [
+          {
+            "name": "list_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "List Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SpeciesListIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpeciesListOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "lists"
+        ],
+        "summary": "Delete List",
+        "operationId": "deleteSpeciesList",
+        "parameters": [
+          {
+            "name": "list_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "List Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/lists/{list_id}/runs": {
+      "post": {
+        "tags": [
+          "lists"
+        ],
+        "summary": "Run List",
+        "description": "One batch job running the species pipeline for every resolved species of the list\n(new species stop at the native-range review, as in a single run).",
+        "operationId": "runSpeciesList",
+        "parameters": [
+          {
+            "name": "list_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "List Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/BatchRunRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/species/{taxon_key}/target-group-comparison": {
+      "post": {
+        "tags": [
+          "bias"
+        ],
+        "summary": "Run Comparison",
+        "description": "B1: refit with order / class / phylum target groups (and matched source + years).",
+        "operationId": "runTargetGroupComparison",
+        "parameters": [
+          {
+            "name": "taxon_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Taxon Key"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "bias"
+        ],
+        "summary": "Get Comparison",
+        "operationId": "getTargetGroupComparison",
+        "parameters": [
+          {
+            "name": "taxon_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Taxon Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TargetGroupComparisonOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/species/{taxon_key}/shared-bias": {
+      "post": {
+        "tags": [
+          "bias"
+        ],
+        "summary": "Run Shared Bias",
+        "description": "B9: estimate the observer bias jointly from every registered species of this\nspecies' target group (used by SDM_ALGORITHM=ppm with SDM_PPM_BIAS=shared).",
+        "operationId": "runSharedBias",
+        "parameters": [
+          {
+            "name": "taxon_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Taxon Key"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "bias"
+        ],
+        "summary": "Get Shared Bias",
+        "description": "The shared bias estimate of the species' target group, if one was made.",
+        "operationId": "getSharedBias",
+        "parameters": [
+          {
+            "name": "taxon_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Taxon Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SharedBiasOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/species/{taxon_key}/datasets": {
       "get": {
         "tags": [
@@ -729,7 +1256,7 @@
           "datasets"
         ],
         "summary": "Upload Dataset",
-        "description": "Upload an independent survey as an evaluation-only dataset. Columns are detected\nunless named; rows of other species are dropped when the file has a species column.",
+        "description": "Upload a survey as an evaluation dataset (default) or as training data. Columns are\ndetected unless named; rows of other species are dropped when the file has a species\ncolumn. A training upload flags the species for retraining.",
         "operationId": "uploadReferenceDataset",
         "parameters": [
           {
@@ -782,7 +1309,7 @@
           "datasets"
         ],
         "summary": "Delete Dataset",
-        "description": "Remove an uploaded dataset and its records. Scores already stored with model versions\nstay in their lineage. GBIF absences are managed by the pipeline and cannot be removed.",
+        "description": "Remove an uploaded dataset and its records. Scores already stored with model versions\nstay in their lineage; removing a training upload flags the species for retraining. GBIF\nabsences are managed by the pipeline and cannot be removed.",
         "operationId": "deleteReferenceDataset",
         "parameters": [
           {
@@ -850,6 +1377,434 @@
                 }
               }
             }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/species/{taxon_key}/annotations": {
+      "get": {
+        "tags": [
+          "annotations"
+        ],
+        "summary": "List Annotations",
+        "description": "Annotation history, newest first (optionally for one record).",
+        "operationId": "listAnnotations",
+        "parameters": [
+          {
+            "name": "taxon_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Taxon Key"
+            }
+          },
+          {
+            "name": "source",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "GBIF",
+                    "iNaturalist"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Source"
+            }
+          },
+          {
+            "name": "record_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Record Id"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 1000,
+              "minimum": 1,
+              "default": 200,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AnnotationOut"
+                  },
+                  "title": "Response Listannotations"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "annotations"
+        ],
+        "summary": "Create Annotation",
+        "description": "Annotate one GBIF / iNaturalist record (curator). A correction is a newer annotation;\nnothing is ever overwritten. Flags a retrain when the species has a model.",
+        "operationId": "createAnnotation",
+        "parameters": [
+          {
+            "name": "taxon_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Taxon Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnnotationIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnnotationResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/species/{taxon_key}/alerts": {
+      "get": {
+        "tags": [
+          "alerts"
+        ],
+        "summary": "Species Alerts",
+        "operationId": "listSpeciesAlerts",
+        "parameters": [
+          {
+            "name": "taxon_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Taxon Key"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AlertOut"
+                  },
+                  "title": "Response Listspeciesalerts"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/alerts": {
+      "get": {
+        "tags": [
+          "alerts"
+        ],
+        "summary": "All Alerts",
+        "operationId": "listAlerts",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AlertOut"
+                  },
+                  "title": "Response Listalerts"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/alerts/feed.xml": {
+      "get": {
+        "tags": [
+          "alerts"
+        ],
+        "summary": "Feed",
+        "description": "RSS 2.0 feed of alerts (all species, or one).",
+        "operationId": "alertFeed",
+        "parameters": [
+          {
+            "name": "taxon_key",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Taxon Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/rss+xml": {}
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/alerts/subscriptions": {
+      "get": {
+        "tags": [
+          "alerts"
+        ],
+        "summary": "List Subscriptions",
+        "description": "Subscriptions covering one species (its own + all-species), or all.",
+        "operationId": "listAlertSubscriptions",
+        "parameters": [
+          {
+            "name": "taxon_key",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Taxon Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AlertSubscriptionOut"
+                  },
+                  "title": "Response Listalertsubscriptions"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "alerts"
+        ],
+        "summary": "Create Subscription",
+        "operationId": "createAlertSubscription",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AlertSubscriptionIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AlertSubscriptionOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/alerts/subscriptions/{subscription_id}": {
+      "delete": {
+        "tags": [
+          "alerts"
+        ],
+        "summary": "Delete Subscription",
+        "operationId": "deleteAlertSubscription",
+        "parameters": [
+          {
+            "name": "subscription_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Subscription Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
           },
           "422": {
             "description": "Validation Error",
@@ -962,6 +1917,442 @@
         }
       }
     },
+    "/species/{taxon_key}/models/{model_version}/exports": {
+      "get": {
+        "tags": [
+          "exports"
+        ],
+        "summary": "Index",
+        "operationId": "listExports",
+        "parameters": [
+          {
+            "name": "taxon_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Taxon Key"
+            }
+          },
+          {
+            "name": "model_version",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Model Version"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExportIndex"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/species/{taxon_key}/models/{model_version}/exports/raster/{layer}": {
+      "get": {
+        "tags": [
+          "exports"
+        ],
+        "summary": "Raster",
+        "operationId": "downloadExportRaster",
+        "parameters": [
+          {
+            "name": "taxon_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Taxon Key"
+            }
+          },
+          {
+            "name": "model_version",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Model Version"
+            }
+          },
+          {
+            "name": "layer",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Layer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "image/tiff": {}
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/species/{taxon_key}/models/{model_version}/exports/occurrences.gpkg": {
+      "get": {
+        "tags": [
+          "exports"
+        ],
+        "summary": "Geopackage",
+        "operationId": "downloadExportGeoPackage",
+        "parameters": [
+          {
+            "name": "taxon_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Taxon Key"
+            }
+          },
+          {
+            "name": "model_version",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Model Version"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/geopackage+sqlite3": {}
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/species/{taxon_key}/models/{model_version}/exports/odmap": {
+      "get": {
+        "tags": [
+          "exports"
+        ],
+        "summary": "Odmap",
+        "operationId": "getOdmap",
+        "parameters": [
+          {
+            "name": "taxon_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Taxon Key"
+            }
+          },
+          {
+            "name": "model_version",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Model Version"
+            }
+          },
+          {
+            "name": "format",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "json",
+                "md"
+              ],
+              "type": "string",
+              "default": "json",
+              "title": "Format"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OdmapReport"
+                }
+              },
+              "text/markdown": {}
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/species/{taxon_key}/models/{model_version}/exports/model-card": {
+      "get": {
+        "tags": [
+          "exports"
+        ],
+        "summary": "Get Model Card",
+        "description": "U13: plain-language summary, the confidence label and caveats first.",
+        "operationId": "getModelCard",
+        "parameters": [
+          {
+            "name": "taxon_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Taxon Key"
+            }
+          },
+          {
+            "name": "model_version",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Model Version"
+            }
+          },
+          {
+            "name": "format",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "json",
+                "md"
+              ],
+              "type": "string",
+              "default": "json",
+              "title": "Format"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelCardOut"
+                }
+              },
+              "text/markdown": {}
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/species/{taxon_key}/models/{model_version}/exports/stac": {
+      "get": {
+        "tags": [
+          "exports"
+        ],
+        "summary": "Stac",
+        "operationId": "getStacItem",
+        "parameters": [
+          {
+            "name": "taxon_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Taxon Key"
+            }
+          },
+          {
+            "name": "model_version",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Model Version"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StacItem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/species/{taxon_key}/models/{model_version}/exports/citation": {
+      "get": {
+        "tags": [
+          "exports"
+        ],
+        "summary": "Citation",
+        "operationId": "getCitationBundle",
+        "parameters": [
+          {
+            "name": "taxon_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Taxon Key"
+            }
+          },
+          {
+            "name": "model_version",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Model Version"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/species/{taxon_key}/models/{model_version}/exports/bundle.zip": {
+      "get": {
+        "tags": [
+          "exports"
+        ],
+        "summary": "Bundle",
+        "operationId": "downloadExportBundle",
+        "parameters": [
+          {
+            "name": "taxon_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Taxon Key"
+            }
+          },
+          {
+            "name": "model_version",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Model Version"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/zip": {}
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/species/{taxon_key}/layers": {
       "get": {
         "tags": [
@@ -993,6 +2384,22 @@
                 }
               ],
               "title": "Model Version"
+            }
+          },
+          {
+            "name": "threshold",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Threshold"
             }
           }
         ],
@@ -1445,10 +2852,618 @@
           }
         }
       }
+    },
+    "/validation/benchmark": {
+      "get": {
+        "tags": [
+          "validation"
+        ],
+        "summary": "Latest Benchmark",
+        "description": "Latest virtual-species bias benchmark: which bias correction recovers a known niche.",
+        "operationId": "getVirtualSpeciesBenchmark",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BenchmarkReport"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "validation"
+        ],
+        "summary": "Run Benchmark",
+        "operationId": "runVirtualSpeciesBenchmark",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BenchmarkRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
     "schemas": {
+      "AlertOut": {
+        "properties": {
+          "alert_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Alert Id"
+          },
+          "taxon_key": {
+            "type": "integer",
+            "title": "Taxon Key"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "outside_envelope",
+              "outside_known_range"
+            ],
+            "title": "Kind"
+          },
+          "n_records": {
+            "type": "integer",
+            "title": "N Records"
+          },
+          "records": {
+            "items": {
+              "$ref": "#/components/schemas/AlertRecordOut"
+            },
+            "type": "array",
+            "title": "Records"
+          },
+          "summary": {
+            "type": "string",
+            "title": "Summary"
+          },
+          "model_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Version"
+          },
+          "effort_classes": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Effort Classes",
+            "description": "B10: expansion (cell sampled before) / discovery (unsampled) / unknown"
+          },
+          "deliveries": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Deliveries"
+          },
+          "created_ts": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created Ts"
+          }
+        },
+        "type": "object",
+        "required": [
+          "alert_id",
+          "taxon_key",
+          "kind",
+          "n_records",
+          "records",
+          "summary",
+          "effort_classes",
+          "deliveries",
+          "created_ts"
+        ],
+        "title": "AlertOut"
+      },
+      "AlertRecordOut": {
+        "properties": {
+          "source": {
+            "type": "string",
+            "enum": [
+              "GBIF",
+              "iNaturalist"
+            ],
+            "title": "Source"
+          },
+          "record_id": {
+            "type": "integer",
+            "title": "Record Id"
+          },
+          "longitude": {
+            "type": "number",
+            "title": "Longitude"
+          },
+          "latitude": {
+            "type": "number",
+            "title": "Latitude"
+          },
+          "event_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Event Date"
+          },
+          "suitability": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Suitability"
+          },
+          "distance_km": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Distance Km"
+          },
+          "effort_class": {
+            "type": "string",
+            "enum": [
+              "expansion",
+              "discovery",
+              "unknown"
+            ],
+            "title": "Effort Class"
+          }
+        },
+        "type": "object",
+        "required": [
+          "source",
+          "record_id",
+          "longitude",
+          "latitude",
+          "effort_class"
+        ],
+        "title": "AlertRecordOut"
+      },
+      "AlertSubscriptionIn": {
+        "properties": {
+          "channel": {
+            "type": "string",
+            "enum": [
+              "webhook",
+              "email"
+            ],
+            "title": "Channel"
+          },
+          "target": {
+            "type": "string",
+            "maxLength": 500,
+            "minLength": 3,
+            "title": "Target",
+            "description": "https URL or e-mail address"
+          },
+          "taxon_key": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Taxon Key",
+            "description": "null = every species"
+          },
+          "kinds": {
+            "items": {
+              "type": "string",
+              "enum": [
+                "outside_envelope",
+                "outside_known_range"
+              ]
+            },
+            "type": "array",
+            "minItems": 1,
+            "title": "Kinds"
+          }
+        },
+        "type": "object",
+        "required": [
+          "channel",
+          "target"
+        ],
+        "title": "AlertSubscriptionIn"
+      },
+      "AlertSubscriptionOut": {
+        "properties": {
+          "subscription_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Subscription Id"
+          },
+          "channel": {
+            "type": "string",
+            "enum": [
+              "webhook",
+              "email"
+            ],
+            "title": "Channel"
+          },
+          "target": {
+            "type": "string",
+            "title": "Target"
+          },
+          "taxon_key": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Taxon Key"
+          },
+          "kinds": {
+            "items": {
+              "type": "string",
+              "enum": [
+                "outside_envelope",
+                "outside_known_range"
+              ]
+            },
+            "type": "array",
+            "title": "Kinds"
+          },
+          "created_by": {
+            "type": "string",
+            "title": "Created By"
+          },
+          "created_ts": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created Ts"
+          }
+        },
+        "type": "object",
+        "required": [
+          "subscription_id",
+          "channel",
+          "target",
+          "kinds",
+          "created_by",
+          "created_ts"
+        ],
+        "title": "AlertSubscriptionOut"
+      },
+      "AlgorithmInfo": {
+        "properties": {
+          "requested": {
+            "type": "string",
+            "enum": [
+              "maxent",
+              "ensemble",
+              "integrated",
+              "ppm"
+            ],
+            "title": "Requested"
+          },
+          "used": {
+            "type": "string",
+            "enum": [
+              "maxent",
+              "ensemble",
+              "integrated",
+              "ppm"
+            ],
+            "title": "Used"
+          },
+          "fallback_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fallback Reason"
+          },
+          "point_process": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Point Process",
+            "description": "Point process: bias mode used, shared-bias estimate, fallback"
+          }
+        },
+        "type": "object",
+        "required": [
+          "requested",
+          "used"
+        ],
+        "title": "AlgorithmInfo"
+      },
+      "AnnotationIn": {
+        "properties": {
+          "source": {
+            "type": "string",
+            "enum": [
+              "GBIF",
+              "iNaturalist"
+            ],
+            "title": "Source"
+          },
+          "record_id": {
+            "type": "integer",
+            "title": "Record Id"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "range_label",
+              "exclude",
+              "cultivated",
+              "verified"
+            ],
+            "title": "Kind"
+          },
+          "value": {
+            "type": "string",
+            "title": "Value",
+            "description": "range_label: native | introduced | unknown; others: true | false"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 2000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          }
+        },
+        "type": "object",
+        "required": [
+          "source",
+          "record_id",
+          "kind",
+          "value"
+        ],
+        "title": "AnnotationIn"
+      },
+      "AnnotationOut": {
+        "properties": {
+          "annotation_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Annotation Id"
+          },
+          "taxon_key": {
+            "type": "integer",
+            "title": "Taxon Key"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "GBIF",
+              "iNaturalist"
+            ],
+            "title": "Source"
+          },
+          "record_id": {
+            "type": "integer",
+            "title": "Record Id"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "range_label",
+              "exclude",
+              "cultivated",
+              "verified"
+            ],
+            "title": "Kind"
+          },
+          "value": {
+            "type": "string",
+            "title": "Value"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "author": {
+            "type": "string",
+            "title": "Author"
+          },
+          "created_ts": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created Ts"
+          }
+        },
+        "type": "object",
+        "required": [
+          "annotation_id",
+          "taxon_key",
+          "source",
+          "record_id",
+          "kind",
+          "value",
+          "author",
+          "created_ts"
+        ],
+        "title": "AnnotationOut"
+      },
+      "AnnotationResult": {
+        "properties": {
+          "annotation": {
+            "$ref": "#/components/schemas/AnnotationOut"
+          },
+          "retrain_flagged": {
+            "type": "boolean",
+            "title": "Retrain Flagged",
+            "description": "The current model no longer reflects the data"
+          }
+        },
+        "type": "object",
+        "required": [
+          "annotation",
+          "retrain_flagged"
+        ],
+        "title": "AnnotationResult"
+      },
+      "AnnotationsInfo": {
+        "properties": {
+          "n_records_annotated": {
+            "type": "integer",
+            "title": "N Records Annotated",
+            "default": 0
+          },
+          "n_annotations": {
+            "type": "integer",
+            "title": "N Annotations",
+            "default": 0
+          },
+          "n_excluded_by_annotation": {
+            "type": "integer",
+            "title": "N Excluded By Annotation",
+            "default": 0
+          },
+          "n_excluded_suspicious": {
+            "type": "integer",
+            "title": "N Excluded Suspicious",
+            "default": 0
+          },
+          "n_excluded_cultivated": {
+            "type": "integer",
+            "title": "N Excluded Cultivated",
+            "default": 0
+          },
+          "n_kept_verified": {
+            "type": "integer",
+            "title": "N Kept Verified",
+            "default": 0
+          },
+          "n_label_overrides": {
+            "type": "integer",
+            "title": "N Label Overrides",
+            "default": 0
+          },
+          "rules": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rules"
+          },
+          "snapshot": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TrainingSnapshotInfo"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "AnnotationsInfo",
+        "description": "Expert annotations applied to this version's training set (U11)."
+      },
+      "AreaShareOut": {
+        "properties": {
+          "variable": {
+            "type": "string",
+            "title": "Variable"
+          },
+          "area_km2": {
+            "type": "number",
+            "title": "Area Km2"
+          },
+          "fraction": {
+            "type": "number",
+            "title": "Fraction"
+          }
+        },
+        "type": "object",
+        "required": [
+          "variable",
+          "area_km2",
+          "fraction"
+        ],
+        "title": "AreaShareOut"
+      },
       "BackgroundInfo": {
         "properties": {
           "method": {
@@ -1485,6 +3500,18 @@
             ],
             "title": "Fallback Reason",
             "description": "Why target-group background was not used, if it was requested"
+          },
+          "bias_covariate_override": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bias Covariate Override",
+            "description": "Bias covariate that replaced the target-group background (bias modelled explicitly; background uniform in the buffer)"
           }
         },
         "type": "object",
@@ -1494,6 +3521,501 @@
           "buffer_km"
         ],
         "title": "BackgroundInfo"
+      },
+      "BatchRunRequest": {
+        "properties": {
+          "force_retrain": {
+            "type": "boolean",
+            "title": "Force Retrain",
+            "default": false
+          },
+          "only_registered": {
+            "type": "boolean",
+            "title": "Only Registered",
+            "description": "Skip species not yet in the registry (no first-time downloads)",
+            "default": false
+          }
+        },
+        "type": "object",
+        "title": "BatchRunRequest"
+      },
+      "BenchmarkReport": {
+        "properties": {
+          "benchmark_id": {
+            "type": "string",
+            "title": "Benchmark Id"
+          },
+          "created_ts": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created Ts"
+          },
+          "request": {
+            "$ref": "#/components/schemas/BenchmarkRequest"
+          },
+          "virtual_species": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Virtual Species"
+          },
+          "bias": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Bias"
+          },
+          "n_presences": {
+            "type": "integer",
+            "title": "N Presences"
+          },
+          "n_evaluation_cells": {
+            "type": "integer",
+            "title": "N Evaluation Cells"
+          },
+          "variants": {
+            "items": {
+              "$ref": "#/components/schemas/BenchmarkVariant"
+            },
+            "type": "array",
+            "title": "Variants"
+          },
+          "best_variant": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Best Variant"
+          },
+          "interpretation": {
+            "type": "string",
+            "title": "Interpretation"
+          }
+        },
+        "type": "object",
+        "required": [
+          "benchmark_id",
+          "created_ts",
+          "request",
+          "virtual_species",
+          "bias",
+          "n_presences",
+          "n_evaluation_cells",
+          "variants",
+          "interpretation"
+        ],
+        "title": "BenchmarkReport"
+      },
+      "BenchmarkRequest": {
+        "properties": {
+          "n_presences": {
+            "type": "integer",
+            "maximum": 5000.0,
+            "minimum": 50.0,
+            "title": "N Presences",
+            "default": 300
+          },
+          "bias": {
+            "type": "string",
+            "enum": [
+              "synthetic",
+              "gbif_effort"
+            ],
+            "title": "Bias",
+            "description": "synthetic: effort decays from a few 'cities'; gbif_effort: the real GBIF effort of `target_group_key` (map API)",
+            "default": "synthetic"
+          },
+          "target_group_key": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Group Key",
+            "description": "GBIF key, e.g. an order"
+          },
+          "bias_strength": {
+            "type": "number",
+            "maximum": 10.0,
+            "minimum": 0.0,
+            "title": "Bias Strength",
+            "description": "Exponent on the effort surface",
+            "default": 3.0
+          },
+          "variants": {
+            "items": {
+              "type": "string",
+              "enum": [
+                "no_correction",
+                "target_group",
+                "bias_covariate",
+                "density_weights"
+              ]
+            },
+            "type": "array",
+            "minItems": 1,
+            "title": "Variants"
+          },
+          "region": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "number"
+                },
+                "type": "array",
+                "maxItems": 4,
+                "minItems": 4
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Region",
+            "description": "[w, s, e, n]; null = global land"
+          },
+          "seed": {
+            "type": "integer",
+            "title": "Seed",
+            "default": 42
+          }
+        },
+        "type": "object",
+        "title": "BenchmarkRequest"
+      },
+      "BenchmarkVariant": {
+        "properties": {
+          "variant": {
+            "type": "string",
+            "title": "Variant"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description"
+          },
+          "spearman_vs_truth": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Spearman Vs Truth"
+          },
+          "schoeners_d": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Schoeners D"
+          },
+          "auc_vs_true_occupancy": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auc Vs True Occupancy"
+          },
+          "cv_cbi_mean": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cv Cbi Mean",
+            "description": "What spatial CV on the biased data says"
+          },
+          "cv_auc_mean": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cv Auc Mean"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          }
+        },
+        "type": "object",
+        "required": [
+          "variant",
+          "description"
+        ],
+        "title": "BenchmarkVariant"
+      },
+      "BiasCovariatesInfo": {
+        "properties": {
+          "method": {
+            "type": "string",
+            "enum": [
+              "none",
+              "target_group_effort"
+            ],
+            "title": "Method"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "used",
+                  "unavailable"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "covariate": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Covariate"
+          },
+          "transform": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Transform"
+          },
+          "condition": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "max",
+                  "p95",
+                  "estimated",
+                  "offset"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Condition"
+          },
+          "conditioning_value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Conditioning Value"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "reference": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reference"
+          },
+          "target_group": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Group"
+          },
+          "n_records": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "N Records"
+          },
+          "pixel_deg": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pixel Deg"
+          },
+          "map_zoom": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Map Zoom"
+          },
+          "query": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Query"
+          },
+          "fetched_ts": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fetched Ts"
+          },
+          "presence_mean": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Presence Mean"
+          },
+          "background_mean": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Background Mean"
+          },
+          "background_note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Background Note"
+          },
+          "importance": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "number"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Importance",
+            "description": "Permutation importance (%) of the covariate itself"
+          },
+          "static_layers": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/StaticBiasLayerInfo"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Static Layers"
+          }
+        },
+        "type": "object",
+        "required": [
+          "method"
+        ],
+        "title": "BiasCovariatesInfo",
+        "description": "Bias covariate fitted with the model and held constant for prediction."
       },
       "BioclimInfo": {
         "properties": {
@@ -1604,6 +4126,16 @@
             "maxLength": 200,
             "minLength": 1,
             "title": "Name"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "evaluation",
+              "training"
+            ],
+            "title": "Role",
+            "description": "evaluation (default): independent test data, never trained on. training: presences join the next model's training set",
+            "default": "evaluation"
           },
           "citation": {
             "anyOf": [
@@ -1796,6 +4328,145 @@
           "html_available"
         ],
         "title": "BulletinStatus"
+      },
+      "ChangeSummaryOut": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "available",
+              "unavailable"
+            ],
+            "title": "Status",
+            "default": "available"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "from_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "From Version"
+          },
+          "to_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "To Version"
+          },
+          "codes": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Codes"
+          },
+          "gain_km2": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gain Km2"
+          },
+          "loss_km2": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Loss Km2"
+          },
+          "stable_suitable_km2": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stable Suitable Km2"
+          },
+          "stable_unsuitable_km2": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stable Unsuitable Km2"
+          },
+          "net_change_fraction": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Net Change Fraction"
+          },
+          "before_threshold": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Before Threshold"
+          },
+          "after_threshold": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "After Threshold"
+          }
+        },
+        "type": "object",
+        "title": "ChangeSummaryOut"
       },
       "ClimateCrossCheckOut": {
         "properties": {
@@ -2052,6 +4723,12 @@
             "title": "N Issues Unknown",
             "default": 0
           },
+          "n_details_unknown": {
+            "type": "integer",
+            "title": "N Details Unknown",
+            "description": "Records ingested before locality / collector / identification details",
+            "default": 0
+          },
           "n_undated": {
             "type": "integer",
             "title": "N Undated",
@@ -2203,6 +4880,359 @@
           "dataset"
         ],
         "title": "DatasetUploadResult"
+      },
+      "EffectiveAnnotationOut": {
+        "properties": {
+          "range_label": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "native",
+                  "introduced",
+                  "unknown"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Range Label"
+          },
+          "exclude": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exclude"
+          },
+          "cultivated": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cultivated"
+          },
+          "verified": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verified"
+          },
+          "n_annotations": {
+            "type": "integer",
+            "title": "N Annotations"
+          },
+          "last_author": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Author"
+          },
+          "last_ts": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Ts"
+          }
+        },
+        "type": "object",
+        "required": [
+          "n_annotations"
+        ],
+        "title": "EffectiveAnnotationOut"
+      },
+      "EnsembleAgreementOut": {
+        "properties": {
+          "rule": {
+            "type": "string",
+            "title": "Rule"
+          },
+          "land_mean": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Land Mean"
+          },
+          "candidate_mean": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Candidate Mean"
+          },
+          "low_agreement_land_fraction": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Low Agreement Land Fraction"
+          },
+          "low_agreement_below": {
+            "type": "number",
+            "title": "Low Agreement Below"
+          }
+        },
+        "type": "object",
+        "required": [
+          "rule",
+          "low_agreement_below"
+        ],
+        "title": "EnsembleAgreementOut"
+      },
+      "EnsembleMemberOut": {
+        "properties": {
+          "algorithm": {
+            "type": "string",
+            "enum": [
+              "maxent",
+              "glm",
+              "gam",
+              "rf",
+              "brt"
+            ],
+            "title": "Algorithm"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "included": {
+            "type": "boolean",
+            "title": "Included"
+          },
+          "weight": {
+            "type": "number",
+            "title": "Weight"
+          },
+          "threshold": {
+            "type": "number",
+            "title": "Threshold"
+          },
+          "auc_mean": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auc Mean"
+          },
+          "auc_std": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auc Std"
+          },
+          "cbi_mean": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cbi Mean"
+          },
+          "cbi_std": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cbi Std"
+          },
+          "tss_mean": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tss Mean"
+          },
+          "tss_std": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tss Std"
+          },
+          "n_cv_folds": {
+            "type": "integer",
+            "title": "N Cv Folds"
+          },
+          "params": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Params"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          }
+        },
+        "type": "object",
+        "required": [
+          "algorithm",
+          "label",
+          "included",
+          "weight",
+          "threshold",
+          "n_cv_folds",
+          "params"
+        ],
+        "title": "EnsembleMemberOut"
+      },
+      "EnsembleOut": {
+        "properties": {
+          "members": {
+            "items": {
+              "$ref": "#/components/schemas/EnsembleMemberOut"
+            },
+            "type": "array",
+            "title": "Members"
+          },
+          "weighting": {
+            "type": "string",
+            "title": "Weighting"
+          },
+          "cv_test_set": {
+            "type": "string",
+            "title": "Cv Test Set"
+          },
+          "reference": {
+            "type": "string",
+            "title": "Reference"
+          }
+        },
+        "type": "object",
+        "required": [
+          "members",
+          "weighting",
+          "cv_test_set",
+          "reference"
+        ],
+        "title": "EnsembleOut"
+      },
+      "ExportIndex": {
+        "properties": {
+          "taxon_key": {
+            "type": "integer",
+            "title": "Taxon Key"
+          },
+          "model_version": {
+            "type": "integer",
+            "title": "Model Version"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ExportItem"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "type": "object",
+        "required": [
+          "taxon_key",
+          "model_version",
+          "items"
+        ],
+        "title": "ExportIndex"
+      },
+      "ExportItem": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "url": {
+            "type": "string",
+            "title": "Url"
+          },
+          "media_type": {
+            "type": "string",
+            "title": "Media Type"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "label",
+          "url",
+          "media_type",
+          "description"
+        ],
+        "title": "ExportItem"
       },
       "ExtrapolationDiagnosticOut": {
         "properties": {
@@ -2435,6 +5465,100 @@
           "cbi"
         ],
         "title": "FoldMetricsOut"
+      },
+      "GcmEnsembleOut": {
+        "properties": {
+          "ssp": {
+            "type": "string",
+            "title": "Ssp"
+          },
+          "period": {
+            "type": "string",
+            "title": "Period"
+          },
+          "gcms": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Gcms"
+          },
+          "n_gcms": {
+            "type": "integer",
+            "title": "N Gcms"
+          },
+          "threshold": {
+            "type": "number",
+            "title": "Threshold",
+            "description": "Model threshold each GCM's map is binarised at"
+          },
+          "combination": {
+            "type": "string",
+            "title": "Combination"
+          },
+          "suitable_all_gcms_land_fraction": {
+            "type": "number",
+            "title": "Suitable All Gcms Land Fraction"
+          },
+          "suitable_majority_land_fraction": {
+            "type": "number",
+            "title": "Suitable Majority Land Fraction"
+          },
+          "suitable_any_gcm_land_fraction": {
+            "type": "number",
+            "title": "Suitable Any Gcm Land Fraction"
+          },
+          "gcm_disagreement_land_fraction": {
+            "type": "number",
+            "title": "Gcm Disagreement Land Fraction",
+            "description": "Share of land suitable under some but not all GCMs"
+          },
+          "extrapolated_any_gcm_land_fraction": {
+            "type": "number",
+            "title": "Extrapolated Any Gcm Land Fraction"
+          },
+          "extrapolated_all_gcms_land_fraction": {
+            "type": "number",
+            "title": "Extrapolated All Gcms Land Fraction"
+          },
+          "land_fraction_by_votes": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "type": "object",
+            "title": "Land Fraction By Votes",
+            "description": "Share of land by number of GCMs calling it suitable"
+          },
+          "agreement": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RasterLayer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Number of GCMs calling each cell suitable (map layer)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ssp",
+          "period",
+          "gcms",
+          "n_gcms",
+          "threshold",
+          "combination",
+          "suitable_all_gcms_land_fraction",
+          "suitable_majority_land_fraction",
+          "suitable_any_gcm_land_fraction",
+          "gcm_disagreement_land_fraction",
+          "extrapolated_any_gcm_land_fraction",
+          "extrapolated_all_gcms_land_fraction",
+          "land_fraction_by_votes"
+        ],
+        "title": "GcmEnsembleOut",
+        "description": "U7: one SSP \u00d7 period combined across GCMs (the scenario entry `ensemble_<ssp>_<period>`)."
       },
       "GeoJSONMultiPolygon": {
         "properties": {
@@ -2768,6 +5892,318 @@
         "title": "IndependentMetricsOut",
         "description": "Scores on records the model never saw (modeling/evaluation.independent_evaluation)."
       },
+      "InferredAbsencesOut": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "evaluated",
+              "insufficient",
+              "unavailable",
+              "disabled"
+            ],
+            "title": "Status"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "zone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Zone"
+          },
+          "min_records": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Records"
+          },
+          "min_distance_km": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Distance Km"
+          },
+          "target_group": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Group"
+          },
+          "n_effort_pixels": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "N Effort Pixels"
+          },
+          "n_well_sampled": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "N Well Sampled"
+          },
+          "n_without_presence": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "N Without Presence"
+          },
+          "n_sampled": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "N Sampled"
+          },
+          "n": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "N"
+          },
+          "threshold": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Threshold"
+          },
+          "specificity": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Specificity",
+            "description": "Share of inferred absences < threshold"
+          },
+          "mean_suitability": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mean Suitability"
+          },
+          "auc_training_presence_vs_inferred": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auc Training Presence Vs Inferred"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "title": "InferredAbsencesOut"
+      },
+      "IntegratedOut": {
+        "properties": {
+          "method": {
+            "type": "string",
+            "title": "Method"
+          },
+          "reference": {
+            "type": "string",
+            "title": "Reference"
+          },
+          "features": {
+            "type": "string",
+            "title": "Features"
+          },
+          "l2_penalty": {
+            "type": "number",
+            "title": "L2 Penalty"
+          },
+          "converged": {
+            "type": "boolean",
+            "title": "Converged"
+          },
+          "iterations": {
+            "type": "integer",
+            "title": "Iterations"
+          },
+          "neg_log_likelihood": {
+            "type": "number",
+            "title": "Neg Log Likelihood"
+          },
+          "n_presence_only": {
+            "type": "integer",
+            "title": "N Presence Only"
+          },
+          "n_quadrature": {
+            "type": "integer",
+            "title": "N Quadrature"
+          },
+          "n_pa_present": {
+            "type": "integer",
+            "title": "N Pa Present"
+          },
+          "n_pa_absent": {
+            "type": "integer",
+            "title": "N Pa Absent"
+          },
+          "intercept_presence_absence": {
+            "type": "number",
+            "title": "Intercept Presence Absence"
+          },
+          "intercept_presence_only": {
+            "type": "number",
+            "title": "Intercept Presence Only"
+          },
+          "coefficients": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "type": "object",
+            "title": "Coefficients"
+          },
+          "bias_coefficients": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "type": "object",
+            "title": "Bias Coefficients",
+            "description": "Estimated observer-bias coefficients (presence-only data only)"
+          },
+          "prediction": {
+            "type": "string",
+            "title": "Prediction"
+          },
+          "cv_survey_auc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Cv Survey Auc"
+          },
+          "cv_survey_auc_mean": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cv Survey Auc Mean"
+          },
+          "presence_weights_used": {
+            "type": "boolean",
+            "title": "Presence Weights Used"
+          }
+        },
+        "type": "object",
+        "required": [
+          "method",
+          "reference",
+          "features",
+          "l2_penalty",
+          "converged",
+          "iterations",
+          "neg_log_likelihood",
+          "n_presence_only",
+          "n_quadrature",
+          "n_pa_present",
+          "n_pa_absent",
+          "intercept_presence_absence",
+          "intercept_presence_only",
+          "coefficients",
+          "bias_coefficients",
+          "prediction",
+          "cv_survey_auc",
+          "presence_weights_used"
+        ],
+        "title": "IntegratedOut"
+      },
       "JobKind": {
         "type": "string",
         "enum": [
@@ -2777,7 +6213,11 @@
           "validation",
           "crosscheck",
           "hires",
-          "evaluation"
+          "evaluation",
+          "benchmark",
+          "batch",
+          "target_groups",
+          "shared_bias"
         ],
         "title": "JobKind"
       },
@@ -3065,6 +6505,14 @@
             ],
             "description": "Evaluation-only reference records (uploads, GBIF absences)"
           },
+          "products": {
+            "items": {
+              "$ref": "#/components/schemas/RasterLayer"
+            },
+            "type": "array",
+            "title": "Products",
+            "description": "Further map products: binary maps per threshold rule, limiting factor, ensemble agreement, change since the previous version, survey priority"
+          },
           "caveats": {
             "anyOf": [
               {
@@ -3107,6 +6555,211 @@
           "label"
         ],
         "title": "LegendEntry"
+      },
+      "LimitingFactorOut": {
+        "properties": {
+          "rule": {
+            "type": "string",
+            "title": "Rule"
+          },
+          "land": {
+            "items": {
+              "$ref": "#/components/schemas/AreaShareOut"
+            },
+            "type": "array",
+            "title": "Land"
+          },
+          "candidate": {
+            "items": {
+              "$ref": "#/components/schemas/AreaShareOut"
+            },
+            "type": "array",
+            "title": "Candidate"
+          }
+        },
+        "type": "object",
+        "required": [
+          "rule",
+          "land",
+          "candidate"
+        ],
+        "title": "LimitingFactorOut"
+      },
+      "MeOut": {
+        "properties": {
+          "user": {
+            "type": "string",
+            "title": "User"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "viewer",
+              "analyst",
+              "curator"
+            ],
+            "title": "Role"
+          },
+          "auth_mode": {
+            "type": "string",
+            "enum": [
+              "none",
+              "header"
+            ],
+            "title": "Auth Mode"
+          },
+          "permissions": {
+            "additionalProperties": {
+              "type": "boolean"
+            },
+            "type": "object",
+            "title": "Permissions",
+            "description": "What this user may do: run (analyst), curate (confirm native ranges, annotate records)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "user",
+          "role",
+          "auth_mode",
+          "permissions"
+        ],
+        "title": "MeOut"
+      },
+      "ModelCardFact": {
+        "properties": {
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "value": {
+            "type": "string",
+            "title": "Value"
+          }
+        },
+        "type": "object",
+        "required": [
+          "label",
+          "value"
+        ],
+        "title": "ModelCardFact"
+      },
+      "ModelCardOut": {
+        "properties": {
+          "taxon_key": {
+            "type": "integer",
+            "title": "Taxon Key"
+          },
+          "scientific_name": {
+            "type": "string",
+            "title": "Scientific Name"
+          },
+          "model_version": {
+            "type": "integer",
+            "title": "Model Version"
+          },
+          "generated_ts": {
+            "type": "string",
+            "title": "Generated Ts"
+          },
+          "confidence_label": {
+            "type": "string",
+            "enum": [
+              "standard",
+              "lower"
+            ],
+            "title": "Confidence Label"
+          },
+          "model_type": {
+            "type": "string",
+            "enum": [
+              "A",
+              "B"
+            ],
+            "title": "Model Type"
+          },
+          "headline": {
+            "type": "string",
+            "title": "Headline"
+          },
+          "transferability_caveat": {
+            "type": "string",
+            "title": "Transferability Caveat"
+          },
+          "caveats": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Caveats",
+            "description": "Shown before anything else, in this order"
+          },
+          "sections": {
+            "items": {
+              "$ref": "#/components/schemas/ModelCardSection"
+            },
+            "type": "array",
+            "title": "Sections"
+          },
+          "citation": {
+            "type": "string",
+            "title": "Citation"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source"
+          }
+        },
+        "type": "object",
+        "required": [
+          "taxon_key",
+          "scientific_name",
+          "model_version",
+          "generated_ts",
+          "confidence_label",
+          "model_type",
+          "headline",
+          "transferability_caveat",
+          "caveats",
+          "sections",
+          "citation",
+          "source"
+        ],
+        "title": "ModelCardOut",
+        "description": "Plain-language summary of one model version; confidence and caveats come first."
+      },
+      "ModelCardSection": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "paragraphs": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Paragraphs"
+          },
+          "facts": {
+            "items": {
+              "$ref": "#/components/schemas/ModelCardFact"
+            },
+            "type": "array",
+            "title": "Facts"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "paragraphs"
+        ],
+        "title": "ModelCardSection"
       },
       "ModelSummary": {
         "properties": {
@@ -3337,6 +6990,22 @@
             ],
             "title": "Mlflow Run Id"
           },
+          "algorithm": {
+            "type": "string",
+            "enum": [
+              "maxent",
+              "ensemble",
+              "integrated",
+              "ppm"
+            ],
+            "title": "Algorithm",
+            "default": "maxent"
+          },
+          "threshold_rule": {
+            "type": "string",
+            "title": "Threshold Rule",
+            "default": "10th percentile training presence"
+          },
           "reproducibility": {
             "$ref": "#/components/schemas/ReproducibilityInfo"
           },
@@ -3344,9 +7013,13 @@
             "type": "number",
             "title": "Threshold"
           },
-          "threshold_rule": {
-            "type": "string",
-            "title": "Threshold Rule"
+          "thresholds": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ThresholdOut"
+            },
+            "type": "object",
+            "title": "Thresholds",
+            "description": "Every threshold rule (empty for older versions)"
           },
           "cv_method": {
             "type": "string",
@@ -3412,6 +7085,77 @@
             "type": "array",
             "title": "Crosschecks"
           },
+          "response_curves": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ResponseCurvesOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "ensemble": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EnsembleOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "integrated": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IntegratedOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "point_process": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PointProcessOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "inferred_absences": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/InferredAbsencesOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "change_previous": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ChangeSummaryOut"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Binary change against the previous version (U6)"
+          },
+          "survey_priority": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SurveyPriorityOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "sampling_effort": {
             "anyOf": [
               {
@@ -3438,7 +7182,6 @@
           "beta_multiplier",
           "reproducibility",
           "threshold",
-          "threshold_rule",
           "cv_method",
           "predictors",
           "variable_importance",
@@ -3588,6 +7331,22 @@
               }
             ],
             "title": "Mlflow Run Id"
+          },
+          "algorithm": {
+            "type": "string",
+            "enum": [
+              "maxent",
+              "ensemble",
+              "integrated",
+              "ppm"
+            ],
+            "title": "Algorithm",
+            "default": "maxent"
+          },
+          "threshold_rule": {
+            "type": "string",
+            "title": "Threshold Rule",
+            "default": "10th percentile training presence"
           },
           "reproducibility": {
             "$ref": "#/components/schemas/ReproducibilityInfo"
@@ -3895,6 +7654,17 @@
             ],
             "title": "Quality Tier"
           },
+          "annotation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EffectiveAnnotationOut"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Effective expert annotation (latest per kind), if any"
+          },
           "ingested_ts": {
             "type": "string",
             "format": "date-time",
@@ -3951,6 +7721,112 @@
         "title": "OccurrenceSources",
         "description": "How the merged occurrence set was assembled (records are de-duplicated across sources)."
       },
+      "OdmapReport": {
+        "properties": {
+          "protocol": {
+            "type": "string",
+            "title": "Protocol"
+          },
+          "taxon_key": {
+            "type": "integer",
+            "title": "Taxon Key"
+          },
+          "model_version": {
+            "type": "integer",
+            "title": "Model Version"
+          },
+          "generated_ts": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Generated Ts"
+          },
+          "sections": {
+            "items": {
+              "$ref": "#/components/schemas/OdmapSection"
+            },
+            "type": "array",
+            "title": "Sections"
+          }
+        },
+        "type": "object",
+        "required": [
+          "protocol",
+          "taxon_key",
+          "model_version",
+          "generated_ts",
+          "sections"
+        ],
+        "title": "OdmapReport",
+        "description": "ODMAP protocol (Zurell et al. 2020) generated from the version's stored metadata."
+      },
+      "OdmapSection": {
+        "properties": {
+          "section": {
+            "type": "string",
+            "title": "Section"
+          },
+          "entries": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Entries"
+          }
+        },
+        "type": "object",
+        "required": [
+          "section",
+          "entries"
+        ],
+        "title": "OdmapSection"
+      },
+      "OffsetTestOut": {
+        "properties": {
+          "column": {
+            "type": "string",
+            "title": "Column"
+          },
+          "assumed_coefficient": {
+            "type": "number",
+            "title": "Assumed Coefficient"
+          },
+          "free_coefficient": {
+            "type": "number",
+            "title": "Free Coefficient"
+          },
+          "lr_statistic": {
+            "type": "number",
+            "title": "Lr Statistic"
+          },
+          "p_value": {
+            "type": "number",
+            "title": "P Value"
+          },
+          "interpretation": {
+            "type": "string",
+            "title": "Interpretation"
+          },
+          "penalty_note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Penalty Note"
+          }
+        },
+        "type": "object",
+        "required": [
+          "column",
+          "assumed_coefficient",
+          "free_coefficient",
+          "lr_statistic",
+          "p_value",
+          "interpretation"
+        ],
+        "title": "OffsetTestOut"
+      },
       "OverlapOut": {
         "properties": {
           "n_checked": {
@@ -3998,6 +7874,119 @@
           "rule"
         ],
         "title": "OverlapOut"
+      },
+      "PointProcessOut": {
+        "properties": {
+          "method": {
+            "type": "string",
+            "title": "Method"
+          },
+          "reference": {
+            "type": "string",
+            "title": "Reference"
+          },
+          "features": {
+            "type": "string",
+            "title": "Features"
+          },
+          "bias_mode": {
+            "type": "string",
+            "enum": [
+              "offset",
+              "estimated",
+              "shared"
+            ],
+            "title": "Bias Mode"
+          },
+          "l2_penalty": {
+            "type": "number",
+            "title": "L2 Penalty"
+          },
+          "converged": {
+            "type": "boolean",
+            "title": "Converged"
+          },
+          "iterations": {
+            "type": "integer",
+            "title": "Iterations"
+          },
+          "neg_log_likelihood": {
+            "type": "number",
+            "title": "Neg Log Likelihood"
+          },
+          "n_presences": {
+            "type": "integer",
+            "title": "N Presences"
+          },
+          "n_quadrature": {
+            "type": "integer",
+            "title": "N Quadrature"
+          },
+          "coefficients": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "type": "object",
+            "title": "Coefficients"
+          },
+          "free_bias_coefficients": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "type": "object",
+            "title": "Free Bias Coefficients"
+          },
+          "fixed_bias_coefficients": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "type": "object",
+            "title": "Fixed Bias Coefficients"
+          },
+          "offset": {
+            "type": "string",
+            "title": "Offset"
+          },
+          "offset_test": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OffsetTestOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "prediction": {
+            "type": "string",
+            "title": "Prediction"
+          },
+          "presence_weights_used": {
+            "type": "boolean",
+            "title": "Presence Weights Used"
+          }
+        },
+        "type": "object",
+        "required": [
+          "method",
+          "reference",
+          "features",
+          "bias_mode",
+          "l2_penalty",
+          "converged",
+          "iterations",
+          "neg_log_likelihood",
+          "n_presences",
+          "n_quadrature",
+          "coefficients",
+          "free_bias_coefficients",
+          "fixed_bias_coefficients",
+          "offset",
+          "prediction",
+          "presence_weights_used"
+        ],
+        "title": "PointProcessOut",
+        "description": "Point-process model with an effort offset (B8) or a shared bias (B9)."
       },
       "PredictorAgreementOut": {
         "properties": {
@@ -4067,6 +8056,163 @@
         ],
         "title": "PredictorAgreementOut"
       },
+      "PresenceWeightsInfo": {
+        "properties": {
+          "method": {
+            "type": "string",
+            "enum": [
+              "none",
+              "quality_tier",
+              "density",
+              "quality_tier_density"
+            ],
+            "title": "Method"
+          },
+          "tier_weights": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "number"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tier Weights"
+          },
+          "n_by_tier": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "integer"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "N By Tier"
+          },
+          "density_neighbors": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Density Neighbors"
+          },
+          "n_presences": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "N Presences"
+          },
+          "rescaled_to_mean": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rescaled To Mean"
+          },
+          "min": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min"
+          },
+          "median": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Median"
+          },
+          "max": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max"
+          }
+        },
+        "type": "object",
+        "required": [
+          "method"
+        ],
+        "title": "PresenceWeightsInfo",
+        "description": "Observation weights given to presences (features/sampling_bias.py)."
+      },
+      "PriorityCellOut": {
+        "properties": {
+          "rank": {
+            "type": "integer",
+            "title": "Rank"
+          },
+          "longitude": {
+            "type": "number",
+            "title": "Longitude"
+          },
+          "latitude": {
+            "type": "number",
+            "title": "Latitude"
+          },
+          "priority": {
+            "type": "number",
+            "title": "Priority"
+          },
+          "suitability": {
+            "type": "number",
+            "title": "Suitability"
+          },
+          "effort": {
+            "type": "number",
+            "title": "Effort"
+          },
+          "uncertainty": {
+            "type": "number",
+            "title": "Uncertainty"
+          }
+        },
+        "type": "object",
+        "required": [
+          "rank",
+          "longitude",
+          "latitude",
+          "priority",
+          "suitability",
+          "effort",
+          "uncertainty"
+        ],
+        "title": "PriorityCellOut"
+      },
       "ProjectionSummaryOut": {
         "properties": {
           "land_area_km2": {
@@ -4125,6 +8271,27 @@
             "type": "array",
             "title": "Top Limiting Variables"
           },
+          "limiting_factor": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LimitingFactorOut"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Limiting factor per area (Elith et al. 2010); null for older versions"
+          },
+          "ensemble_agreement": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EnsembleAgreementOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "extrapolation": {
             "anyOf": [
               {
@@ -4153,6 +8320,196 @@
           "top_limiting_variables"
         ],
         "title": "ProjectionSummaryOut"
+      },
+      "PseudoAbsenceInfo": {
+        "properties": {
+          "strategy": {
+            "type": "string",
+            "enum": [
+              "background",
+              "disk",
+              "environmental_profile",
+              "completeness"
+            ],
+            "title": "Strategy"
+          },
+          "method": {
+            "type": "string",
+            "title": "Method",
+            "description": "What was actually drawn (after any fallback)"
+          },
+          "n": {
+            "type": "integer",
+            "title": "N"
+          },
+          "n_requested": {
+            "type": "integer",
+            "title": "N Requested"
+          },
+          "buffer_km": {
+            "type": "number",
+            "title": "Buffer Km"
+          },
+          "seed": {
+            "type": "integer",
+            "title": "Seed"
+          },
+          "min_distance_km": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Distance Km"
+          },
+          "fallback_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fallback Reason"
+          },
+          "reference": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reference"
+          },
+          "envelope": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Envelope"
+          },
+          "caveat": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Caveat"
+          },
+          "zone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Zone"
+          },
+          "min_records": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Records"
+          },
+          "target_group": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Group"
+          },
+          "query": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Query"
+          },
+          "n_effort_pixels": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "N Effort Pixels"
+          },
+          "n_well_sampled": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "N Well Sampled"
+          },
+          "n_without_presence": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "N Without Presence"
+          },
+          "n_sampled": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "N Sampled"
+          }
+        },
+        "type": "object",
+        "required": [
+          "strategy",
+          "method",
+          "n",
+          "n_requested",
+          "buffer_km",
+          "seed"
+        ],
+        "title": "PseudoAbsenceInfo",
+        "description": "Pseudo-absences of the presence\u2013absence ensemble members (Barbet-Massin et al. 2012)."
       },
       "RasterLayer": {
         "properties": {
@@ -4220,8 +8577,12 @@
           },
           "role": {
             "type": "string",
-            "const": "evaluation",
-            "title": "Role"
+            "enum": [
+              "evaluation",
+              "training"
+            ],
+            "title": "Role",
+            "description": "evaluation: independent test data, never trained on. training: its presences join the training set; only its absences evaluate the model"
           },
           "name": {
             "type": "string",
@@ -4394,6 +8755,16 @@
           "evaluated_ts": {
             "type": "string",
             "title": "Evaluated Ts"
+          },
+          "records_scored": {
+            "type": "string",
+            "enum": [
+              "all",
+              "absences"
+            ],
+            "title": "Records Scored",
+            "description": "absences: a training dataset, whose presences are not independent",
+            "default": "all"
           },
           "n_records": {
             "type": "integer",
@@ -4583,6 +8954,90 @@
               }
             ],
             "description": "Data-quality tests and exclusions; absent for older versions"
+          },
+          "training_uploads": {
+            "items": {
+              "$ref": "#/components/schemas/TrainingUploadInfo"
+            },
+            "type": "array",
+            "title": "Training Uploads",
+            "description": "Uploads whose presences joined the training set"
+          },
+          "presence_weights": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PresenceWeightsInfo"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Presence observation weights; absent for older versions"
+          },
+          "algorithm": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AlgorithmInfo"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Requested and used algorithm (null: MaxEnt, before the option)"
+          },
+          "pseudo_absences": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PseudoAbsenceInfo"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "annotations": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AnnotationsInfo"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "null for versions trained before record annotations existed"
+          },
+          "study_region": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StudyRegionInfo"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "null = global model"
+          },
+          "bias_covariates": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BiasCovariatesInfo"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Bias covariate + conditioning; absent for older versions"
+          },
+          "thinning": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ThinningInfo"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Thinning method and result; absent for older versions (distance)"
           }
         },
         "type": "object",
@@ -4595,6 +9050,65 @@
           "native_range_source"
         ],
         "title": "ReproducibilityInfo"
+      },
+      "ResponseCurveOut": {
+        "properties": {
+          "predictor": {
+            "type": "string",
+            "title": "Predictor"
+          },
+          "x": {
+            "items": {
+              "type": "number"
+            },
+            "type": "array",
+            "title": "X"
+          },
+          "y": {
+            "items": {
+              "type": "number"
+            },
+            "type": "array",
+            "title": "Y"
+          },
+          "presence_range": {
+            "items": {
+              "type": "number"
+            },
+            "type": "array",
+            "title": "Presence Range",
+            "description": "5th\u201395th percentile at presences"
+          }
+        },
+        "type": "object",
+        "required": [
+          "predictor",
+          "x",
+          "y",
+          "presence_range"
+        ],
+        "title": "ResponseCurveOut"
+      },
+      "ResponseCurvesOut": {
+        "properties": {
+          "method": {
+            "type": "string",
+            "title": "Method"
+          },
+          "curves": {
+            "items": {
+              "$ref": "#/components/schemas/ResponseCurveOut"
+            },
+            "type": "array",
+            "title": "Curves"
+          }
+        },
+        "type": "object",
+        "required": [
+          "method",
+          "curves"
+        ],
+        "title": "ResponseCurvesOut"
       },
       "RunRequest": {
         "properties": {
@@ -4843,6 +9357,38 @@
             ],
             "title": "Diagnostics Land Fraction",
             "description": "Share of land flagged by each extrapolation diagnostic"
+          },
+          "change": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RasterLayer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Present \u2192 scenario gain / loss / stable at the model threshold"
+          },
+          "change_summary": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ChangeSummaryOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "gcm_ensemble": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GcmEnsembleOut"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Set for multi-GCM ensembles (U7): suitability is the GCM mean, the extrapolation mask flags MESS < 0 under any GCM"
           }
         },
         "type": "object",
@@ -5149,6 +9695,163 @@
         "type": "object",
         "title": "SeverityWeights"
       },
+      "SharedBiasOut": {
+        "properties": {
+          "estimate_id": {
+            "type": "string",
+            "title": "Estimate Id"
+          },
+          "created_ts": {
+            "type": "string",
+            "title": "Created Ts"
+          },
+          "target_group": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Target Group"
+          },
+          "coefficients": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "type": "object",
+            "title": "Coefficients",
+            "description": "Per raw unit of each bias column"
+          },
+          "standardised_coefficients": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "type": "object",
+            "title": "Standardised Coefficients"
+          },
+          "converged": {
+            "type": "boolean",
+            "title": "Converged"
+          },
+          "iterations": {
+            "type": "integer",
+            "title": "Iterations"
+          },
+          "neg_log_likelihood": {
+            "type": "number",
+            "title": "Neg Log Likelihood"
+          },
+          "l2_penalty": {
+            "type": "number",
+            "title": "L2 Penalty"
+          },
+          "species": {
+            "items": {
+              "$ref": "#/components/schemas/SharedBiasSpeciesOut"
+            },
+            "type": "array",
+            "title": "Species"
+          },
+          "skipped": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Skipped"
+          },
+          "columns": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Columns"
+          },
+          "static_layers": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Static Layers"
+          },
+          "effort_query": {
+            "type": "string",
+            "title": "Effort Query"
+          },
+          "effort_pixel_deg": {
+            "type": "number",
+            "title": "Effort Pixel Deg"
+          },
+          "quadrature": {
+            "type": "string",
+            "title": "Quadrature"
+          },
+          "method": {
+            "type": "string",
+            "title": "Method"
+          },
+          "reference": {
+            "type": "string",
+            "title": "Reference"
+          },
+          "use": {
+            "type": "string",
+            "title": "Use"
+          }
+        },
+        "type": "object",
+        "required": [
+          "estimate_id",
+          "created_ts",
+          "target_group",
+          "coefficients",
+          "standardised_coefficients",
+          "converged",
+          "iterations",
+          "neg_log_likelihood",
+          "l2_penalty",
+          "species",
+          "columns",
+          "effort_query",
+          "effort_pixel_deg",
+          "quadrature",
+          "method",
+          "reference",
+          "use"
+        ],
+        "title": "SharedBiasOut"
+      },
+      "SharedBiasSpeciesOut": {
+        "properties": {
+          "taxon_key": {
+            "type": "integer",
+            "title": "Taxon Key"
+          },
+          "scientific_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scientific Name"
+          },
+          "n_presences": {
+            "type": "integer",
+            "title": "N Presences"
+          },
+          "n_quadrature": {
+            "type": "integer",
+            "title": "N Quadrature"
+          }
+        },
+        "type": "object",
+        "required": [
+          "taxon_key",
+          "n_presences",
+          "n_quadrature"
+        ],
+        "title": "SharedBiasSpeciesOut"
+      },
       "SpeciesDetail": {
         "properties": {
           "taxon_key": {
@@ -5345,6 +10048,17 @@
           },
           "severity_config": {
             "$ref": "#/components/schemas/SeverityConfigModel"
+          },
+          "study_region": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StudyRegionOut"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Regional model area (U2); null = global model"
           }
         },
         "type": "object",
@@ -5362,6 +10076,234 @@
           "severity_config"
         ],
         "title": "SpeciesDetail"
+      },
+      "SpeciesListEntryOut": {
+        "properties": {
+          "query": {
+            "type": "string",
+            "title": "Query",
+            "description": "As given: a scientific name or a GBIF taxon key"
+          },
+          "taxon_key": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Taxon Key",
+            "description": "null: no GBIF backbone match"
+          },
+          "scientific_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scientific Name"
+          },
+          "match_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Match Type",
+            "description": "EXACT, FUZZY, HIGHERRANK, KEY or NONE"
+          },
+          "confidence": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confidence"
+          },
+          "registered": {
+            "type": "boolean",
+            "title": "Registered",
+            "default": false
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status",
+            "description": "Registry status of a registered species"
+          },
+          "model_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Version"
+          }
+        },
+        "type": "object",
+        "required": [
+          "query"
+        ],
+        "title": "SpeciesListEntryOut"
+      },
+      "SpeciesListIn": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 2000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source",
+            "description": "Citation / URL of the list"
+          },
+          "names": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Names",
+            "description": "Scientific names to resolve"
+          },
+          "taxon_keys": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Taxon Keys"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "SpeciesListIn"
+      },
+      "SpeciesListOut": {
+        "properties": {
+          "list_id": {
+            "type": "string",
+            "title": "List Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          },
+          "created_by": {
+            "type": "string",
+            "title": "Created By"
+          },
+          "created_ts": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created Ts"
+          },
+          "updated_ts": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated Ts"
+          },
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/SpeciesListEntryOut"
+            },
+            "type": "array",
+            "title": "Entries"
+          },
+          "n_species": {
+            "type": "integer",
+            "title": "N Species"
+          },
+          "n_unresolved": {
+            "type": "integer",
+            "title": "N Unresolved"
+          },
+          "n_registered": {
+            "type": "integer",
+            "title": "N Registered"
+          },
+          "n_trained": {
+            "type": "integer",
+            "title": "N Trained"
+          }
+        },
+        "type": "object",
+        "required": [
+          "list_id",
+          "name",
+          "created_by",
+          "created_ts",
+          "updated_ts",
+          "entries",
+          "n_species",
+          "n_unresolved",
+          "n_registered",
+          "n_trained"
+        ],
+        "title": "SpeciesListOut"
       },
       "SpeciesStatus": {
         "type": "string",
@@ -5498,6 +10440,497 @@
         ],
         "title": "SpeciesSummary"
       },
+      "StacAsset": {
+        "properties": {
+          "href": {
+            "type": "string",
+            "title": "Href"
+          },
+          "type": {
+            "type": "string",
+            "title": "Type"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "roles": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Roles"
+          }
+        },
+        "type": "object",
+        "required": [
+          "href",
+          "type",
+          "title",
+          "roles"
+        ],
+        "title": "StacAsset"
+      },
+      "StacItem": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "Feature",
+            "title": "Type",
+            "default": "Feature"
+          },
+          "stac_version": {
+            "type": "string",
+            "title": "Stac Version"
+          },
+          "stac_extensions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Stac Extensions"
+          },
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "bbox": {
+            "items": {
+              "type": "number"
+            },
+            "type": "array",
+            "title": "Bbox"
+          },
+          "geometry": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Geometry"
+          },
+          "properties": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Properties"
+          },
+          "links": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Links"
+          },
+          "assets": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/StacAsset"
+            },
+            "type": "object",
+            "title": "Assets"
+          }
+        },
+        "type": "object",
+        "required": [
+          "stac_version",
+          "id",
+          "bbox",
+          "geometry",
+          "properties",
+          "links",
+          "assets"
+        ],
+        "title": "StacItem",
+        "description": "STAC 1.0 Item describing one model version's outputs."
+      },
+      "StaticBiasLayerInfo": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "used",
+              "unavailable"
+            ],
+            "title": "Status"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "covariate": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Covariate"
+          },
+          "direction": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "increasing",
+                  "decreasing"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Direction",
+            "description": "Whether larger values mean more (increasing) or less effort"
+          },
+          "transform": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Transform"
+          },
+          "condition": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Condition"
+          },
+          "conditioning_value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Conditioning Value"
+          },
+          "n_missing_filled": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "N Missing Filled"
+          },
+          "presence_mean": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Presence Mean"
+          },
+          "background_mean": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Background Mean"
+          },
+          "citation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Citation"
+          },
+          "sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sha256"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "status"
+        ],
+        "title": "StaticBiasLayerInfo",
+        "description": "A registered static observer-bias raster used as a covariate (travel time, roads, \u2026)."
+      },
+      "StudyRegionInfo": {
+        "properties": {
+          "bbox": {
+            "items": {
+              "type": "number"
+            },
+            "type": "array",
+            "title": "Bbox"
+          },
+          "resolution": {
+            "type": "string",
+            "title": "Resolution"
+          },
+          "grid_bbox": {
+            "items": {
+              "type": "number"
+            },
+            "type": "array",
+            "title": "Grid Bbox"
+          },
+          "n_cells": {
+            "type": "integer",
+            "title": "N Cells"
+          },
+          "cell_deg": {
+            "type": "number",
+            "title": "Cell Deg"
+          },
+          "n_records_outside": {
+            "type": "integer",
+            "title": "N Records Outside",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "bbox",
+          "resolution",
+          "grid_bbox",
+          "n_cells",
+          "cell_deg"
+        ],
+        "title": "StudyRegionInfo"
+      },
+      "StudyRegionOut": {
+        "properties": {
+          "bbox": {
+            "items": {
+              "type": "number"
+            },
+            "type": "array",
+            "title": "Bbox",
+            "description": "[west, south, east, north] in degrees"
+          },
+          "resolution": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolution",
+            "description": "Registered high-resolution stack (e.g. 30s); null = base grid"
+          }
+        },
+        "type": "object",
+        "required": [
+          "bbox"
+        ],
+        "title": "StudyRegionOut"
+      },
+      "StudyRegionUpdate": {
+        "properties": {
+          "bbox": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "number"
+                },
+                "type": "array",
+                "maxItems": 4,
+                "minItems": 4
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bbox",
+            "description": "[west, south, east, north]; null removes the region (global model)"
+          },
+          "resolution": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolution"
+          }
+        },
+        "type": "object",
+        "title": "StudyRegionUpdate"
+      },
+      "SurveyPriorityOut": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "available",
+              "unavailable"
+            ],
+            "title": "Status"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "formula": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Formula"
+          },
+          "uncertainty_source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Uncertainty Source"
+          },
+          "suitable_area_km2": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Suitable Area Km2"
+          },
+          "top_cells": {
+            "items": {
+              "$ref": "#/components/schemas/PriorityCellOut"
+            },
+            "type": "array",
+            "title": "Top Cells"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "title": "SurveyPriorityOut"
+      },
+      "TargetGroupComparisonOut": {
+        "properties": {
+          "comparison_id": {
+            "type": "string",
+            "title": "Comparison Id"
+          },
+          "taxon_key": {
+            "type": "integer",
+            "title": "Taxon Key"
+          },
+          "created_ts": {
+            "type": "string",
+            "title": "Created Ts"
+          },
+          "bioclim_version": {
+            "type": "string",
+            "title": "Bioclim Version"
+          },
+          "configured_rank": {
+            "type": "string",
+            "title": "Configured Rank"
+          },
+          "options": {
+            "items": {
+              "$ref": "#/components/schemas/TargetGroupOptionOut"
+            },
+            "type": "array",
+            "title": "Options"
+          },
+          "best_by_cv_cbi": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Best By Cv Cbi"
+          },
+          "criterion": {
+            "type": "string",
+            "title": "Criterion"
+          },
+          "note": {
+            "type": "string",
+            "title": "Note"
+          },
+          "reference": {
+            "type": "string",
+            "title": "Reference"
+          }
+        },
+        "type": "object",
+        "required": [
+          "comparison_id",
+          "taxon_key",
+          "created_ts",
+          "bioclim_version",
+          "configured_rank",
+          "options",
+          "criterion",
+          "note",
+          "reference"
+        ],
+        "title": "TargetGroupComparisonOut"
+      },
       "TargetGroupInfo": {
         "properties": {
           "rank": {
@@ -5566,6 +10999,19 @@
             ],
             "title": "N Background Cells",
             "description": "Distinct cells in the background sample"
+          },
+          "matched": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Matched",
+            "description": "B1: effort restricted to the presences' basis of record and year window"
           }
         },
         "type": "object",
@@ -5582,6 +11028,148 @@
           "fetched_ts"
         ],
         "title": "TargetGroupInfo"
+      },
+      "TargetGroupOptionOut": {
+        "properties": {
+          "option": {
+            "type": "string",
+            "title": "Option"
+          },
+          "rank": {
+            "type": "string",
+            "title": "Rank"
+          },
+          "match": {
+            "type": "boolean",
+            "title": "Match"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "background_method": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Background Method"
+          },
+          "fallback_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fallback Reason"
+          },
+          "target_group_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Group Name"
+          },
+          "target_group_taxon_key": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Group Taxon Key"
+          },
+          "target_group_records": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Group Records"
+          },
+          "matched": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Matched"
+          },
+          "n_presence": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "N Presence"
+          },
+          "cv_auc_mean": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cv Auc Mean"
+          },
+          "cv_cbi_mean": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cv Cbi Mean"
+          },
+          "independent": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Independent"
+          }
+        },
+        "type": "object",
+        "required": [
+          "option",
+          "rank",
+          "match"
+        ],
+        "title": "TargetGroupOptionOut"
       },
       "TaxonSearchResult": {
         "properties": {
@@ -5678,6 +11266,213 @@
           "scientific_name"
         ],
         "title": "TaxonSearchResult"
+      },
+      "ThinningInfo": {
+        "properties": {
+          "method": {
+            "type": "string",
+            "enum": [
+              "distance",
+              "autocorrelation",
+              "environmental"
+            ],
+            "title": "Method"
+          },
+          "n_before": {
+            "type": "integer",
+            "title": "N Before"
+          },
+          "n_after": {
+            "type": "integer",
+            "title": "N After"
+          },
+          "seed": {
+            "type": "integer",
+            "title": "Seed"
+          },
+          "distance_km": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Distance Km"
+          },
+          "reps": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reps"
+          },
+          "selected_seed": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Selected Seed"
+          },
+          "n_kept_min": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "N Kept Min"
+          },
+          "n_kept_max": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "N Kept Max"
+          },
+          "autocorrelation": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Autocorrelation",
+            "description": "Variogram ranges per predictor and the clamped distance (B3)"
+          },
+          "fallback_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fallback Reason"
+          },
+          "reference": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reference"
+          },
+          "n_axes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "N Axes"
+          },
+          "n_bins": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "N Bins"
+          },
+          "variance_explained": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "number"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Variance Explained"
+          },
+          "n_occupied_cells": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "N Occupied Cells"
+          }
+        },
+        "type": "object",
+        "required": [
+          "method",
+          "n_before",
+          "n_after",
+          "seed"
+        ],
+        "title": "ThinningInfo",
+        "description": "How presences were thinned (features/thinning.py; B3, B4)."
+      },
+      "ThresholdOut": {
+        "properties": {
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "value": {
+            "type": "number",
+            "title": "Value"
+          },
+          "sensitivity": {
+            "type": "number",
+            "title": "Sensitivity",
+            "description": "Share of training presences \u2265 threshold"
+          },
+          "specificity_background": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Specificity Background",
+            "description": "Share of background (pseudo-absence) points below the threshold"
+          }
+        },
+        "type": "object",
+        "required": [
+          "label",
+          "value",
+          "sensitivity"
+        ],
+        "title": "ThresholdOut"
       },
       "Timeline": {
         "properties": {
@@ -5781,6 +11576,113 @@
         ],
         "title": "TrainingSnapshotInfo",
         "description": "A per-version, content-addressed data file (see training_snapshot.py)."
+      },
+      "TrainingUploadInfo": {
+        "properties": {
+          "dataset_id": {
+            "type": "string",
+            "title": "Dataset Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "file_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File Name"
+          },
+          "file_sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File Sha256"
+          },
+          "citation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Citation"
+          },
+          "n_presences": {
+            "type": "integer",
+            "title": "N Presences"
+          },
+          "n_overlap_excluded": {
+            "type": "integer",
+            "title": "N Overlap Excluded",
+            "description": "Duplicates of a GBIF/iNaturalist record, left out"
+          },
+          "n_added": {
+            "type": "integer",
+            "title": "N Added",
+            "description": "Presences appended before quality tests and thinning"
+          },
+          "used_as": {
+            "type": "string",
+            "enum": [
+              "presence_only",
+              "survey"
+            ],
+            "title": "Used As",
+            "description": "survey: presence\u2013absence data of an integrated model (presences not added to the presence-only set)",
+            "default": "presence_only"
+          },
+          "n_survey_presences": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "N Survey Presences"
+          },
+          "n_survey_absences": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "N Survey Absences"
+          },
+          "n_absences_not_used": {
+            "type": "integer",
+            "title": "N Absences Not Used",
+            "description": "Absences: a presence-background model cannot use them (they evaluate it)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "dataset_id",
+          "name",
+          "n_presences",
+          "n_overlap_excluded",
+          "n_added",
+          "n_absences_not_used"
+        ],
+        "title": "TrainingUploadInfo",
+        "description": "An upload with role \"training\" whose presences joined this version's training set."
       },
       "TransferabilityResult": {
         "properties": {

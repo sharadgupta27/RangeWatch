@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
+from src.api.auth import CurrentUser
 from src.api.deps import settings_dep
-from src.api.schemas import BioclimInfo, Health
+from src.api.schemas import BioclimInfo, Health, MeOut
 from src.config import Settings
 from src.domain import BIOCLIM_DESCRIPTIONS
 from src.features.raster_sampler import METADATA_FILENAME, BioclimMetadata
@@ -45,4 +46,16 @@ def bioclim(settings: Settings = Depends(settings_dep)) -> BioclimInfo:
         descriptions=BIOCLIM_DESCRIPTIONS,
         scenarios=list(meta.scenarios),
         citation=meta.citation,
+    )
+
+
+@router.get("/me", response_model=MeOut, operation_id="getMe")
+def me(user: CurrentUser, settings: Settings = Depends(settings_dep)) -> MeOut:
+    """The calling user and role, so the UI can offer only permitted actions (the API
+    enforces them regardless)."""
+    return MeOut(
+        user=user.name,
+        role=user.role,
+        auth_mode=settings.auth_mode,
+        permissions={"view": True, "run": user.can("analyst"), "curate": user.can("curator")},
     )

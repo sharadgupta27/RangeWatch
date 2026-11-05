@@ -1,11 +1,14 @@
 """Repository protocol + an in-memory implementation (used by tests and local dry-runs).
 
 Occurrence data is append-only: `append_occurrences` inserts only unseen (source, record_id)
-keys; for keys already stored it only fills `issues` while that is still NULL (records ingested
-before issues were recorded), and `fill_features` only fills bio* columns that are still NULL.
+keys; for keys already stored it only fills `issues` / `details` while still NULL (records
+ingested before they were recorded), and `fill_features` only fills bio* columns still NULL.
 Only species_registry, native_ranges, reference_datasets, model_versions (severity recompute)
 and jobs rows are updated in place. Reference records are append-only; a reference dataset is
-removed as a whole (with its records), never edited row by row.
+removed as a whole (with its records), never edited row by row. Record annotations (U11) are
+append-only: a correction is a newer annotation, never an edit. Alerts are append-only except
+for their delivery log; alert subscriptions are created and deleted, never edited. Species
+lists (U9) are user-maintained and edited in place.
 """
 
 from __future__ import annotations
@@ -23,13 +26,17 @@ import pandas as pd
 
 from src.domain import (
     BIOCLIM_BANDS,
+    Alert,
+    AlertSubscription,
     Job,
     JobStatus,
     ModelVersionRecord,
     NativeRange,
     OccurrenceRecord,
+    RecordAnnotation,
     ReferenceDataset,
     ReferenceRecord,
+    SpeciesList,
     SpeciesRecord,
     utcnow,
 )
@@ -46,6 +53,7 @@ OCCURRENCE_COLUMNS: tuple[str, ...] = (
     "range_label",
     "inat_crossref_id",
     "issues",
+    "details",
     "ingested_ts",
     *BIOCLIM_BANDS,
     "bioclim_version",
@@ -124,6 +132,26 @@ class Repository(Protocol):
         self, taxon_key: int, version: int, artifacts: dict[str, Any]
     ) -> None: ...
 
+    # record annotations (append-only)
+    def add_annotation(self, ann: RecordAnnotation) -> RecordAnnotation: ...
+    def list_annotations(self, taxon_key: int) -> list[RecordAnnotation]: ...
+
+    # early-detection alerts + subscriptions
+    def add_alert(self, alert: Alert) -> Alert: ...
+    def list_alerts(self, taxon_key: int | None = None, limit: int = 50) -> list[Alert]: ...
+    def update_alert_deliveries(
+        self, alert_id: uuid.UUID, deliveries: list[dict[str, Any]]
+    ) -> None: ...
+    def save_subscription(self, sub: AlertSubscription) -> AlertSubscription: ...
+    def list_subscriptions(self, taxon_key: int | None = None) -> list[AlertSubscription]: ...
+    def delete_subscription(self, subscription_id: uuid.UUID) -> None: ...
+
+    # species lists (U9)
+    def save_species_list(self, sl: SpeciesList) -> SpeciesList: ...
+    def get_species_list(self, list_id: uuid.UUID) -> SpeciesList | None: ...
+    def list_species_lists(self) -> list[SpeciesList]: ...
+    def delete_species_list(self, list_id: uuid.UUID) -> None: ...
+
     # jobs
     def create_job(self, job: Job) -> Job: ...
     def update_job(self, job_id: uuid.UUID, **fields: Any) -> Job: ...
@@ -137,9 +165,16 @@ class Repository(Protocol):
     ) -> AbstractContextManager[None]: ...
 
 
+def _missing(value: Any) -> bool:
+    return value is None or (isinstance(value, float) and value != value)
+
+
 def records_to_frame(records: Sequence[OccurrenceRecord]) -> pd.DataFrame:
     df = pd.DataFrame([asdict(r) for r in records])
     df["issues"] = [list(r.issues) for r in records]
+    df["details"] = pd.Series(
+        [None if r.details is None else dict(r.details) for r in records], dtype=object
+    )
     for b in BIOCLIM_BANDS:
         df[b] = float("nan")
     df["bioclim_version"] = None
@@ -160,6 +195,10 @@ class InMemoryRepository:
         self._species_locks: dict[int, threading.Lock] = {}
         self._ref_datasets: dict[tuple[int, str], ReferenceDataset] = {}
         self._ref_records: dict[tuple[int, str], pd.DataFrame] = {}
+        self._annotations: list[RecordAnnotation] = []
+        self._alerts: list[Alert] = []
+        self._subscriptions: dict[uuid.UUID, AlertSubscription] = {}
+        self._species_lists: dict[uuid.UUID, SpeciesList] = {}
 
     # ---------------------------------------------------------- species
     def get_species(self, taxon_key: int) -> SpeciesRecord | None:
@@ -206,14 +245,19 @@ class InMemoryRepository:
                 }
                 grp = grp.drop_duplicates(["source", "record_id"])
                 mask = []
-                for s, r, issues in zip(
-                    grp["source"], grp["record_id"], grp["issues"], strict=True
+                for s, r, issues, details in zip(
+                    grp["source"], grp["record_id"], grp["issues"], grp["details"], strict=True
                 ):
                     i = pos.get((s, int(r)))
                     mask.append(i is None)
-                    # Only fills issues still unknown (rows ingested before they were kept).
-                    if i is not None and cur.at[cur.index[i], "issues"] is None:
-                        cur.at[cur.index[i], "issues"] = list(issues)
+                    if i is None:
+                        continue
+                    # Only fills fields still unknown (rows ingested before they were kept).
+                    row = cur.index[i]
+                    if cur.at[row, "issues"] is None:
+                        cur.at[row, "issues"] = list(issues)
+                    if _missing(cur.at[row, "details"]) and details is not None:
+                        cur.at[row, "details"] = dict(details)
                 add = grp.loc[mask, list(OCCURRENCE_COLUMNS)]
                 if len(add):
                     self._occ[key] = (
@@ -408,6 +452,87 @@ class InMemoryRepository:
         """Add derived artifacts (e.g. new scenario projections); the model itself is unchanged."""
         with self._lock:
             self._models[taxon_key][version].artifacts = copy.deepcopy(artifacts)
+
+    # ------------------------------------------------ record annotations
+    def add_annotation(self, ann: RecordAnnotation) -> RecordAnnotation:
+        with self._lock:
+            if ann.taxon_key not in self._species:
+                raise NotFoundError(ann.taxon_key)
+            self._annotations.append(copy.deepcopy(ann))
+            return copy.deepcopy(ann)
+
+    def list_annotations(self, taxon_key: int) -> list[RecordAnnotation]:
+        with self._lock:
+            out = [copy.deepcopy(a) for a in self._annotations if a.taxon_key == taxon_key]
+            return sorted(out, key=lambda a: a.created_ts)
+
+    # ------------------------------------------------------------ alerts
+    def add_alert(self, alert: Alert) -> Alert:
+        with self._lock:
+            self._alerts.append(copy.deepcopy(alert))
+            return copy.deepcopy(alert)
+
+    def list_alerts(self, taxon_key: int | None = None, limit: int = 50) -> list[Alert]:
+        with self._lock:
+            out = [
+                copy.deepcopy(a)
+                for a in self._alerts
+                if taxon_key is None or a.taxon_key == taxon_key
+            ]
+            out.sort(key=lambda a: a.created_ts, reverse=True)
+            return out[:limit]
+
+    def update_alert_deliveries(
+        self, alert_id: uuid.UUID, deliveries: list[dict[str, Any]]
+    ) -> None:
+        with self._lock:
+            for a in self._alerts:
+                if a.alert_id == alert_id:
+                    a.deliveries = copy.deepcopy(deliveries)
+                    return
+            raise NotFoundError(alert_id)
+
+    def save_subscription(self, sub: AlertSubscription) -> AlertSubscription:
+        with self._lock:
+            self._subscriptions[sub.subscription_id] = copy.deepcopy(sub)
+            return copy.deepcopy(sub)
+
+    def list_subscriptions(self, taxon_key: int | None = None) -> list[AlertSubscription]:
+        """All subscriptions, or those covering one species (its own + every-species ones)."""
+        with self._lock:
+            subs = [
+                copy.deepcopy(s)
+                for s in self._subscriptions.values()
+                if taxon_key is None or s.taxon_key in (None, taxon_key)
+            ]
+            return sorted(subs, key=lambda s: s.created_ts)
+
+    def delete_subscription(self, subscription_id: uuid.UUID) -> None:
+        with self._lock:
+            if self._subscriptions.pop(subscription_id, None) is None:
+                raise NotFoundError(subscription_id)
+
+    # --------------------------------------------------------- species lists
+    def save_species_list(self, sl: SpeciesList) -> SpeciesList:
+        with self._lock:
+            self._species_lists[sl.list_id] = copy.deepcopy(sl)
+            return copy.deepcopy(sl)
+
+    def get_species_list(self, list_id: uuid.UUID) -> SpeciesList | None:
+        with self._lock:
+            sl = self._species_lists.get(list_id)
+            return copy.deepcopy(sl) if sl else None
+
+    def list_species_lists(self) -> list[SpeciesList]:
+        with self._lock:
+            return sorted(
+                (copy.deepcopy(s) for s in self._species_lists.values()), key=lambda s: s.name
+            )
+
+    def delete_species_list(self, list_id: uuid.UUID) -> None:
+        with self._lock:
+            if self._species_lists.pop(list_id, None) is None:
+                raise NotFoundError(list_id)
 
     # --------------------------------------------------------- jobs
     def create_job(self, job: Job) -> Job:

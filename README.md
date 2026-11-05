@@ -434,8 +434,8 @@ the full effort gradient is kept; the default `unique_cells` is the behaviour de
 
 | Test | Effect by default |
 | --- | --- |
-| Equal coordinates, GBIF headquarters, country capital (within 1 km), country/province centroid (1 km), biodiversity institution (100 m, GBIF GRSciColl), GBIF geospatial issue, coordinates less precise than one grid cell (stated uncertainty, or precision implied by the decimals) | **excluded** from training |
-| Near a capital (1–10 km), coordinates corrected by GBIF, fuzzy taxon match, date issue, before the climate baseline (1970), environmental outlier (robust Mahalanobis), spatially isolated (> 1000 km) | flagged for review, kept |
+| Equal coordinates, GBIF headquarters, country capital (within 1 km), country/province centroid (1 km), biodiversity institution (100 m, GBIF GRSciColl), GBIF geospatial issue, coordinates less precise than one grid cell (stated uncertainty, or precision implied by the decimals), duplicate specimen (same collector, number and date: one of each set is kept) | **excluded** from training |
+| Near a capital (1–10 km), coordinates corrected by GBIF, fuzzy taxon match, date issue, before the climate baseline (1970), cultivation wording in locality / habitat / remarks ("cult.", "planted", "botanic garden"…), near a botanical garden (1 km, GRSciColl type), weak iNaturalist identification (any disagreement, or a computer-vision ID confirmed by at most one other person), environmental outlier (robust Mahalanobis), spatially isolated (> 1000 km) | flagged for review, kept |
 
 Outliers and isolated records are never removed automatically, because for an invader they are
 often the invasion front. CoordinateCleaner's 10 km capital buffer is report-only: on the Israel
@@ -447,11 +447,14 @@ occurrence store is not modified. Flags are written to `quality_flags.parquet` p
 bulletin, and shown per record in the occurrence table. `SDM_QUALITY_EXCLUDE` changes which tests
 exclude. The capital/centroid/institution tests need the reference gazetteers
 (`python -m src.features.quality_refs build`); without them they are reported as skipped, not
-passed. GBIF issue flags are now stored with each record (`occurrences.issues`); records
-ingested earlier get them on the next fetch that returns them (e.g. *Re-sync all*).
+passed. GBIF issue flags and record details (locality, habitat, remarks, collector and number,
+iNaturalist identification counts) are stored with each record (`occurrences.issues`,
+`occurrences.details`); records ingested earlier get them on the next fetch that returns them
+(e.g. *Re-sync all*). Until then the detail tests are reported as skipped.
 
-**Independent data.** Records that evaluate a model but never train it live in
-`reference_datasets` / `reference_records`, apart from `occurrences`:
+**Independent data and training uploads.** Uploaded and GBIF-absence records live in
+`reference_datasets` / `reference_records`, apart from `occurrences`. Each dataset has a role:
+*evaluation* (default; never trained on) or, for uploads, *training*:
 
 - *GBIF explicit absences* (`occurrenceStatus = ABSENT`), which used to be discarded, are
   fetched with every check, with their own watermark. They never count towards the retrain
@@ -460,6 +463,13 @@ ingested earlier get them on the next fetch that returns them (e.g. *Re-sync all
   GeoPackage or zipped shapefile, with provenance, citation and licence. Columns are detected
   (projected columns such as `ITM - LONG` are rejected as coordinates), rows of other species
   are dropped, and spatial files are reprojected to WGS84.
+- *Training uploads* (role `training`): presences join the training set of the next model
+  version, after the same data-quality tests; records duplicating a GBIF/iNaturalist record
+  are left out so a survey also published to GBIF is not counted twice. Absences are kept but
+  not trained on (MaxEnt is presence-background); they still score the model. Adding or
+  removing a training upload flags the species for retraining, like a native-range edit; the
+  retrain threshold is unchanged. Every version lists the uploads it used (name, file SHA-256,
+  counts) in the lineage table and the bulletin.
 
 A job then checks each upload for independence: a record within 100 m and ±1 day of a
 GBIF/iNaturalist record is a duplicate and is left out. It then scores **every model version**
@@ -468,6 +478,118 @@ threshold, split into analog and extrapolated cells; CBI against the version's o
 background; and, with absences, specificity, AUC and TSS. Each new version is scored
 automatically after training. The table shows whether retraining improved predictions on
 records the models never saw; that is the test the continuous-updating design has to pass.
+
+**Sampling-bias options** (off by default; logged per version, in the lineage table and the
+bulletin, and stored in `training_data.parquet`):
+
+- `SDM_PRESENCE_WEIGHTING` = `quality_tier`, `density` or `quality_tier_density`: presence
+  observation weights passed to elapid (`sample_weight`, background weight 1), from the record's
+  quality tier (A 1.0, B 0.75, C 0.5) and/or its isolation (mean distance to its 5 nearest
+  presences, relative to the median). Rescaled to mean 1; CV test metrics stay unweighted.
+- `SDM_BIAS_COVARIATE=target_group_effort`: the target group's GBIF effort (log1p records per
+  map pixel) is a model covariate, held at its maximum (`SDM_BIAS_CONDITION=max`, or `p95`) for
+  every prediction (Warton et al. 2013; Fithian et al. 2015). The background is then uniform in
+  the buffer, because the bias is modelled rather than mirrored. Spatial CV scores the model
+  with observed effort; the threshold, maps and projections use the conditioned model. MESS
+  and the other extrapolation diagnostics use the climate predictors only. If the effort data
+  is unavailable the model is trained without the covariate and the reason is logged.
+
+**Algorithms, thresholds and model products** (MaxEnt with the 10th-percentile threshold
+stays the default; every choice is logged per version and shown in the lineage table and the
+bulletin; *Model insights* tab):
+
+- `SDM_THRESHOLD_RULE`: every version stores all threshold rules (10th percentile, max TSS,
+  sensitivity = specificity, minimum training presence, fixed) with training sensitivity and
+  background specificity; the configured rule binarises the zones. Each rule is also a binary
+  map layer and a COG download.
+- Response curves (partial dependence, any algorithm) and a **limiting-factor** map (Elith et
+  al. 2010: the predictor whose change to its presence mean would raise suitability most).
+- `SDM_ALGORITHM=ensemble`: MaxEnt plus GLM, GAM (spline logistic), down-sampled random forest
+  and boosted trees, all scored on the same spatial blocks against held-out pseudo-absences and
+  combined by (CV AUC − 0.5) weights; an **ensemble-agreement** layer marks where members
+  disagree. Pseudo-absences (`SDM_PSEUDO_ABSENCE_STRATEGY`): reused background, disk (≥
+  `SDM_PA_MIN_DISTANCE_KM` from presences), environmental profiling (outside the presences'
+  envelope, elapid `NicheEnvelopeModel`) or **completeness** (inferred absences: native-range
+  effort pixels with ≥ `SDM_COMPLETENESS_MIN_RECORDS` target-group records and no presence
+  nearby; falls back to disk, logged).
+- `SDM_ALGORITHM=integrated` (experimental, [ADR 0002](docs/adr/0002-integrated-sdm.md)):
+  presence-only records as a point process and training uploads with absences as
+  presence–absence data sharing one climate response; the target-group effort coefficient is
+  estimated and dropped for prediction.
+- Every version gets an **inferred-absence check** (specificity on well-surveyed native-range
+  cells without the species), a **change map** against the previous version and per scenario
+  (gain / loss / stable), and a **survey-priority** map (suitability × (1 − effort) × (0.5 +
+  0.5 × uncertainty), with the top cells listed: where to look next).
+
+**Climate-change assessment (U7).** Scenarios registered as `<gcm>_<ssp>_<period>`
+(`bioclim_store add-scenario`) are grouped by SSP and period; every group with ≥ 2 GCMs gets a
+**GCM ensemble**: mean suitability, a GCM-agreement map (how many GCMs call each cell
+suitable), the present → ensemble change map, and an extrapolation mask flagging cells
+extrapolated under *any* GCM. Ensembles appear as scenarios on the map and are rebuilt
+whenever a member is re-projected.
+
+**Model cards (U13).** *Model card* tab and `GET …/exports/model-card` (JSON or `?format=md`,
+also in the zip bundle): the confidence label and the transferability caveat first, then
+what the map shows, model quality, where it extrapolates, data and limitations in plain
+language — templated from the stored metrics only.
+
+**Species lists and batch runs (U9).** *Species lists* on the registry page (`/lists`): paste
+scientific names (matched against the GBIF backbone; fuzzy and unmatched names are shown) or
+GBIF keys, filter the registry by list (`GET /species?list_id=`), and run the whole list as
+one batch job (`POST /lists/{id}/runs`). New species stop at the native-range review.
+
+**More sampling-bias methods** (all off by default, logged per version and shown verbatim in
+the lineage table):
+
+- `SDM_THIN_METHOD=autocorrelation` (B3): thinning distance from the median variogram range
+  of the predictors (blockCV recipe), clamped to `[SDM_THIN_KM, SDM_THIN_MAX_KM]`;
+  `environmental` (B4): one record per cell of a grid on the first principal axes of the
+  predictors; `SDM_THIN_REPS > 1`: maximal-retention thinning (spThin).
+- `SDM_TARGET_GROUP_MATCH_SOURCE` / `_YEARS` (B1): target-group effort restricted to the
+  presences' basis of record and 5–95 % year window. *Model insights → Sampling-bias studies →
+  Compare* refits with order / class / phylum target groups (and the matched variant) and
+  compares spatial-CV CBI / AUC and independent-data scores; nothing is published.
+- `SDM_ALGORITHM=ppm` (B8, experimental): Poisson point process with `log(effort + 1)` as an
+  offset (`SDM_PPM_BIAS=offset`), an estimated effort coefficient (`estimated`), or the bias
+  coefficients **shared** by every tracked species of the target group (`shared`, B9; estimate
+  with *Sampling-bias studies → Estimate* / `POST /species/{key}/shared-bias`). The offset
+  assumption is tested by a likelihood ratio and reported.
+- Static bias rasters (travel time to cities, distance to roads, population density):
+  `python -m src.features.bioclim_store add-bias-layer --name travel_time --src <file.tif>`
+  (presets set the direction, transform and citation; the file itself must be supplied),
+  then `SDM_BIAS_STATIC_LAYERS=["travel_time"]`. Each layer is a covariate held at its
+  most-sampled end for prediction.
+
+**Regional models.** *Monitoring → Study region* (`PUT /species/{key}/study-region`) trains and
+projects inside a box, optionally on a registered high-resolution stack (e.g. 30″): records,
+background, CV, maps and scenarios are restricted to it. Changing it flags a retrain.
+
+**Expert review.** In the occurrence table a curator can mark a record cultivated, exclude it
+as suspicious, keep it despite a quality flag, or override its range label. Annotations are
+append-only (`record_annotations`), applied at the next training run, snapshotted
+(`annotations.parquet`, SHA-256) and summarised per version.
+
+**Early-detection alerts.** After each check, new records outside the suitability envelope or
+more than `SDM_ALERT_KNOWN_RANGE_KM` from every known record raise an alert (*Monitoring*
+tab, `GET /alerts/feed.xml` RSS, webhooks, e-mail via `SDM_SMTP_*`). Each record is classified
+by the target group's earlier effort in its cell: likely **expansion** (observers were there
+before) or likely **discovery** (first records there). The retrain decision is unchanged;
+`SDM_RETRAIN_TRIGGER_MODE=effort_aware` (ignore discoveries) is a proposal pending review,
+[ADR 0001](docs/adr/0001-effort-aware-retrain-trigger.md).
+
+**Downloads and standards.** `GET /species/{key}/models/{v}/exports` lists COG rasters (every
+layer, binary maps per threshold rule, scenarios), the records as GeoPackage, an ODMAP protocol
+(JSON / Markdown), a STAC 1.0 item, a citation bundle with the GBIF DOI, and a zip of everything.
+
+**Users and roles.** `SDM_AUTH_MODE=header` trusts an identity-aware proxy (oauth2-proxy,
+Pomerium, …) for the user and groups; groups map to roles via `SDM_AUTH_ROLE_GROUPS`. Viewers
+read; analysts run pipelines, uploads, projections, settings and subscriptions; curators also
+confirm native ranges and annotate records. The proxy must strip these headers from client
+requests. The default (`none`) is a single-user deployment.
+
+**Bias benchmark.** *Validation → Virtual-species bias benchmark* simulates a species with a
+known niche, samples it with synthetic or real GBIF effort, fits each bias correction and
+compares it with the truth next to what spatial CV on the biased data reports.
 
 **Sampling effort.** Each version also gets a global effort raster of the target group
 (`effort.tif`, log₁₀ records per GBIF map pixel; *Effort* switch on the observed map). It comes
@@ -522,8 +644,8 @@ SHA-256 is part of the lineage. The nightly sweep does not count as a request.
 
 ## Known limitations / next steps
 
-- Basic auth protects a single-team deployment; multi-user roles (e.g. who may confirm a native
-  range) would need an identity provider in front of the gateway.
+- Roles rely on a trusted identity-aware proxy (`SDM_AUTH_MODE=header`); the API has no
+  login of its own.
 - Without GBIF credentials, species above `SDM_GBIF_SEARCH_MAX_RECORDS` are sampled
   proportionally per spatial slice — geographically balanced, but not the complete, DOI-citable
   dataset.
@@ -538,8 +660,15 @@ SHA-256 is part of the lineage. The nightly sweep does not count as a request.
   `SDM_QUALITY_EXCLUDE` if they are real.
 - Independent evaluation is presence-heavy: few GBIF records are explicit absences, and an
   absence is a surveyed site, not an empty grid cell, so specificity is a lower bound. Quality
-  tiers are reported but not yet used as training weights. Bias covariates and integrated
-  (presence-only + survey) models are the planned next steps.
+  tiers can weight training (`SDM_PRESENCE_WEIGHTING`). The integrated model is experimental:
+  no detection sub-model and no spatial random field (ADR 0002).
+- Inferred absences use a completeness *proxy* (target-group record counts per GBIF map
+  pixel), not species-accumulation curves, which the map API cannot provide.
+- Travel-time, road and population rasters are not downloaded automatically: their providers
+  have no stable direct URL, so an operator registers the file (`add-bias-layer`).
+- GCM ensembles are unweighted (model democracy); no GCM skill weighting.
+- The point-process model and the shared bias are experimental (ADR 0002): no presence
+  weights, linear + quadratic features only.
 - The sampling-effort layer is report-only: it does not change the severity confidence label.
   Folding it into confidence would change a documented rule, so it needs the same review as
   the other confidence thresholds.

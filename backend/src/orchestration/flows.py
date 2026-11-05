@@ -97,6 +97,59 @@ def validation_flow(
     return report["summary"]
 
 
+@flow(name="batch-species-runs")
+def batch_flow(
+    taxon_keys: list[int], force_retrain: bool = False, job_id: str | None = None
+) -> dict[str, Any]:
+    """U9: the species pipeline for every species of a list, one after the other. New
+    species stop at the native-range review step, as in a single run."""
+    from src.domain import utcnow
+
+    report = job_progress(job_id)
+    results: list[dict[str, Any]] = []
+    for i, key in enumerate(taxon_keys):
+        if report:
+            report("batch", i / max(len(taxon_keys), 1), f"Species {i + 1}/{len(taxon_keys)}")
+        try:
+            out = build_pipeline(step=prefect_step).run(key, force_retrain=force_retrain)
+            results.append(out.to_dict())
+        except Exception as exc:  # one failing species must not stop the batch
+            get_run_logger().error("taxon %s failed: %s", key, exc)
+            results.append({"taxon_key": key, "error": f"{type(exc).__name__}: {exc}"})
+    decisions: dict[str, int] = {}
+    for r in results:
+        d = "failed" if "error" in r else str(r.get("decision"))
+        decisions[d] = decisions.get(d, 0) + 1
+    return {
+        "n_species": len(taxon_keys),
+        "decisions": decisions,
+        "results": results,
+        "finished_ts": utcnow().isoformat(),
+    }
+
+
+@flow(name="target-group-comparison")
+def target_group_flow(taxon_key: int, job_id: str | None = None) -> dict[str, Any]:
+    """B1: refit with target groups of different ranks / matched sources and compare."""
+    from src.orchestration.bias_studies import compare_target_groups
+
+    report = compare_target_groups(build_pipeline(progress=job_progress(job_id)), taxon_key)
+    return {"comparison_id": report["comparison_id"], "best_by_cv_cbi": report["best_by_cv_cbi"]}
+
+
+@flow(name="shared-bias")
+def shared_bias_flow(taxon_key: int, job_id: str | None = None) -> dict[str, Any]:
+    """B9: one bias estimate for the registered species of a target group."""
+    from src.orchestration.bias_studies import estimate_shared_bias
+
+    report = estimate_shared_bias(build_pipeline(progress=job_progress(job_id)), taxon_key)
+    return {
+        "estimate_id": report["estimate_id"],
+        "n_species": len(report["species"]),
+        "coefficients": report["coefficients"],
+    }
+
+
 @flow(name="refresh-all-species")
 def refresh_all_species_flow() -> list[dict[str, Any]]:
     """Monitoring sweep: incremental check (and conditional retrain) for every species."""
@@ -110,3 +163,13 @@ def refresh_all_species_flow() -> list[dict[str, Any]]:
             get_run_logger().error("taxon %s failed: %s", sp.taxon_key, exc)
             results.append({"taxon_key": sp.taxon_key, "error": str(exc)})
     return results
+
+
+@flow(name="virtual-species-benchmark")
+def benchmark_flow(request: dict[str, Any], job_id: str | None = None) -> dict[str, Any]:
+    """§4.6: which sampling-bias correction recovers a known (virtual) niche."""
+    from src.orchestration.benchmark import run_and_store
+
+    pipeline = build_pipeline(progress=job_progress(job_id))
+    report = run_and_store(pipeline, request)
+    return {"benchmark_id": report["benchmark_id"], "best_variant": report["best_variant"]}

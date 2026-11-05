@@ -63,6 +63,28 @@ export function diagnosticLayers(layers: LayerSet): RasterLayer[] {
   return DIAGNOSTIC_LAYER_IDS.flatMap((id) => all.filter((l) => l.id === id))
 }
 
+/** Further map products (binary maps, limiting factor, agreement, change, survey priority),
+ * plus each scenario's present → scenario change map and each GCM ensemble's agreement map. */
+export function productLayers(layers: LayerSet): RasterLayer[] {
+  return [
+    ...(layers.products ?? []),
+    ...(layers.scenarios ?? []).flatMap((s) => [
+      ...(s.change ? [s.change] : []),
+      ...(s.gcm_ensemble?.agreement ? [s.gcm_ensemble.agreement] : []),
+    ]),
+  ]
+}
+
+/** The scenario a scenario-derived product (change:<name>, gcm-agreement:<name>) belongs to. */
+function productScenario(layers: LayerSet, pid: string) {
+  const name = pid.startsWith('change:')
+    ? pid.slice('change:'.length)
+    : pid.startsWith('gcm-agreement:')
+      ? pid.slice('gcm-agreement:'.length)
+      : null
+  return name == null ? undefined : (layers.scenarios?.find((s) => s.id === `scenario:${name}`) ?? null)
+}
+
 /**
  * The raster shown for a projection choice, plus the extrapolation overlay that belongs to it:
  * scenarios carry their own MESS mask and consensus (future climates extrapolate more than the
@@ -74,6 +96,18 @@ export function resolveProjection(
   overlaySource: OverlaySource = 'mess',
 ): { base: RasterLayer | null; extrapolation: RasterLayer | null } {
   const consensus = overlaySource === 'consensus'
+  if (id.startsWith('product:')) {
+    const pid = id.slice('product:'.length)
+    const sc = productScenario(layers, pid)
+    if (sc !== undefined) {
+      // A scenario's products carry that scenario's own extrapolation mask (for a GCM
+      // ensemble: MESS < 0 under any GCM).
+      const base = pid.startsWith('change:') ? sc?.change : sc?.gcm_ensemble?.agreement
+      return { base: base ?? null, extrapolation: (consensus && sc?.consensus) || sc?.extrapolation || null }
+    }
+    const current = (consensus && layers.consensus_overlay) || layers.extrapolation || null
+    return { base: productLayers(layers).find((l) => l.id === pid) ?? null, extrapolation: current }
+  }
   if (id.startsWith('scenario:')) {
     const sc = layers.scenarios?.find((s) => s.id === id)
     return {
@@ -128,6 +162,8 @@ export function DualMapView({ layers, nativeRange, timeline }: Props) {
 
   const { base, extrapolation } = resolveProjection(layers, projection, overlaySource)
   const isScenario = projection.startsWith('scenario:')
+  const isProduct = projection.startsWith('product:')
+  const products = productLayers(layers)
   const isDiagnostic = isDiagnosticLayer(projection)
   const diagnostics = diagnosticLayers(layers)
   const hasConsensusOverlay = isScenario
@@ -236,7 +272,7 @@ export function DualMapView({ layers, nativeRange, timeline }: Props) {
               <div className="absolute top-3 left-3 flex flex-wrap items-center gap-2 pr-14">
                 <ToggleGroup
                   type="single"
-                  value={isScenario ? '' : isDiagnostic ? 'extrapolation' : projection}
+                  value={isScenario || isProduct ? '' : isDiagnostic ? 'extrapolation' : projection}
                   onValueChange={(v) => {
                     if (!v || (v === 'extrapolation' && isDiagnostic)) return
                     mapActions.setProjection(
@@ -264,6 +300,26 @@ export function DualMapView({ layers, nativeRange, timeline }: Props) {
                     <SelectContent>
                       {diagnostics.map((l) => (
                         <SelectItem key={l.id} value={l.id}>
+                          {l.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+                {products.length > 0 && (
+                  <Select
+                    value={isProduct ? projection : 'none'}
+                    onValueChange={(v) =>
+                      mapActions.setProjection(v === 'none' ? 'suitability' : (v as ProjectionLayerId))
+                    }
+                  >
+                    <SelectTrigger className="w-48" aria-label="Map product">
+                      <SelectValue placeholder="More maps" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">More maps…</SelectItem>
+                      {products.map((l) => (
+                        <SelectItem key={l.id} value={`product:${l.id}`}>
                           {l.label}
                         </SelectItem>
                       ))}
@@ -339,7 +395,12 @@ export function DualMapView({ layers, nativeRange, timeline }: Props) {
                 )}
               </div>
               <div className="absolute bottom-3 left-3 flex flex-col gap-2">
-                {base && <RasterLegend layer={base} showDescription={isDiagnostic && base.id !== 'mess'} />}
+                {base && (
+                  <RasterLegend
+                    layer={base}
+                    showDescription={(isDiagnostic && base.id !== 'mess') || isProduct}
+                  />
+                )}
                 {messOverlay && extrapolation && <RasterLegend layer={extrapolation} />}
                 {isScenario && !extrapolation && (
                   <div className="max-w-56 rounded-lg border border-warning/40 bg-card/90 px-3 py-2 text-[11px] text-warning">

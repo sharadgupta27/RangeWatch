@@ -19,7 +19,7 @@ import logging
 import math
 import time
 import zipfile
-from collections.abc import Callable, Iterable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -89,10 +89,14 @@ class TaxonSuggestion:
     order_key: int | None = None
     family_key: int | None = None
     genus_key: int | None = None
+    kingdom_key: int | None = None
+    phylum_key: int | None = None
 
     def higher_taxon(self, rank: str) -> tuple[int, str] | None:
-        """(GBIF key, name) of the enclosing taxon at `rank` (class/order/family/genus)."""
+        """(GBIF key, name) of the enclosing taxon at `rank` (kingdom … genus)."""
         key, name = {
+            "kingdom": (self.kingdom_key, self.kingdom),
+            "phylum": (self.phylum_key, self.phylum),
             "class": (self.class_key, self.class_),
             "order": (self.order_key, self.order),
             "family": (self.family_key, self.family),
@@ -178,6 +182,30 @@ def _parse_issues(raw: Mapping[str, Any]) -> tuple[str, ...]:
     return tuple(sorted({str(i).strip().upper() for i in items if str(i).strip()}))
 
 
+# GBIF term → `OccurrenceRecord.details` key. SIMPLE_CSV carries locality, recordedBy,
+# recordNumber and institutionCode; habitat and occurrenceRemarks come only from search JSON.
+_DETAIL_TERMS = {
+    "locality": "locality",
+    "habitat": "habitat",
+    "occurrenceRemarks": "remarks",
+    "recordedBy": "recorded_by",
+    "recordNumber": "record_number",
+    "institutionCode": "institution_code",
+}
+
+
+def _parse_details(raw: Mapping[str, Any]) -> dict[str, Any]:
+    """Free-text fields used by the data-quality tests (cultivation text, duplicates)."""
+    out: dict[str, Any] = {}
+    for term, key in _DETAIL_TERMS.items():
+        value = raw.get(term)
+        if isinstance(value, (list, tuple)):  # recordedBy can be a list in some responses
+            value = " | ".join(str(v) for v in value if v)
+        if value not in (None, "") and str(value).strip():
+            out[key] = str(value).strip()[:500]
+    return out
+
+
 def _to_float(value: Any) -> float | None:
     if value in (None, ""):
         return None
@@ -247,6 +275,7 @@ def normalize_record(
         range_label=map_range_label(em, doe),
         inat_crossref_id=crossref,
         issues=_parse_issues(raw),
+        details=_parse_details(raw),
     )
 
 
@@ -361,6 +390,18 @@ class GbifClient:
             out.append(_taxon(item, int(key)))
         return out
 
+    def match_name(self, name: str) -> tuple[TaxonSuggestion, str, int] | None:
+        """GBIF backbone match of a scientific name (species lists, U9): the taxon, the match
+        type (EXACT / FUZZY / HIGHERRANK) and confidence; None when nothing matched."""
+        item = self._call(self._species.name_backbone, name=name, strict=False)
+        if not isinstance(item, dict):
+            return None
+        key = item.get("usageKey")
+        match = str(item.get("matchType", "NONE"))
+        if key is None or match == "NONE":
+            return None
+        return _taxon(item, int(key)), match, int(item.get("confidence") or 0)
+
     def get_taxon(self, taxon_key: int) -> TaxonSuggestion:
         item = self._call(self._species.name_usage, key=taxon_key)
         return _taxon(item, int(item.get("key", taxon_key)))
@@ -371,9 +412,14 @@ class GbifClient:
         taxon_key: int,
         bbox: tuple[float, float, float, float],
         max_pixel_deg: float,
+        basis_of_record: Sequence[str] | None = None,
+        years: tuple[int, int] | None = None,
     ) -> EffortDensity:
         """Record counts of `taxon_key` (a target group, e.g. the species' order) per GBIF
         map pixel inside `bbox` (west, south, east, north).
+
+        `basis_of_record` and `years` (inclusive) restrict the effort to the presences' data
+        sources and time window (improvements.md B1); both are part of the logged query.
 
         The zoom is the coarsest whose pixels are no larger than `max_pixel_deg` (the bioclim
         cell size), lowered if the box would need more than MAX_EFFORT_TILES tiles.
@@ -395,11 +441,10 @@ class GbifClient:
             if len(xs) * len(ys) <= MAX_EFFORT_TILES or z == 0:
                 break
             z -= 1
-        params: dict[str, Any] = {
-            "srs": "EPSG:4326",
-            "taxonKey": taxon_key,
-            "basisOfRecord": list(EFFORT_BASIS_OF_RECORD),
-        }
+        basis = list(basis_of_record or EFFORT_BASIS_OF_RECORD)
+        params: dict[str, Any] = {"srs": "EPSG:4326", "taxonKey": taxon_key, "basisOfRecord": basis}
+        if years is not None:
+            params["year"] = f"{int(years[0])},{int(years[1])}"
         lon: list[float] = []
         lat: list[float] = []
         count: list[int] = []
@@ -417,9 +462,8 @@ class GbifClient:
                         lat.append(px_lat)
                         count.append(int(p.properties.get("total", 1)))
         template = GBIF_MAP_DENSITY.replace("{z}", str(z))
-        query = (
-            f"{template}?srs=EPSG:4326&taxonKey={taxon_key}"
-            f"&basisOfRecord={','.join(EFFORT_BASIS_OF_RECORD)}"
+        query = f"{template}?srs=EPSG:4326&taxonKey={taxon_key}&basisOfRecord={','.join(basis)}" + (
+            f"&year={params['year']}" if years is not None else ""
         )
         return EffortDensity(
             taxon_key=taxon_key,
@@ -687,6 +731,8 @@ def _taxon(item: Mapping[str, Any], key: int) -> TaxonSuggestion:
         order_key=opt_int(item.get("orderKey")),
         family_key=opt_int(item.get("familyKey")),
         genus_key=opt_int(item.get("genusKey")),
+        kingdom_key=opt_int(item.get("kingdomKey")),
+        phylum_key=opt_int(item.get("phylumKey")),
     )
 
 

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import Protocol
+from typing import Any, Protocol
 
 from src.config import Settings, get_settings
 from src.persistence.artifact_store import ArtifactStore
@@ -22,6 +22,10 @@ class JobQueue(Protocol):
     def enqueue_crosscheck(self, job_id: str, taxon_key: int) -> None: ...
     def enqueue_hires(self, job_id: str, taxon_key: int, bbox: list[float]) -> None: ...
     def enqueue_evaluation(self, job_id: str, taxon_key: int) -> None: ...
+    def enqueue_benchmark(self, job_id: str, request: dict) -> None: ...
+    def enqueue_batch(self, job_id: str, taxon_keys: list[int], force_retrain: bool) -> None: ...
+    def enqueue_target_groups(self, job_id: str, taxon_key: int) -> None: ...
+    def enqueue_shared_bias(self, job_id: str, taxon_key: int) -> None: ...
 
 
 class CeleryJobQueue:
@@ -77,9 +81,32 @@ class CeleryJobQueue:
             "sdm.evaluate_references", kwargs={"job_id": job_id, "taxon_key": taxon_key}
         )
 
+    def enqueue_benchmark(self, job_id: str, request: dict) -> None:
+        self._app.send_task(
+            "sdm.run_virtual_species_benchmark", kwargs={"job_id": job_id, "request": request}
+        )
+
+    def enqueue_batch(self, job_id: str, taxon_keys: list[int], force_retrain: bool) -> None:
+        self._app.send_task(
+            "sdm.run_batch",
+            kwargs={"job_id": job_id, "taxon_keys": taxon_keys, "force_retrain": force_retrain},
+        )
+
+    def enqueue_target_groups(self, job_id: str, taxon_key: int) -> None:
+        self._app.send_task(
+            "sdm.compare_target_groups", kwargs={"job_id": job_id, "taxon_key": taxon_key}
+        )
+
+    def enqueue_shared_bias(self, job_id: str, taxon_key: int) -> None:
+        self._app.send_task(
+            "sdm.estimate_shared_bias", kwargs={"job_id": job_id, "taxon_key": taxon_key}
+        )
+
 
 class TaxonSearch(Protocol):
     def suggest_species(self, query: str, limit: int = 10) -> list: ...
+    def match_name(self, name: str) -> tuple | None: ...
+    def get_taxon(self, taxon_key: int) -> Any: ...
 
 
 class InatSearch(Protocol):

@@ -42,6 +42,8 @@ def climate_crosscheck(
     cfg: TrainingConfig,
 ) -> dict[str, Any]:
     predictors = [p for p in primary_metrics["predictors"]]
+    # MaxEnt input only (ensemble pseudo-absences / survey rows are not part of it).
+    training = training[training["role"].isin(["presence", "background"])].reset_index(drop=True)
     alt_x = alt_stack.sample(training["longitude"], training["latitude"], predictors)
     valid = (
         ~alt_x.isna().any(axis=1).to_numpy() & ~training[predictors].isna().any(axis=1).to_numpy()

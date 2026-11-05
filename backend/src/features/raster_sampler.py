@@ -54,6 +54,10 @@ class BioclimMetadata:
     # Version whose grid and land mask this stack was resampled onto (e.g. a CHELSA
     # cross-check stack aligned to the active WorldClim version).
     aligned_to: str | None = None
+    # Static observer-bias rasters on this grid (B6: travel time to cities, distance to roads,
+    # …): name → {path, direction, transform, citation, source, sha256}. `direction` says
+    # whether larger values mean *more* ("increasing") or *less* ("decreasing") effort.
+    bias_layers: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     @classmethod
     def load(cls, path: Path) -> BioclimMetadata:
@@ -74,6 +78,7 @@ class BioclimMetadata:
             derived_from=raw.get("derived_from"),
             hires=dict(raw.get("hires", {})),
             aligned_to=raw.get("aligned_to"),
+            bias_layers={k: dict(v) for k, v in raw.get("bias_layers", {}).items()},
         )
 
     def to_json(self) -> dict[str, Any]:
@@ -93,6 +98,7 @@ class BioclimMetadata:
             "derived_from": self.derived_from,
             "hires": self.hires,
             "aligned_to": self.aligned_to,
+            "bias_layers": self.bias_layers,
         }
 
     def finest_hires(self) -> str | None:
@@ -296,6 +302,23 @@ def sample_raster_file(
     return out
 
 
+BIAS_LAYER_TRANSFORMS = ("none", "log1p")
+
+
+def sample_bias_layer(
+    bioclim_root: Path, version: str, name: str, lon: Sequence[float], lat: Sequence[float]
+) -> tuple[np.ndarray, dict[str, Any]]:
+    """A registered static bias layer (with its transform) at points; returns the values and
+    the layer's metadata entry. Raises KeyError when the layer is not registered."""
+    root = bioclim_root / version
+    meta = BioclimMetadata.load(root / METADATA_FILENAME)
+    entry = meta.bias_layers[name]
+    values = sample_raster_file(root / entry["path"], lon, lat).astype("float64")
+    if entry.get("transform", "none") == "log1p":
+        values = np.log1p(np.clip(values, 0, None))
+    return values, entry
+
+
 def cell_area_km2(transform: Affine, rows: np.ndarray) -> np.ndarray:
     """Approximate area (km²) of a geographic (EPSG:4326) grid cell for the given row indices."""
     dx, dy = abs(transform.a), abs(transform.e)
@@ -328,3 +351,42 @@ def raster_window_stats(
         "mean": round(float((arr[valid] * area[valid]).sum() / land), 4),
         "fraction_at_or_above": round(float(area[valid & (arr >= threshold)].sum() / land), 4),
     }
+
+
+def write_binary(suitability: Path, threshold: float, path: Path) -> Path:
+    """Suitable (1) / unsuitable (0) COG at `threshold`; nodata 255 off land."""
+    import tempfile
+
+    from rasterio.shutil import copy as rio_copy
+
+    with rasterio.open(suitability) as src, tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp) / path.name
+        profile = {
+            "driver": "GTiff",
+            "width": src.width,
+            "height": src.height,
+            "count": 1,
+            "dtype": "uint8",
+            "crs": src.crs,
+            "transform": src.transform,
+            "nodata": 255,
+            "tiled": True,
+            "blockxsize": 256,
+            "blockysize": 256,
+            "compress": "deflate",
+        }
+        with rasterio.open(tmp_path, "w", **profile) as dst:
+            for _, win in src.block_windows(1):
+                v = src.read(1, window=win)
+                out = np.where(v == src.nodata, 255, (v >= threshold).astype("uint8"))
+                dst.write(out.astype("uint8"), 1, window=win)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        rio_copy(
+            tmp_path,
+            path,
+            driver="COG",
+            compress="deflate",
+            blocksize="512",
+            overview_resampling="mode",
+        )
+    return path
