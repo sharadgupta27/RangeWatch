@@ -235,6 +235,9 @@ python -m src.features.bioclim_store derive --from bioclim_v1 --version bioclim_
 python -m src.features.bioclim_store add-scenario --version bioclim_v2 --gcm ACCESS-CM2 --ssp ssp245 --period 2041-2060
 python -m src.features.bioclim_store add-hires --version bioclim_v2 --resolution 30s   # optional, ≈10 GB download
 python -m src.features.bioclim_store build-chelsa --version chelsa_v1 --match bioclim_v2  # optional, ≈5 GB download
+python -m src.features.bioclim_store build-chelsa --version chelsa_v2 --match bioclim_v2 --variables default --with-hires  # CHELSA for training: + humidity/VPD/wind/… and 30″
+python -m src.features.bioclim_store add-scenario --version chelsa_v2 --gcm MPI-ESM1-2-HR --ssp ssp585 --period 2041-2070  # CHELSA CMIP6 future
+python -m src.features.bioclim_store add-soil --from bioclim_v2 --version bioclim_v3_soil  # SoilGrids 2.0, ≈100 MB at 5 km
 python -m src.features.quality_refs build --version quality_refs_v1  # data-quality gazetteers, ≈45 s
 ```
 
@@ -242,7 +245,8 @@ python -m src.features.quality_refs build --version quality_refs_v1  # data-qual
 used it — change the predictor screening or source by creating a new tag (`derive`), which the
 model lineage then records. Scenarios and high-resolution companions (`add-hires`) are the
 additive exceptions: they are projection inputs only and never change what a model was trained
-on. `build-chelsa` creates a separate version (see *Climate-data cross-check*).
+on. `build-chelsa` creates a separate version (see *Climate-data cross-check*), and so does
+`add-soil` (see *Soil predictors*).
 
 ### Data versioning (DVC + per-model training snapshots)
 
@@ -304,6 +308,87 @@ projection map (`POST /api/species/{taxon_key}/hires`, at most `SDM_HIRES_MAX_CE
 (`*_hires_30s.tif`), drawn over the global layer with an outline and a **30″ detail** toggle. A
 new region replaces the previous one. The model is still the one trained at the version's
 resolution; only the projection is finer.
+
+### Soil predictors (SoilGrids 2.0)
+
+`add-soil` creates a **new version**: the source version's climate stack, scenarios,
+high-resolution stacks and bias layers, copied unchanged, plus SoilGrids 2.0 (Poggio et al.
+2021, CC BY 4.0) topsoil properties as **static predictor layers**
+(`static_layers/soil_<property>.tif`). Train on it by setting
+`SDM_BIOCLIM_VERSION=bioclim_v3_soil`.
+
+- **Properties (default):** `phh2o` (pH), `sand`, `clay` (%), `soc` (g/kg), `bdod` (kg/dm³) and
+  `awc`, the available water capacity: water content at 33 kPa minus 1500 kPa, in vol %.
+  Silt is left out because sand + silt + clay = 100 %. Choose others with `--properties`
+  (`silt`, `cfvo`, `cec`, `nitrogen`).
+- **Depth:** 0–30 cm, the thickness-weighted mean of the 0–5, 5–15 and 15–30 cm layers, in
+  conventional units (ISRIC conversion factors).
+- **Source grid:** the ISRIC 5 km product for grids of 5′ and coarser, 1 km otherwise
+  (`--source-res`). It is reprojected from Homolosine with average resampling and masked to
+  the version's land cells. Pass `--src-dir` to use pre-downloaded files
+  (`<prop>_<depth>_mean_<res>.tif`).
+- **Predictor screening:** the VIF screen is re-run over climate + soil. `--core` protects
+  predictors from it, e.g. `--core bio1,bio12,soil_sand` when substrate is a working
+  hypothesis (coastal-sand invaders such as *Acacia saligna*, *Carpobrotus edulis* and
+  *Heterotheca subaxillaris*). Whether soil was kept is in `metadata.json` and in each model's
+  lineage.
+- **Soil is static.** Future scenarios of the version reuse the same soil layers. High-resolution
+  views read the version-grid soil with nearest-neighbour resampling, unless `--with-hires`
+  built 1 km layers for them.
+- **Gaps:** land cells without a SoilGrids prediction (water bodies, glaciers, some urban and
+  bare-rock areas) have no soil value. Records there drop out of training, like records off
+  the climate grid, and are projected as nodata. Each layer records its `land_coverage`.
+- **Reproducibility:** each model version's reproducibility record lists every static layer,
+  with its source, citation, SHA-256 and whether the model used it. This shows in the lineage
+  table, the bulletin, the model card, ODMAP and the citation bundle. Soil values are sampled
+  fresh each run and captured in `training_data.parquet`. The `occurrences` table caches climate
+  only.
+
+SoilGrids is itself a model product with its own uncertainty, and the bulletin says so. The
+climate-data cross-check (below) swaps only the climate bands and keeps soil at its training
+values.
+The design, and the plan for CHELSA as a primary climate source (CHELSA CMIP6 futures,
+CHELSA-BIOCLIM+ extremes), are in [ADR 0003](docs/adr/0003-chelsa-and-soil-predictors.md).
+
+### Choosing the climate data and predictors per species
+
+The **Monitoring** tab's *Climate data & predictors* card is backed by
+`PUT /api/species/{taxon_key}/environment`. It sets two things for each species.
+
+- **Climate data.** Choose from any installed version (`GET /api/bioclim/versions`): WorldClim
+  v2.1 (1970–2000) or CHELSA V2.1 (1981–2010), with or without soil. If none is chosen, the
+  species uses `SDM_BIOCLIM_VERSION`.
+- **Predictors.**
+  - *Automatic:* the version's global VIF shortlist.
+  - *Choose variables:* pick variables grouped by process: temperature, precipitation,
+    humidity & VPD, wind, radiation, water balance, growing season & frost, soil. They are
+    VIF-screened on the species' own background unless you switch the screen off.
+
+Changing either flags a retrain. Each version's lineage records the climate family, its baseline
+and resolution, and the requested, dropped, used and present-only predictors.
+
+**Which variables matter differs between species.** The **Model** tab's *Predictor-set comparison*
+(`POST /api/species/{taxon_key}/predictor-comparison`) refits the current version's exact
+training points with candidate sets: temperature, precipitation, + humidity/wind, + water
+balance, + growing season, + soil, and all. It ranks them by spatial-CV CBI, then AUC, and marks
+sets within 0.02 CBI of the best. *Use this set* stores a set as the species' choice. This is a
+relative comparison on the same data, so confirm it on independent field records (*Reference
+data*).
+
+**Present-only variables.** CHELSA's future files contain BIO1–19 and the growing-season, frost,
+snow and NPP variables. They do **not** contain humidity, VPD, wind, PET, moisture index or
+radiation, and WorldClim futures are temperature and precipitation only. A model using
+present-only variables:
+
+- maps and validates the present distribution;
+- shows its futures as *not projectable*, with the reason;
+- never has missing future layers filled with present values.
+
+**Resolution.** 30″ (about 1 km) is the finest either source offers. Use it through a regional
+study region (`build-chelsa --with-hires` gives CHELSA its own 30″ grid). Global models stay at
+the version's base grid; 2.5′ is recommended for production.
+
+Design and data facts are in [ADR 0003](docs/adr/0003-chelsa-and-soil-predictors.md).
 
 ### Climate-data cross-check (CHELSA)
 

@@ -86,6 +86,36 @@ describe('model lineage table', () => {
     expect(screen.getByText('run-2')).toBeInTheDocument()
   })
 
+  it('lists static predictor layers (soil) with provenance and full checksum', () => {
+    const base = version(1).reproducibility
+    const sha = 'a'.repeat(64)
+    render(
+      <ModelLineageTable
+        versions={[
+          version(1, {
+            reproducibility: {
+              ...base,
+              static_predictor_layers: [
+                {
+                  name: 'soil_sand',
+                  used: true,
+                  kind: 'soil',
+                  source: 'SoilGrids 2.0 mean, 5000 m aggregated',
+                  sha256: sha,
+                },
+                { name: 'soil_phh2o', used: false, kind: 'soil', source: null, sha256: null },
+              ],
+            },
+          }),
+        ]}
+      />,
+    )
+    expect(screen.getByText('soil_sand')).toBeInTheDocument()
+    expect(screen.getByText(/\(used\) · SoilGrids 2\.0 mean, 5000 m aggregated/)).toBeInTheDocument()
+    expect(screen.getByText(new RegExp(sha))).toBeInTheDocument()
+    expect(screen.getByText(/\(not retained\)/)).toBeInTheDocument()
+  })
+
   it('renders the background-sampling record verbatim, including fallbacks', () => {
     const base = version(1).reproducibility
     render(

@@ -30,6 +30,99 @@ BIOCLIM_DESCRIPTIONS: dict[str, str] = {
     "bio18": "Precipitation of warmest quarter",
     "bio19": "Precipitation of coldest quarter",
 }
+# Static soil predictors (SoilGrids 2.0, topsoil 0–30 cm depth-weighted mean), attached to a
+# stack version as static layers by `bioclim_store add-soil`. Held constant under future
+# climate scenarios.
+SOIL_DESCRIPTIONS: dict[str, str] = {
+    "soil_phh2o": "Soil pH (H2O), topsoil 0–30 cm",
+    "soil_sand": "Sand content (%), topsoil 0–30 cm",
+    "soil_clay": "Clay content (%), topsoil 0–30 cm",
+    "soil_silt": "Silt content (%), topsoil 0–30 cm",
+    "soil_soc": "Soil organic carbon (g/kg), topsoil 0–30 cm",
+    "soil_bdod": "Bulk density (kg/dm³), topsoil 0–30 cm",
+    "soil_cfvo": "Coarse fragments (vol %), topsoil 0–30 cm",
+    "soil_cec": "Cation exchange capacity (cmol(c)/kg), topsoil 0–30 cm",
+    "soil_nitrogen": "Total nitrogen (g/kg), topsoil 0–30 cm",
+    "soil_awc": "Available water capacity (vol %, 33 kPa − 1500 kPa), topsoil 0–30 cm",
+}
+# Extra CHELSA V2.1 climate variables (CHELSA-BIOCLIM+, Brun et al. 2022), 1981–2010,
+# attached as climate layers by `bioclim_store build-chelsa --variables`. Units as published
+# by CHELSA after each file's declared scale/offset. Only some exist for future periods
+# (growing season, frost, snow, NPP); humidity, VPD, wind, PET, moisture index, radiation and
+# cloud cover are present-climate only.
+_CHELSA_STAT = {
+    "mean": "annual mean",
+    "max": "maximum month",
+    "min": "minimum month",
+    "range": "annual range",
+}
+_CHELSA_MONTHLY = {
+    "hurs": ("Near-surface relative humidity", "%", "humidity"),
+    "vpd": ("Vapour pressure deficit", "Pa", "humidity"),
+    "sfcWind": ("Near-surface wind speed", "m/s", "wind"),
+    "cmi": ("Climatic moisture index", "kg m⁻² month⁻¹", "water_balance"),
+    "pet_penman": ("Potential evapotranspiration (Penman)", "kg m⁻² month⁻¹", "water_balance"),
+    "rsds": ("Surface downwelling shortwave radiation", "MJ m⁻² d⁻¹", "radiation"),
+    "clt": ("Cloud area fraction", "%", "radiation"),
+}
+CHELSA_EXTRA_DESCRIPTIONS: dict[str, str] = {
+    **{
+        f"{var}_{stat}": f"{label}, {stat_label} ({units})"
+        for var, (label, units, _) in _CHELSA_MONTHLY.items()
+        for stat, stat_label in _CHELSA_STAT.items()
+    },
+    "ai": "Aridity index (precipitation / PET)",
+    "swb": "Site water balance",
+    "gdd0": "Growing degree days above 0 °C",
+    "gdd5": "Growing degree days above 5 °C",
+    "gdd10": "Growing degree days above 10 °C",
+    "ngd0": "Number of days with mean temperature above 0 °C",
+    "ngd5": "Number of days with mean temperature above 5 °C",
+    "ngd10": "Number of days with mean temperature above 10 °C",
+    "gsl": "Growing season length (days)",
+    "gsp": "Precipitation of the growing season",
+    "gst": "Mean temperature of the growing season",
+    "fcf": "Frost change frequency (days crossing 0 °C)",
+    "scd": "Snow cover days",
+    "npp": "Potential net primary productivity",
+}
+# Every predictor a stack version can offer (climate bands + layers), for labels.
+PREDICTOR_DESCRIPTIONS: dict[str, str] = {
+    **BIOCLIM_DESCRIPTIONS,
+    **CHELSA_EXTRA_DESCRIPTIONS,
+    **SOIL_DESCRIPTIONS,
+}
+# Predictor groups offered for per-species predictor choice (the UI groups by these, and the
+# predictor-set comparison builds its candidate sets from them).
+PREDICTOR_GROUP_LABELS: dict[str, str] = {
+    "temperature": "Temperature",
+    "precipitation": "Precipitation",
+    "humidity": "Humidity & vapour pressure deficit",
+    "wind": "Wind",
+    "radiation": "Radiation & cloud cover",
+    "water_balance": "Water balance & aridity",
+    "growing_season": "Growing season, frost & snow",
+    "soil": "Soil",
+    "other": "Other",
+}
+_GROUP_BY_PREFIX = {var: group for var, (_, _, group) in _CHELSA_MONTHLY.items()}
+
+
+def predictor_group(name: str) -> str:
+    """Group of a predictor name (BIO1–11 temperature, BIO12–19 precipitation, …)."""
+    if name in BIOCLIM_DESCRIPTIONS:
+        return "temperature" if int(name[3:]) <= 11 else "precipitation"
+    if name.startswith("soil_"):
+        return "soil"
+    for prefix, group in _GROUP_BY_PREFIX.items():
+        if name.startswith(prefix + "_"):
+            return group
+    if name in ("ai", "swb"):
+        return "water_balance"
+    if name.startswith(("gdd", "ngd")) or name in ("gsl", "gsp", "gst", "fcf", "scd", "npp"):
+        return "growing_season"
+    return "other"
+
 
 ZONE_LABELS: dict[int, str] = {
     0: "not suitable",
@@ -101,6 +194,7 @@ class JobKind(StrEnum):
     BATCH = "batch"
     TARGET_GROUPS = "target_groups"
     SHARED_BIAS = "shared_bias"
+    PREDICTOR_SETS = "predictor_sets"
 
 
 @dataclass(frozen=True, slots=True)
@@ -197,6 +291,13 @@ class SpeciesRecord:
     # Regional model (U2): {"bbox": [west, south, east, north], "resolution": "30s" | None}.
     # None = the global model at the bioclim version's own resolution.
     study_region: dict[str, Any] | None = None
+    # Climate data source chosen for this species: a bioclim version tag (e.g. a WorldClim or
+    # CHELSA version). None = the deployment default (SDM_BIOCLIM_VERSION).
+    climate_version: str | None = None
+    # Predictor choice: None / {"mode": "auto"} = the version's global VIF shortlist;
+    # {"mode": "custom", "predictors": [...], "vif_screen": bool} = the user's variables,
+    # optionally VIF-screened on the species' own background.
+    predictor_config: dict[str, Any] | None = None
     created_ts: datetime = field(default_factory=utcnow)
     updated_ts: datetime = field(default_factory=utcnow)
 

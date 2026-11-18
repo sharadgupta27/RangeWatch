@@ -26,6 +26,7 @@ from src.api.deps import (
 )
 from src.api.schemas import (
     EffectiveAnnotationOut,
+    EnvironmentUpdate,
     HiresRequest,
     JobOut,
     NativeRangeOut,
@@ -34,6 +35,8 @@ from src.api.schemas import (
     OccurrencePage,
     OccurrenceRow,
     OccurrenceSources,
+    PredictorComparisonRequest,
+    PredictorConfigModel,
     RunRequest,
     SeverityConfigModel,
     SeverityResult,
@@ -48,7 +51,12 @@ from src.api.schemas import (
 from src.config import Settings
 from src.domain import Job, JobKind, SpeciesStatus
 from src.features.annotations import effective_annotations
-from src.features.raster_sampler import METADATA_FILENAME, RESOLUTION_DEG, BioclimMetadata
+from src.features.raster_sampler import (
+    METADATA_FILENAME,
+    RESOLUTION_DEG,
+    BioclimMetadata,
+    choose_crosscheck_version,
+)
 from src.modeling.severity_index import SeverityConfig
 from src.orchestration.registry_ops import recompute_severity, update_native_range
 from src.persistence.artifact_store import ArtifactStore
@@ -126,7 +134,9 @@ def list_species(repo: RepoDep, list_id: uuid.UUID | None = None) -> list[Specie
 
 
 @router.get("/{taxon_key}", response_model=SpeciesDetail, operation_id="getSpecies")
-def get_species(taxon_key: int, repo: RepoDep) -> SpeciesDetail:
+def get_species(
+    taxon_key: int, repo: RepoDep, settings: Settings = Depends(settings_dep)
+) -> SpeciesDetail:
     sp = _get_species_or_404(repo, taxon_key)
     nr = repo.get_native_range(taxon_key)
     summary = species_summary(repo, sp)
@@ -147,6 +157,11 @@ def get_species(taxon_key: int, repo: RepoDep) -> SpeciesDetail:
             SeverityConfig.from_dict(sp.severity_config).to_dict()
         ),
         study_region=_study_region_out(sp.study_region),
+        climate_version=sp.climate_version,
+        effective_climate_version=sp.climate_version or settings.bioclim_version,
+        predictor_config=PredictorConfigModel.model_validate(
+            sp.predictor_config or {"mode": "auto"}
+        ),
     )
 
 
@@ -201,7 +216,17 @@ def run_crosscheck(
     sp = _get_species_or_404(repo, taxon_key)
     if not sp.model_version:
         raise HTTPException(status.HTTP_409_CONFLICT, "No trained model yet")
-    alt = settings.crosscheck_bioclim_version
+    mv = repo.get_model_version(taxon_key, sp.model_version)
+    trained = (mv.metrics.get("reproducibility") or {}).get("bioclim_version_used") if mv else None
+    alt = (
+        choose_crosscheck_version(
+            settings.bioclim_root,
+            trained or settings.bioclim_version,
+            [settings.crosscheck_bioclim_version, settings.bioclim_version],
+        )
+        if settings.crosscheck_bioclim_version
+        else None
+    )
     if not alt or not (settings.bioclim_root / alt / METADATA_FILENAME).exists():
         raise HTTPException(
             status.HTTP_409_CONFLICT,
@@ -455,13 +480,14 @@ def put_study_region(
         south, north = max(south, -90.0), min(north, 90.0)
         if not (west < east and south < north):
             raise HTTPException(422, "bbox must be [west, south, east, north] inside the globe")
-        meta_path = settings.bioclim_root / settings.bioclim_version / METADATA_FILENAME
+        climate = sp.climate_version or settings.bioclim_version
+        meta_path = settings.bioclim_root / climate / METADATA_FILENAME
         meta = BioclimMetadata.load(meta_path) if meta_path.exists() else None
         if body.resolution is not None and (meta is None or body.resolution not in meta.hires):
             raise HTTPException(
                 422,
                 f"No {body.resolution} high-resolution stack registered for "
-                f"{settings.bioclim_version} (bioclim_store add-hires)",
+                f"{climate} (bioclim_store add-hires / build-chelsa --with-hires)",
             )
         res = body.resolution or (meta.resolution if meta else None)
         cell = RESOLUTION_DEG.get(res or "")
@@ -477,7 +503,95 @@ def put_study_region(
         if sp.model_version > 0:
             fields.update(retrain_needed=True, status=SpeciesStatus.RETRAIN_PENDING)
         repo.update_species(taxon_key, **fields)
-    return get_species(taxon_key, repo)
+    return get_species(taxon_key, repo, settings)
+
+
+# ------------------------------------------------- climate data + predictor choice
+@router.put(
+    "/{taxon_key}/environment",
+    response_model=SpeciesDetail,
+    operation_id="updateEnvironment",
+    dependencies=[Analyst],
+)
+def put_environment(
+    taxon_key: int,
+    body: EnvironmentUpdate,
+    repo: RepoDep,
+    settings: Settings = Depends(settings_dep),
+) -> SpeciesDetail:
+    """Choose the species' climate data (WorldClim, CHELSA, …; null = deployment default)
+    and how its predictors are chosen (automatic VIF shortlist, or the user's variables).
+    Changing either flags a retrain; the current model stays published until then."""
+    sp = _get_species_or_404(repo, taxon_key)
+    version = body.climate_version or settings.bioclim_version
+    meta_path = settings.bioclim_root / version / METADATA_FILENAME
+    if not meta_path.exists():
+        raise HTTPException(422, f"Climate data {version} is not installed")
+    meta = BioclimMetadata.load(meta_path)
+    cfg = body.predictor_config
+    if cfg.mode == "custom":
+        offered = set(meta.predictor_bands)
+        unknown = [p for p in cfg.predictors if p not in offered]
+        if unknown:
+            raise HTTPException(
+                422, f"{version} does not offer {', '.join(unknown)} (pick from its predictors)"
+            )
+        chosen = list(dict.fromkeys(cfg.predictors))
+        if len(chosen) < 2:
+            raise HTTPException(422, "Choose at least two predictors")
+        stray = [p for p in cfg.protected if p not in chosen]
+        if stray:
+            raise HTTPException(422, f"Protected predictors must be chosen: {', '.join(stray)}")
+        config = {
+            "mode": "custom",
+            "predictors": chosen,
+            "vif_screen": cfg.vif_screen,
+            "protected": list(dict.fromkeys(cfg.protected)),
+        }
+    else:
+        config = None  # automatic: the version's shortlist
+    region = sp.study_region
+    if region and region.get("resolution") and region["resolution"] not in meta.hires:
+        raise HTTPException(
+            422,
+            f"The study region uses {region['resolution']}, which {version} does not have; "
+            "change the study region first",
+        )
+    fields: dict = {}
+    if body.climate_version != sp.climate_version:
+        fields["climate_version"] = body.climate_version
+    if config != sp.predictor_config:
+        fields["predictor_config"] = config
+    if fields:
+        if sp.model_version > 0:
+            fields.update(retrain_needed=True, status=SpeciesStatus.RETRAIN_PENDING)
+        repo.update_species(taxon_key, **fields)
+    return get_species(taxon_key, repo, settings)
+
+
+@router.post(
+    "/{taxon_key}/predictor-comparison",
+    response_model=JobOut,
+    status_code=status.HTTP_202_ACCEPTED,
+    operation_id="comparePredictorSets",
+    dependencies=[Analyst],
+)
+def run_predictor_comparison(
+    taxon_key: int,
+    repo: RepoDep,
+    queue: QueueDep,
+    body: PredictorComparisonRequest | None = None,
+) -> JobOut:
+    """Refit the current version's exact training locations with candidate predictor sets
+    (temperature, precipitation, humidity/wind, … or the given sets) and rank them by
+    spatial-CV CBI. Nothing is retrained; the result is stored with the version."""
+    sp = _get_species_or_404(repo, taxon_key)
+    if not sp.model_version:
+        raise HTTPException(status.HTTP_409_CONFLICT, "No trained model yet")
+    sets = [s.model_dump() for s in body.sets] if body and body.sets else None
+    job = repo.create_job(Job(kind=JobKind.PREDICTOR_SETS, taxon_key=taxon_key, message="Queued"))
+    queue.enqueue_predictor_sets(str(job.job_id), taxon_key, sets)
+    return job_out(job)
 
 
 def _study_region_out(region: dict | None) -> StudyRegionOut | None:

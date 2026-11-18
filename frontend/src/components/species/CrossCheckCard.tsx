@@ -90,6 +90,13 @@ function CrossCheckResult({ c }: { c: ClimateCrossCheckOut }) {
         Same {c.n_presence.toLocaleString()} presences and {c.n_background.toLocaleString()}{' '}
         background points, feature classes {c.feature_classes}, β = {c.beta_multiplier}
         {c.n_dropped > 0 && ` (${c.n_dropped} points outside the alternative stack dropped)`}.
+        {c.unchanged_predictors && c.unchanged_predictors.length > 0 && (
+          <>
+            {' '}
+            Non-climate predictors kept at their training values:{' '}
+            <span className="font-mono uppercase">{c.unchanged_predictors.join(', ')}</span>.
+          </>
+        )}
       </p>
     </div>
   )

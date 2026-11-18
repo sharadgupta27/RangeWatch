@@ -11,6 +11,10 @@ regularisation and CV seed. Only the predictor values change. Reported:
 
 Low agreement means the projection is sensitive to the climate data — a source of
 uncertainty to report next to MESS, not a reason to prefer one dataset automatically.
+
+Only climate predictors are swapped. Non-climate predictors of the primary version (static
+layers such as SoilGrids soil properties) keep their training values, so the comparison
+isolates the climate source.
 """
 
 from __future__ import annotations
@@ -44,14 +48,21 @@ def climate_crosscheck(
     predictors = [p for p in primary_metrics["predictors"]]
     # MaxEnt input only (ensemble pseudo-absences / survey rows are not part of it).
     training = training[training["role"].isin(["presence", "background"])].reset_index(drop=True)
-    alt_x = alt_stack.sample(training["longitude"], training["latitude"], predictors)
+    swapped = [p for p in predictors if p in alt_stack.metadata.bands]
+    kept = [p for p in predictors if p not in swapped]
+    if not swapped:
+        raise ValueError(
+            f"{alt_stack.version} has none of the model's climate predictors ({predictors})"
+        )
+    alt_x = training[predictors].copy().reset_index(drop=True)
+    alt_x[swapped] = alt_stack.sample(training["longitude"], training["latitude"], swapped)
     valid = (
         ~alt_x.isna().any(axis=1).to_numpy() & ~training[predictors].isna().any(axis=1).to_numpy()
     )
     is_pres = (training["role"] == "presence").to_numpy()
 
     agreement = []
-    for p in predictors:
+    for p in swapped:
         stats = predictor_agreement(training[p].to_numpy()[valid], alt_x[p].to_numpy()[valid])
         lo, hi = UNITS_SUSPECT_RATIO
         ratio = stats["scale_ratio"]
@@ -114,6 +125,8 @@ def climate_crosscheck(
             "feature_classes": cfg.feature_classes,
             "beta_multiplier": cfg.beta_multiplier,
             "predictors": agreement,
+            # Non-climate predictors (e.g. soil) held at their training values.
+            "unchanged_predictors": kept,
             "primary": {k: primary_metrics.get(k) for k in ("auc_mean", "cbi_mean", "tss_mean")},
             "alternative": {
                 **{k: alt.cv_summary.get(k) for k in ("auc_mean", "cbi_mean", "tss_mean")},

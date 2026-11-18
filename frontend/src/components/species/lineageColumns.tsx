@@ -25,6 +25,36 @@ export const lineageFeatures = tableFeatures({
 
 const helper = createColumnHelper<typeof lineageFeatures, ModelVersionOut>()
 
+type Selection = ModelVersionOut['reproducibility']['predictor_selection']
+
+/** How the version's predictors were chosen, verbatim (auto shortlist or custom + screen). */
+function PredictorSelection({ sel }: Readonly<{ sel: Selection }>) {
+  if (!sel) return null
+  const list = (xs: string[] | undefined) => (xs && xs.length ? xs.join(', ') : 'none')
+  return (
+    <div className="mt-1 break-all text-muted-foreground">
+      predictors: {sel.mode}
+      {sel.mode === 'custom' ? (
+        <>
+          {' '}
+          · requested {list(sel.requested)} · VIF screen{' '}
+          {sel.vif_screen ? (sel.screened_on ?? sel.screen_skipped ?? 'on') : 'off'} · dropped{' '}
+          {list(sel.dropped)}
+          {sel.unavailable && sel.unavailable.length > 0 && (
+            <> · not in version {list(sel.unavailable)}</>
+          )}
+        </>
+      ) : (
+        sel.source && <> · {sel.source}</>
+      )}
+      {sel.present_only && sel.present_only.length > 0 && (
+        <> · present-only {list(sel.present_only)}</>
+      )}
+      {sel.fallback_reason && <> · {sel.fallback_reason}</>}
+    </div>
+  )
+}
+
 function Metric({ mean, std }: { mean?: number | null; std?: number | null }) {
   if (mean == null) return <span className="text-muted-foreground">–</span>
   return (
@@ -201,6 +231,24 @@ export const lineageColumns = helper.columns([
         <div className="break-all text-muted-foreground">
           dvc {info.row.original.reproducibility.bioclim_dvc_md5 ?? 'not tracked'}
         </div>
+        {info.row.original.reproducibility.static_predictor_layers?.map((layer) => (
+          <div key={layer.name} className="mt-1 break-all text-muted-foreground">
+            <span className={layer.used ? 'text-foreground' : undefined}>{layer.name}</span>{' '}
+            ({layer.used ? 'used' : 'not retained'}) · {layer.source ?? 'n/a'} · sha256{' '}
+            {layer.sha256 ?? 'n/a'}
+          </div>
+        ))}
+        {info.row.original.reproducibility.climate_source && (
+          <div className="mt-1 text-muted-foreground">
+            {info.row.original.reproducibility.climate_source.family} · baseline{' '}
+            {info.row.original.reproducibility.climate_source.baseline_period ?? 'n/a'} ·{' '}
+            {info.row.original.reproducibility.climate_source.resolution ?? 'n/a'} ·{' '}
+            {info.row.original.reproducibility.climate_source.chosen_for_species
+              ? 'chosen for species'
+              : 'deployment default'}
+          </div>
+        )}
+        <PredictorSelection sel={info.row.original.reproducibility.predictor_selection} />
       </div>
     ),
   }),

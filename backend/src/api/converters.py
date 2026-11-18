@@ -6,17 +6,30 @@ from dataclasses import asdict
 from typing import Any
 
 from src.api.schemas import (
+    ClimateVersionOut,
     JobOut,
     ModelSummary,
     ModelVersionDetail,
     ModelVersionOut,
     NativeRangeOut,
+    PredictorInfo,
     ReferenceDatasetOut,
     ReferenceEvaluationOut,
     SeverityResult,
     SpeciesSummary,
 )
-from src.domain import Job, ModelVersionRecord, NativeRange, ReferenceDataset, SpeciesRecord
+from src.config import Settings
+from src.domain import (
+    PREDICTOR_DESCRIPTIONS,
+    PREDICTOR_GROUP_LABELS,
+    Job,
+    ModelVersionRecord,
+    NativeRange,
+    ReferenceDataset,
+    SpeciesRecord,
+    predictor_group,
+)
+from src.features.raster_sampler import BioclimMetadata
 from src.modeling.native_range import validate_geojson_polygon
 from src.persistence.repository import Repository
 
@@ -129,6 +142,8 @@ def model_version_detail(mv: ModelVersionRecord) -> ModelVersionDetail:
             "severity": mv.severity,
             "n_records_by_effective_label": m["n_records_by_effective_label"],
             "crosschecks": list(mv.artifacts.get("crosschecks", {}).values()),
+            "predictor_comparison": mv.artifacts.get("predictor_comparison"),
+            "scenarios_unavailable": mv.artifacts.get("scenarios_unavailable") or {},
             "sampling_effort": m.get("sampling_effort"),
             "response_curves": m.get("response_curves"),
             "ensemble": m.get("ensemble"),
@@ -155,3 +170,46 @@ def reference_dataset_out(
                 )
             )
     return ReferenceDatasetOut.model_validate({**asdict(ds), "evaluations": evaluations})
+
+
+def climate_version_out(meta: BioclimMetadata, settings: Settings) -> ClimateVersionOut:
+    """An installed climate data version with its predictors, grouped for the UI."""
+    family = meta.family
+    name = {"worldclim": "WorldClim v2.1", "chelsa": "CHELSA V2.1"}.get(family, meta.source)
+    detail = ", ".join(x for x in (meta.baseline, meta.resolution) if x)
+    has_scenarios = bool(meta.scenarios)
+    predictors = []
+    for p in meta.predictor_bands:
+        if p in meta.climate_layers:
+            kind = "climate_layer"
+            scen = set(meta.climate_layers[p].get("scenarios") or {})
+            future = bool(scen & set(meta.scenarios)) if has_scenarios else None
+        else:
+            kind = "soil" if p in meta.static_layers else "climate_band"
+            future = True if has_scenarios else None
+        group = predictor_group(p)
+        predictors.append(
+            PredictorInfo(
+                name=p,
+                description=PREDICTOR_DESCRIPTIONS.get(p, p),
+                group=group,
+                group_label=PREDICTOR_GROUP_LABELS[group],
+                kind=kind,
+                future_available=future,
+            )
+        )
+    return ClimateVersionOut(
+        version=meta.version,
+        family=family if family in ("worldclim", "chelsa") else "other",
+        label=f"{name} ({detail})" if detail else name,
+        source=meta.source,
+        baseline_period=meta.baseline,
+        resolution=meta.resolution,
+        hires_resolutions=list(meta.hires),
+        scenarios=list(meta.scenarios),
+        selected_predictors=list(meta.selected_predictors),
+        predictors=predictors,
+        citation=meta.citation,
+        is_default=meta.version == settings.bioclim_version,
+        is_crosscheck=meta.version == settings.crosscheck_bioclim_version,
+    )

@@ -106,6 +106,7 @@ from src.features.background_sampler import (
     sample_target_group_background,
 )
 from src.features.bioclim_store import dvc_pointer_md5
+from src.features.collinearity import select_low_collinearity
 from src.features.quality import (
     DEFAULT_EXCLUDE,
     QualityConfig,
@@ -118,8 +119,10 @@ from src.features.raster_sampler import (
     METADATA_FILENAME,
     BioclimMetadata,
     BioclimStack,
+    choose_crosscheck_version,
     sample_bias_layer,
     sample_raster_file,
+    static_layer_lineage,
 )
 from src.features.sampling_bias import (
     EFFORT_COVARIATE,
@@ -148,6 +151,7 @@ from src.modeling.native_range import (
     propose_native_range,
     validate_geojson_polygon,
 )
+from src.modeling.predictor_sets import compare_predictor_sets, default_predictor_sets
 from src.modeling.projection import (
     EFFORT_RASTER,
     GCM_ENSEMBLE_PREFIX,
@@ -901,18 +905,33 @@ class SpeciesPipeline:
         self.progress("done", 1.0, f"Model v{version} published")
         return out
 
+    def climate_version_for(self, species: SpeciesRecord) -> str:
+        """The species' chosen climate data version, else the deployment default."""
+        version = species.climate_version or self.settings.bioclim_version
+        if not (self.settings.bioclim_root / version / METADATA_FILENAME).exists():
+            raise ValueError(
+                f"Climate data {version} is not installed (data/bioclim/{version}); choose "
+                "another climate source for this species"
+            )
+        return version
+
     def training_stack(self, species: SpeciesRecord) -> tuple[BioclimStack, dict[str, Any] | None]:
-        """The climate grid a model is trained and projected on: the global stack, or (U2)
-        the species' study region, optionally at a registered high resolution."""
-        base = BioclimStack.open_version(self.settings.bioclim_root, self.settings.bioclim_version)
+        """The climate grid a model is trained and projected on: the species' chosen climate
+        data version (WorldClim, CHELSA, …; else the deployment default), globally or (U2)
+        inside its study region, optionally at a registered high resolution."""
+        version = self.climate_version_for(species)
+        base = BioclimStack.open_version(self.settings.bioclim_root, version)
         region = species.study_region
         if not region:
             return base, None
         resolution = region.get("resolution")
-        stack = (
-            BioclimStack.open_version(
-                self.settings.bioclim_root, self.settings.bioclim_version, hires=resolution
+        if resolution and resolution not in base.metadata.hires:
+            raise ValueError(
+                f"The study region asks for {resolution}, but climate data {version} has no "
+                f"{resolution} stack (have: {', '.join(base.metadata.hires) or 'none'})"
             )
+        stack = (
+            BioclimStack.open_version(self.settings.bioclim_root, version, hires=resolution)
             if resolution
             else base
         )
@@ -936,17 +955,20 @@ class SpeciesPipeline:
         }
 
     def extract_features(self, taxon_key: int, stack: BioclimStack) -> pd.DataFrame:
-        self.progress("features", 0.4, "Sampling bioclim predictors at occurrences")
+        self.progress("features", 0.4, "Sampling predictors at occurrences")
         occ = self.repo.load_occurrences(taxon_key)
-        feats = stack.sample(occ["longitude"], occ["latitude"], BIOCLIM_BANDS)
+        # Climate bands plus the version's static layers (e.g. SoilGrids soil properties).
+        feats = stack.sample(occ["longitude"], occ["latitude"], stack.predictor_bands)
         missing = occ["bio1"].isna().to_numpy() & ~feats["bio1"].isna().to_numpy()
         # The stored bio* columns hold the version's own resolution, never a regional
-        # high-resolution stack's values.
+        # high-resolution stack's values. Static layers are not cached in `occurrences`:
+        # they are re-sampled each run and captured in the training snapshot.
+        cached = [b for b in BIOCLIM_BANDS if b in feats.columns]
         if missing.any() and not getattr(stack, "hires_resolution", None):
             self.repo.fill_features(
                 taxon_key,
                 occ.loc[missing, ["source", "record_id"]].reset_index(drop=True),
-                feats.loc[missing].reset_index(drop=True),
+                feats.loc[missing, cached].reset_index(drop=True),
                 stack.version,
             )
         out = occ.drop(columns=list(BIOCLIM_BANDS)).join(feats)
@@ -969,7 +991,9 @@ class SpeciesPipeline:
         region: dict[str, Any] | None = None,
     ) -> tuple[Any, dict[str, Any]]:
         cfg = self.training_config
-        predictors = list(stack.metadata.selected_predictors or BIOCLIM_BANDS)
+        # Requested predictors (auto: the version's VIF shortlist; custom: the user's choice,
+        # screened on this species' background below).
+        predictors, selection = self.requested_predictors(nr.taxon_key, stack)
         clip = box(*region["bbox"]) if region else None
         algorithm: dict[str, Any] = {"requested": cfg.algorithm, "used": cfg.algorithm}
         survey: pd.DataFrame | None = None
@@ -1035,6 +1059,7 @@ class SpeciesPipeline:
             effort_filters=effort_filters,
             match_info=match_info,
         )
+        predictors, selection = self._screen_predictors(predictors, selection, bg.features, stack)
         pa_seed = cfg.seed + 2
         pa, pa_info = (
             self._pseudo_absences(nr, pres, bg, stack, predictors, pa_seed, clip)
@@ -1159,8 +1184,82 @@ class SpeciesPipeline:
             "inferred_absences": inferred,
             "study_region": ({**region, "n_records_outside": n_outside_region} if region else None),
             "thinning": thinning_info,
+            "predictor_selection": selection,
         }
         return result, info
+
+    # ------------------------------------------------------ predictor choice
+    def requested_predictors(
+        self, taxon_key: int, stack: BioclimStack
+    ) -> tuple[list[str], dict[str, Any]]:
+        """Predictors requested for a species on `stack`, and the selection record.
+
+        auto (default): the version's global VIF shortlist. custom: the user's variables that
+        the version offers (others are recorded as unavailable, e.g. after switching from
+        CHELSA to WorldClim); fewer than two left → auto, with the reason logged."""
+        species = self.repo.get_species(taxon_key)
+        cfg = (species.predictor_config if species else None) or {"mode": "auto"}
+        meta = stack.metadata
+        auto = list(meta.selected_predictors or stack.predictor_bands)
+        info: dict[str, Any] = {"mode": "auto", "bioclim_version": stack.version}
+        if cfg.get("mode") == "custom":
+            wanted = [str(p) for p in cfg.get("predictors") or []]
+            offered = set(stack.predictor_bands)
+            available = [p for p in dict.fromkeys(wanted) if p in offered]
+            info.update(
+                mode="custom",
+                requested=wanted,
+                unavailable=[p for p in wanted if p not in offered],
+                vif_screen=bool(cfg.get("vif_screen", True)),
+                protected=[p for p in cfg.get("protected") or [] if p in available],
+            )
+            if len(available) >= 2:
+                return available, info
+            info.update(
+                mode="auto",
+                fallback_reason=f"only {len(available)} of the chosen predictors exist in "
+                f"{stack.version}; used its VIF shortlist instead",
+            )
+        info["source"] = f"global VIF < 5 shortlist of {stack.version}"
+        return auto, info
+
+    def _screen_predictors(
+        self,
+        predictors: list[str],
+        info: dict[str, Any],
+        background: pd.DataFrame,
+        stack: BioclimStack,
+    ) -> tuple[list[str], dict[str, Any]]:
+        """Custom choices with `vif_screen`: drop collinear predictors (VIF ≥ 5) using this
+        species' own background (its accessible environments), never the protected ones."""
+        info = dict(info)
+        if info.get("mode") == "custom" and info.get("vif_screen") and len(predictors) > 2:
+            sample = background[predictors].dropna()
+            if len(sample) >= 10 * len(predictors):
+                kept, vif = select_low_collinearity(
+                    sample, keep_first=tuple(info.get("protected") or ())
+                )
+                info.update(
+                    screened_on=f"{len(sample):,} background points",
+                    dropped=[p for p in predictors if p not in kept],
+                    vif=vif,
+                )
+                predictors = [p for p in predictors if p in kept]
+            else:
+                info["screen_skipped"] = (
+                    f"{len(sample)} background points are too few to screen "
+                    f"{len(predictors)} predictors"
+                )
+        info["used"] = list(predictors)
+        # Climate layers without future data (e.g. humidity, wind): the model is then
+        # projectable onto present climate only (scenarios report them as unavailable).
+        info["present_only"] = [
+            p
+            for p in predictors
+            if p in stack.metadata.climate_layers
+            and not stack.metadata.climate_layers[p].get("scenarios")
+        ]
+        return predictors, info
 
     # ------------------------------------------------------ thinning, bias helpers
     def _thin(
@@ -1737,7 +1836,7 @@ class SpeciesPipeline:
             )
             if use.empty:
                 continue
-            feats = stack.sample(use["longitude"], use["latitude"], BIOCLIM_BANDS)
+            feats = stack.sample(use["longitude"], use["latitude"], stack.predictor_bands)
             rows = pd.DataFrame(
                 {
                     "source": UPLOAD_SOURCE_PREFIX + ds.dataset_id,
@@ -1764,11 +1863,17 @@ class SpeciesPipeline:
             occ = pd.concat([occ, *frames], ignore_index=True)
         return occ, summary
 
-    def quality_config(self) -> QualityConfig:
+    def quality_config(self, stack: BioclimStack | None = None) -> QualityConfig:
+        """Data-quality settings; the climate-baseline year comes from the climate version
+        (1970 WorldClim v2.1, 1981 CHELSA) unless SDM_QUALITY_BASELINE_START_YEAR is set."""
         exclude = self.settings.quality_exclude
+        year = self.settings.quality_baseline_start_year
+        if year is None:
+            baseline = stack.metadata.baseline if stack is not None else None
+            year = int(baseline.split("-")[0]) if baseline else 1970
         return QualityConfig(
             exclude=tuple(exclude) if exclude is not None else DEFAULT_EXCLUDE,
-            baseline_start_year=self.settings.quality_baseline_start_year,
+            baseline_start_year=year,
         )
 
     def assess_quality(
@@ -1783,7 +1888,7 @@ class SpeciesPipeline:
             predictors,
             cell_deg=abs(stack.res[0]),
             refs=refs,
-            cfg=self.quality_config(),
+            cfg=self.quality_config(stack),
             seed=self.training_config.seed,
         )
 
@@ -1966,7 +2071,7 @@ class SpeciesPipeline:
             "suitability_raster", 0.7, "Projecting suitability + extrapolation diagnostics globally"
         )
         region = info.get("study_region")
-        scenario_stacks = self._scenario_stacks(stack, region)
+        scenario_stacks, unavailable = self._scenario_stacks(stack, region, result.predictors)
         occ_valid: pd.DataFrame = info["occ_valid"]
         proj = project_model(
             result,
@@ -2034,6 +2139,7 @@ class SpeciesPipeline:
                 name: self._scenario_artifacts(out, (proj.suitability, result.threshold))
                 for name, out in proj.scenarios.items()
             },
+            **({"scenarios_unavailable": unavailable} if unavailable else {}),
         }
         artifacts["scenarios"].update(
             self._gcm_ensembles(artifacts["scenarios"], (proj.suitability, result.threshold), vdir)
@@ -2045,6 +2151,14 @@ class SpeciesPipeline:
             "bioclim_source": stack.metadata.source,
             "bioclim_sha256": stack.metadata.sha256,
             "bioclim_dvc_md5": dvc_pointer_md5(self.settings.bioclim_root, stack.version),
+            "static_predictor_layers": static_layer_lineage(stack.metadata, result.predictors),
+            "climate_source": {
+                "family": stack.metadata.family,
+                "baseline_period": stack.metadata.baseline,
+                "resolution": getattr(stack, "hires_resolution", None) or stack.metadata.resolution,
+                "chosen_for_species": bool(refreshed.climate_version),
+            },
+            "predictor_selection": info.get("predictor_selection"),
             "gbif_download_key": refreshed.last_gbif_download_key,
             "gbif_download_doi": refreshed.last_gbif_download_doi,
             "gbif_citation": download_citation(
@@ -2255,17 +2369,23 @@ class SpeciesPipeline:
         return pd.concat(parts, ignore_index=True) if parts else None
 
     def _scenario_stacks(
-        self, stack: BioclimStack, region: dict[str, Any] | None
-    ) -> dict[str, BioclimStack]:
+        self, stack: BioclimStack, region: dict[str, Any] | None, predictors: list[str]
+    ) -> tuple[dict[str, BioclimStack], dict[str, str]]:
         """Scenario stacks on the training grid (regional models: the same box; regional
-        high-resolution models have no scenario stacks at that resolution)."""
+        high-resolution models have no scenario stacks at that resolution), and the
+        scenarios the model cannot be projected onto, with the reason (present-only
+        predictors such as relative humidity or wind)."""
         if getattr(stack, "hires_resolution", None):
-            return {}
-        out = {}
+            return {}, {}
+        out, unavailable = {}, {}
         for name in stack.metadata.scenarios:
+            missing = stack.metadata.unavailable_in_scenario(name, predictors)
+            if missing:
+                unavailable[name] = scenario_unavailable_reason(missing)
+                continue
             sc = BioclimStack.open_version(self.settings.bioclim_root, stack.version, name)
             out[name] = sc.subset(tuple(region["bbox"])) if region else sc
-        return out
+        return out, unavailable
 
     def _change_previous(
         self, taxon_key: int, version: int, suitability: Path, threshold: float, vdir: Path
@@ -2626,6 +2746,12 @@ class SpeciesPipeline:
         if not todo and not ensembles_missing:
             return {"taxon_key": taxon_key, "projected": []}
         saved = elapid.load_object(str(self.artifacts.local_path(mv.artifacts["model"])))
+        unavailable = dict(mv.artifacts.get("scenarios_unavailable") or {})
+        for name in list(todo):
+            missing = stack.metadata.unavailable_in_scenario(name, saved["predictors"])
+            if missing:
+                unavailable[name] = scenario_unavailable_reason(missing)
+                todo.remove(name)
         model = SimpleNamespace(
             model=saved["model"],
             predictors=saved["predictors"],
@@ -2654,7 +2780,13 @@ class SpeciesPipeline:
         ensembles = self._gcm_ensembles(existing, current, vdir)
         existing.update(ensembles)
         self.repo.update_model_artifacts(
-            taxon_key, mv.model_version, {**mv.artifacts, "scenarios": existing}
+            taxon_key,
+            mv.model_version,
+            {
+                **mv.artifacts,
+                "scenarios": existing,
+                **({"scenarios_unavailable": unavailable} if unavailable else {}),
+            },
         )
         self.progress("done", 1.0, f"Projected {len(todo)} scenario(s)")
         return {
@@ -2743,13 +2875,21 @@ class SpeciesPipeline:
             return self._crosscheck_climate(taxon_key)
 
     def _crosscheck_climate(self, taxon_key: int) -> dict[str, Any]:
-        alt_version = self.settings.crosscheck_bioclim_version
-        if not alt_version:
+        if not self.settings.crosscheck_bioclim_version:
             raise ValueError(
                 "No cross-check climate stack configured (SDM_CROSSCHECK_BIOCLIM_VERSION)"
             )
         mv, saved = self._current_model(taxon_key)
         repro = mv.metrics["reproducibility"]
+        # The other climate family: CHELSA-trained models are checked against WorldClim.
+        alt_version = (
+            choose_crosscheck_version(
+                self.settings.bioclim_root,
+                repro["bioclim_version_used"],
+                [self.settings.crosscheck_bioclim_version, self.settings.bioclim_version],
+            )
+            or self.settings.crosscheck_bioclim_version
+        )
         if mv.metrics.get("algorithm", "maxent") != "maxent":
             raise ValueError(
                 f"v{mv.model_version} is an {mv.metrics['algorithm']} model; the climate "
@@ -2804,6 +2944,87 @@ class SpeciesPipeline:
             "alt_bioclim_version": alt_version,
             "verdict": report["verdict"],
         }
+
+    # ------------------------------------------------------ predictor-set comparison
+    def compare_predictor_sets(
+        self, taxon_key: int, sets: list[dict[str, Any]] | None = None
+    ) -> dict[str, Any]:
+        """Refit the current version's exact training locations with candidate predictor
+        sets (temperature, precipitation, humidity/wind, … or `sets`) and rank them by
+        spatial-CV CBI (modeling/predictor_sets.py). Stored with the version; nothing is
+        retrained or published."""
+        with self._exclusive(taxon_key):
+            return self._compare_predictor_sets(taxon_key, sets)
+
+    def _compare_predictor_sets(
+        self, taxon_key: int, sets: list[dict[str, Any]] | None
+    ) -> dict[str, Any]:
+        mv, _ = self._current_model(taxon_key)
+        repro = mv.metrics["reproducibility"]
+        snapshot = repro.get("training_data")
+        if not snapshot:
+            raise ValueError(
+                f"v{mv.model_version} predates training snapshots; retrain before comparing"
+            )
+        training = pd.read_parquet(self.artifacts.local_path(snapshot["path"]))
+        training = training[training["role"].isin(["presence", "background"])].reset_index(
+            drop=True
+        )
+        version = repro["bioclim_version_used"]
+        region = repro.get("study_region") or {}
+        stack = BioclimStack.open_version(
+            self.settings.bioclim_root, version, hires=region.get("resolution")
+        )
+        candidates = sets or default_predictor_sets(stack.metadata, mv.metrics["predictors"])
+        needed = sorted({p for c in candidates for p in c["predictors"]})
+        unknown = [p for p in needed if p not in stack.predictor_bands]
+        if unknown:
+            raise ValueError(f"{version} does not offer {', '.join(unknown)}")
+        missing = [p for p in needed if p not in training.columns]
+        if missing:
+            self.progress("predictor_sets", 0.05, f"Sampling {len(missing)} predictors")
+            feats = stack.sample(training["longitude"], training["latitude"], missing)
+            training = pd.concat([training, feats.reset_index(drop=True)], axis=1)
+        seed = int(repro.get("training_config", {}).get("seed", self.training_config.seed))
+        self.progress("predictor_sets", 0.1, f"Comparing {len(candidates)} predictor sets")
+        report = self.step(
+            "predictor_sets",
+            compare_predictor_sets,
+            training,
+            candidates,
+            mv.model_type,
+            replace(self.training_config, seed=seed),
+            stack.metadata,
+        )
+        report.update(
+            model_version=mv.model_version,
+            bioclim_version=version,
+            climate_family=stack.metadata.family,
+            resolution=region.get("resolution") or stack.metadata.resolution,
+            created_ts=utcnow().isoformat(),
+        )
+        vdir = self.artifacts.local_path(
+            str(self.artifacts.version_dir(taxon_key, mv.model_version))
+        )
+        path = vdir / "predictor_comparison.json"
+        path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+        report["path"] = self.artifacts.relative_uri(path)
+        self.repo.update_model_artifacts(
+            taxon_key, mv.model_version, {**mv.artifacts, "predictor_comparison": report}
+        )
+        self.progress("done", 1.0, f"Best predictor set: {report['best']}")
+        return {
+            "taxon_key": taxon_key,
+            "model_version": mv.model_version,
+            "best": report["best"],
+        }
+
+
+def scenario_unavailable_reason(missing: list[str]) -> str:
+    return (
+        f"uses {', '.join(missing)}, which the climate source does not provide for this future "
+        "(present-climate only)"
+    )
 
 
 def _finite(v: Any) -> float | None:

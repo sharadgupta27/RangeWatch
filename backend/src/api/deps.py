@@ -26,6 +26,9 @@ class JobQueue(Protocol):
     def enqueue_batch(self, job_id: str, taxon_keys: list[int], force_retrain: bool) -> None: ...
     def enqueue_target_groups(self, job_id: str, taxon_key: int) -> None: ...
     def enqueue_shared_bias(self, job_id: str, taxon_key: int) -> None: ...
+    def enqueue_predictor_sets(
+        self, job_id: str, taxon_key: int, sets: list[dict] | None
+    ) -> None: ...
 
 
 class CeleryJobQueue:
@@ -100,6 +103,12 @@ class CeleryJobQueue:
     def enqueue_shared_bias(self, job_id: str, taxon_key: int) -> None:
         self._app.send_task(
             "sdm.estimate_shared_bias", kwargs={"job_id": job_id, "taxon_key": taxon_key}
+        )
+
+    def enqueue_predictor_sets(self, job_id: str, taxon_key: int, sets: list[dict] | None) -> None:
+        self._app.send_task(
+            "sdm.compare_predictor_sets",
+            kwargs={"job_id": job_id, "taxon_key": taxon_key, "sets": sets},
         )
 
 

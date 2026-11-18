@@ -27,6 +27,7 @@ import { z } from 'zod'
 import {
   speciesOptions,
   useBioclim,
+  useClimateVersions,
   useLatestJob,
   useLayers,
   useModelVersion,
@@ -46,6 +47,7 @@ import { NativeRangeEditor } from '@/components/maps/NativeRangeEditor'
 import { BiasStudiesCard } from '@/components/species/BiasStudiesCard'
 import { BulletinCard } from '@/components/species/BulletinCard'
 import { CaveatBanner } from '@/components/species/CaveatBanner'
+import { ClimatePredictorsCard } from '@/components/species/ClimatePredictorsCard'
 import { CrossCheckCard } from '@/components/species/CrossCheckCard'
 import { DataQualityCard, SamplingEffortCard } from '@/components/species/DataQualityCard'
 import { ExtrapolationCard } from '@/components/species/ExtrapolationCard'
@@ -63,6 +65,7 @@ import { ModelCardPanel } from '@/components/species/ModelCardPanel'
 import { ModelLineageTable } from '@/components/species/ModelLineageTable'
 import { AlertsCard, StudyRegionCard } from '@/components/species/MonitoringCards'
 import { OccurrenceTable } from '@/components/species/OccurrenceTable'
+import { PredictorComparisonCard } from '@/components/species/PredictorComparisonCard'
 import { ReferenceDatasetsPanel } from '@/components/species/ReferenceDatasetsPanel'
 import { ScenariosCard } from '@/components/species/ScenariosCard'
 import { SeverityConfigForm } from '@/components/species/SeverityConfigForm'
@@ -155,6 +158,7 @@ function SpeciesWorkspace() {
   const versions = useModelVersions(taxonKey, registered)
   const model = useModelVersion(taxonKey, sp?.model_version || null)
   const bioclim = useBioclim()
+  const climateVersions = useClimateVersions()
   const run = useRunPipeline(taxonKey)
   const updateNative = useUpdateNativeRange(taxonKey)
   const maxYear = useSelector(mapStore, (s) => s.maxYear)
@@ -393,6 +397,7 @@ function SpeciesWorkspace() {
               </div>
               <AlgorithmCard model={model.data} />
               <ResponseCurvesCard model={model.data} descriptions={bioclim.data?.descriptions} />
+              <PredictorComparisonCard sp={sp} model={model.data} jobActive={job.active} />
               <BiasStudiesCard taxonKey={taxonKey} />
               <ExportsCard taxonKey={taxonKey} version={model.data.model_version} />
             </>
@@ -407,7 +412,20 @@ function SpeciesWorkspace() {
 
         <TabsContent value="monitoring" className="grid gap-4 xl:grid-cols-[1.4fr_1fr]">
           <AlertsCard taxonKey={taxonKey} />
-          <StudyRegionCard key={JSON.stringify(sp.study_region)} sp={sp} bioclim={bioclim.data} />
+          <div className="space-y-4">
+            <StudyRegionCard
+              key={JSON.stringify(sp.study_region)}
+              sp={sp}
+              bioclim={bioclim.data}
+              climate={climateVersions.data?.find(
+                (v) => v.version === sp.effective_climate_version,
+              )}
+            />
+            <ClimatePredictorsCard
+              key={`${sp.climate_version}-${JSON.stringify(sp.predictor_config)}`}
+              sp={sp}
+            />
+          </div>
         </TabsContent>
 
         <TabsContent value="native-range">

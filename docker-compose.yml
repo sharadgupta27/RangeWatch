@@ -78,8 +78,12 @@ services:
 
   api:
     <<: *backend
-    # Served behind the gateway at /api (root-path keeps /api/docs working).
-    command: uvicorn src.api.main:app --host 0.0.0.0 --port 8000 --root-path /api --proxy-headers --forwarded-allow-ips=*
+    # Served behind the gateway at /api (root-path keeps /api/docs working). The schema is
+    # re-applied (idempotently) on every start: Postgres' init directory only runs on a fresh
+    # volume, so an existing database would otherwise miss tables added since it was created.
+    command: >
+      sh -c "python -m src.persistence.migrate &&
+      exec uvicorn src.api.main:app --host 0.0.0.0 --port 8000 --root-path /api --proxy-headers --forwarded-allow-ips=*"
     ports: ["127.0.0.1:8000:8000"]
 
   worker:

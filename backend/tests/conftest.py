@@ -90,9 +90,11 @@ def build_stack(root: Path, res: float = 1.0) -> Path:
     return vdir
 
 
-def add_synthetic_scenario(bioclim_root: Path, name: str, warming: float = 4.0) -> None:
+def add_synthetic_scenario(
+    bioclim_root: Path, name: str, warming: float = 4.0, version: str = BIOCLIM_VERSION
+) -> None:
     """Register a future-climate stack: same grid, BIO1 (and derived bands) warmer."""
-    vdir = bioclim_root / BIOCLIM_VERSION
+    vdir = bioclim_root / version
     with rasterio.open(vdir / STACK_FILENAME) as src:
         data = src.read()
         profile = src.profile
@@ -366,3 +368,134 @@ def write_synthetic_stack_tif(path: Path, res: float = 0.5) -> Path:
     ) as dst:
         dst.write(data)
     return path
+
+
+# Interrupted Goode Homolosine, the native projection of the SoilGrids rasters.
+IGH = "+proj=igh +lon_0=0 +x_0=0 +y_0=0 +ellps=WGS84 +units=m +no_defs"
+SOIL_DEPTHS = ("0-5cm", "5-15cm", "15-30cm")
+# A region with no SoilGrids prediction (inside the synthetic 'Eurasia').
+SOIL_GAP = ((100.0, 120.0), (20.0, 40.0))
+
+
+def synthetic_soil(prop: str, depth: str, lon: np.ndarray, lat: np.ndarray) -> np.ndarray:
+    """Mapped (integer-unit) SoilGrids values. pH is constant in space but differs by depth
+    (6.0 / 7.0 / 8.0), so the 0–30 cm weighting is checkable: (5·6 + 10·7 + 15·8) / 30."""
+    d = SOIL_DEPTHS.index(depth)
+    if prop == "phh2o":
+        return np.full_like(lon, 60.0 + 10.0 * d)
+    if prop == "sand":
+        return 300.0 + 2.0 * lon  # g/kg → % at 0.1
+    if prop == "clay":
+        return 250.0 + 2.0 * lat
+    if prop == "soc":
+        return 50.0 + 2.0 * np.abs(lat)
+    if prop == "bdod":
+        return 130.0 + 0.2 * lon
+    if prop == "wv0033":
+        return 300.0 + lat
+    if prop == "wv1500":
+        return np.full_like(lon, 100.0)
+    raise ValueError(prop)
+
+
+def write_synthetic_soilgrids(
+    src_dir: Path,
+    props: tuple[str, ...] = ("phh2o", "sand", "clay", "soc", "bdod", "wv0033", "wv1500"),
+    res_tag: str = "5000",
+    pixel_m: float = 50_000.0,
+) -> Path:
+    """SoilGrids-like files named as on files.isric.org: int16 in IGH, nodata −32768 in the
+    projection's interruptions, over the oceans' far south and in SOIL_GAP."""
+    from pyproj import Transformer
+    from rasterio.crs import CRS
+
+    src_dir.mkdir(parents=True, exist_ok=True)
+    x0, x1, y0, y1 = -20_037_508.0, 20_037_508.0, -8_683_259.0, 8_683_259.0
+    w, h = int((x1 - x0) / pixel_m), int((y1 - y0) / pixel_m)
+    xs = x0 + (np.arange(w) + 0.5) * pixel_m
+    ys = y1 - (np.arange(h) + 0.5) * pixel_m
+    xx, yy = np.meshgrid(xs, ys)
+    crs = CRS.from_string(IGH)
+    # pyproj (not GDAL) so the projection's interruptions come back as inf, not an error.
+    to_geo = Transformer.from_crs(IGH, "EPSG:4326", always_xy=True)
+    lon, lat = to_geo.transform(xx.ravel(), yy.ravel(), errcheck=False)
+    lon = np.asarray(lon).reshape(h, w)
+    lat = np.asarray(lat).reshape(h, w)
+    with np.errstate(invalid="ignore"):
+        bad = ~np.isfinite(lon) | ~np.isfinite(lat) | (np.abs(lon) > 180) | (np.abs(lat) > 90)
+        (gx0, gx1), (gy0, gy1) = SOIL_GAP
+        bad |= (lon >= gx0) & (lon <= gx1) & (lat >= gy0) & (lat <= gy1)
+    lon_f, lat_f = np.where(bad, 0.0, lon), np.where(bad, 0.0, lat)
+    for prop in props:
+        for depth in SOIL_DEPTHS:
+            vals = np.round(synthetic_soil(prop, depth, lon_f, lat_f)).astype("int16")
+            vals[bad] = -32768
+            with rasterio.open(
+                src_dir / f"{prop}_{depth}_mean_{res_tag}.tif",
+                "w",
+                driver="GTiff",
+                width=w,
+                height=h,
+                count=1,
+                dtype="int16",
+                crs=crs,
+                transform=from_origin(x0, y1, pixel_m, pixel_m),
+                nodata=-32768,
+            ) as dst:
+                dst.write(vals, 1)
+    return src_dir
+
+
+def write_synthetic_chelsa_extras(
+    src_dir: Path,
+    variables: tuple[str, ...] = ("hurs_mean", "gdd5"),
+    future: tuple[str, str, str] | None = None,
+    future_variables: tuple[str, ...] = ("gdd5",),
+    res: float = 0.5,
+) -> Path:
+    """CHELSA-BIOCLIM+-like files on the CHELSA grid, packed with a declared scale (0.1).
+    With `future=(gcm, ssp, period)`: also that CMIP6 future's BIO1–19 (BIO1 +3 °C) and the
+    `future_variables` (CHELSA publishes e.g. gdd5 for futures, but not hurs)."""
+    src_dir.mkdir(parents=True, exist_ok=True)
+    w, h = int(360 / res), int(140 / res)
+    lon2, lat2 = np.meshgrid(-180 + (np.arange(w) + 0.5) * res, 84 - (np.arange(h) + 0.5) * res)
+
+    def write(name: str, physical: np.ndarray, offset: float = 0.0) -> None:
+        with rasterio.open(
+            src_dir / name,
+            "w",
+            driver="GTiff",
+            width=w,
+            height=h,
+            count=1,
+            dtype="float32",
+            crs="EPSG:4326",
+            transform=from_origin(-180, 84, res, res),
+        ) as dst:
+            dst.write(((physical - offset) / 0.1).astype("float32"), 1)
+            dst.scales = (0.1,)
+            dst.offsets = (offset,)
+
+    def extra(var: str, warm: float = 0.0) -> np.ndarray:
+        if var.startswith("hurs"):
+            return 40.0 + 0.4 * np.abs(lat2) + 0.05 * lon2  # % — varies independently of bio1
+        if var.startswith("gdd"):
+            return 4000.0 - 60.0 * np.abs(lat2) + 300.0 * warm
+        return 10.0 + 0.1 * lon2
+
+    for var in variables:
+        write(f"CHELSA_{var}_1981-2010_V.2.1.tif", extra(var))
+    if future is not None:
+        gcm, ssp, period = future
+        data = synthetic_bands(lon2, lat2)
+        data[0] += 3.0
+        for i in range(1, 20):
+            offset = -273.15 if i in TEMPERATURE_BANDS else 0.0
+            write(
+                f"CHELSA_bio{i}_{period}_{gcm.lower()}_{ssp}_V.2.1.tif",
+                data[i - 1] / (100.0 if i == 3 else 1.0),
+                offset,
+            )
+        for var in future_variables:
+            write(f"CHELSA_{var}_{period}_{gcm.lower()}_{ssp}_V.2.1.tif", extra(var, warm=1.0))
+    return src_dir

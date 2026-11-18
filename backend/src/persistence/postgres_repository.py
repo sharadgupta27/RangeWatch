@@ -36,7 +36,7 @@ from src.domain import (
 from src.persistence.repository import REFERENCE_COLUMNS, STALE_JOB_MESSAGE, NotFoundError
 
 _SPECIES_COLS = [f.name for f in dc_fields(SpeciesRecord)]
-_JSON_SPECIES_COLS = {"model_metrics", "severity_config", "study_region"}
+_JSON_SPECIES_COLS = {"model_metrics", "severity_config", "study_region", "predictor_config"}
 _JOB_COLS = [f.name for f in dc_fields(Job)]
 _REF_DATASET_COLS = [f.name for f in dc_fields(ReferenceDataset)]
 _JSON_REF_DATASET_COLS = {"parse_report", "overlap"}

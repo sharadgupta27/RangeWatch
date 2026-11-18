@@ -48,6 +48,32 @@
         }
       }
     },
+    "/bioclim/versions": {
+      "get": {
+        "tags": [
+          "meta"
+        ],
+        "summary": "Climate Versions",
+        "description": "Installed climate data versions a species can be trained on (WorldClim, CHELSA, \u2026),\nwith their predictors grouped by process and whether future data exists for each.",
+        "operationId": "listClimateVersions",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ClimateVersionOut"
+                  },
+                  "type": "array",
+                  "title": "Response Listclimateversions"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/me": {
       "get": {
         "tags": [
@@ -766,6 +792,119 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/SpeciesDetail"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/species/{taxon_key}/environment": {
+      "put": {
+        "tags": [
+          "species"
+        ],
+        "summary": "Put Environment",
+        "description": "Choose the species' climate data (WorldClim, CHELSA, \u2026; null = deployment default)\nand how its predictors are chosen (automatic VIF shortlist, or the user's variables).\nChanging either flags a retrain; the current model stays published until then.",
+        "operationId": "updateEnvironment",
+        "parameters": [
+          {
+            "name": "taxon_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Taxon Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EnvironmentUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpeciesDetail"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/species/{taxon_key}/predictor-comparison": {
+      "post": {
+        "tags": [
+          "species"
+        ],
+        "summary": "Run Predictor Comparison",
+        "description": "Refit the current version's exact training locations with candidate predictor sets\n(temperature, precipitation, humidity/wind, \u2026 or the given sets) and rank them by\nspatial-CV CBI. Nothing is retrained; the result is stored with the version.",
+        "operationId": "comparePredictorSets",
+        "parameters": [
+          {
+            "name": "taxon_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Taxon Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/PredictorComparisonRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobOut"
                 }
               }
             }
@@ -4099,6 +4238,21 @@
               }
             ],
             "title": "Crosscheck Source"
+          },
+          "static_layers": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Static Layers",
+            "description": "Static (non-climate) predictor layers of the version, e.g. soil_phh2o"
+          },
+          "static_layer_citations": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Static Layer Citations"
           }
         },
         "type": "object",
@@ -4514,6 +4668,14 @@
             "type": "array",
             "title": "Predictors"
           },
+          "unchanged_predictors": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Unchanged Predictors",
+            "description": "Non-climate predictors (e.g. soil) kept at their training values"
+          },
           "primary": {
             "$ref": "#/components/schemas/CrossCheckMetricsOut"
           },
@@ -4590,6 +4752,149 @@
         ],
         "title": "ClimateCrossCheckOut",
         "description": "The model version refitted on an independent climate source (same training points,\nfeature classes, regularisation and CV seed) and compared with the original."
+      },
+      "ClimateSourceInfo": {
+        "properties": {
+          "family": {
+            "type": "string",
+            "title": "Family"
+          },
+          "baseline_period": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Baseline Period"
+          },
+          "resolution": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolution"
+          },
+          "chosen_for_species": {
+            "type": "boolean",
+            "title": "Chosen For Species",
+            "description": "True: chosen for this species; false: the deployment default",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "family"
+        ],
+        "title": "ClimateSourceInfo"
+      },
+      "ClimateVersionOut": {
+        "properties": {
+          "version": {
+            "type": "string",
+            "title": "Version"
+          },
+          "family": {
+            "type": "string",
+            "enum": [
+              "worldclim",
+              "chelsa",
+              "other"
+            ],
+            "title": "Family"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source"
+          },
+          "baseline_period": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Baseline Period"
+          },
+          "resolution": {
+            "type": "string",
+            "title": "Resolution"
+          },
+          "hires_resolutions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Hires Resolutions"
+          },
+          "scenarios": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Scenarios"
+          },
+          "selected_predictors": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Selected Predictors",
+            "description": "Global VIF shortlist used by the automatic predictor choice"
+          },
+          "predictors": {
+            "items": {
+              "$ref": "#/components/schemas/PredictorInfo"
+            },
+            "type": "array",
+            "title": "Predictors"
+          },
+          "citation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Citation"
+          },
+          "is_default": {
+            "type": "boolean",
+            "title": "Is Default"
+          },
+          "is_crosscheck": {
+            "type": "boolean",
+            "title": "Is Crosscheck"
+          }
+        },
+        "type": "object",
+        "required": [
+          "version",
+          "family",
+          "label",
+          "source",
+          "resolution",
+          "selected_predictors",
+          "predictors",
+          "is_default",
+          "is_crosscheck"
+        ],
+        "title": "ClimateVersionOut",
+        "description": "An installed climate data version a species can be trained on."
       },
       "CrossCheckMetricsOut": {
         "properties": {
@@ -5174,6 +5479,27 @@
           "reference"
         ],
         "title": "EnsembleOut"
+      },
+      "EnvironmentUpdate": {
+        "properties": {
+          "climate_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Climate Version",
+            "description": "Installed climate data version; null = deployment default"
+          },
+          "predictor_config": {
+            "$ref": "#/components/schemas/PredictorConfigModel"
+          }
+        },
+        "type": "object",
+        "title": "EnvironmentUpdate"
       },
       "ExportIndex": {
         "properties": {
@@ -6217,7 +6543,8 @@
           "benchmark",
           "batch",
           "target_groups",
-          "shared_bias"
+          "shared_bias",
+          "predictor_sets"
         ],
         "title": "JobKind"
       },
@@ -6449,6 +6776,14 @@
             "type": "array",
             "title": "Scenarios Available",
             "description": "Scenarios registered for the model's bioclim version (projected or not)"
+          },
+          "scenarios_unavailable": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Scenarios Unavailable",
+            "description": "Registered scenarios this model cannot be projected onto, with the reason"
           },
           "hires": {
             "anyOf": [
@@ -7084,6 +7419,25 @@
             },
             "type": "array",
             "title": "Crosschecks"
+          },
+          "predictor_comparison": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PredictorComparisonOut"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Latest predictor-set comparison on this version's training data"
+          },
+          "scenarios_unavailable": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Scenarios Unavailable",
+            "description": "Scenarios this version cannot be projected onto, with the reason (present-only predictors such as relative humidity or wind)"
           },
           "response_curves": {
             "anyOf": [
@@ -8056,6 +8410,589 @@
         ],
         "title": "PredictorAgreementOut"
       },
+      "PredictorComparisonOut": {
+        "properties": {
+          "model_version": {
+            "type": "integer",
+            "title": "Model Version"
+          },
+          "bioclim_version": {
+            "type": "string",
+            "title": "Bioclim Version"
+          },
+          "climate_family": {
+            "type": "string",
+            "title": "Climate Family"
+          },
+          "resolution": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolution"
+          },
+          "created_ts": {
+            "type": "string",
+            "title": "Created Ts"
+          },
+          "sets": {
+            "items": {
+              "$ref": "#/components/schemas/PredictorSetResultOut"
+            },
+            "type": "array",
+            "title": "Sets"
+          },
+          "best": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Best"
+          },
+          "similar_to_best": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Similar To Best"
+          },
+          "ranking_metric": {
+            "type": "string",
+            "title": "Ranking Metric"
+          },
+          "vif_screen": {
+            "type": "boolean",
+            "title": "Vif Screen"
+          },
+          "note": {
+            "type": "string",
+            "title": "Note"
+          },
+          "path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Path"
+          }
+        },
+        "type": "object",
+        "required": [
+          "model_version",
+          "bioclim_version",
+          "climate_family",
+          "created_ts",
+          "sets",
+          "ranking_metric",
+          "vif_screen",
+          "note"
+        ],
+        "title": "PredictorComparisonOut",
+        "description": "Candidate predictor sets refitted on a version's exact training locations."
+      },
+      "PredictorComparisonRequest": {
+        "properties": {
+          "sets": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/PredictorSetIn"
+                },
+                "type": "array",
+                "maxItems": 12
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sets",
+            "description": "Candidate sets; null = built from the version's predictor groups"
+          }
+        },
+        "type": "object",
+        "title": "PredictorComparisonRequest"
+      },
+      "PredictorConfigModel": {
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "auto",
+              "custom"
+            ],
+            "title": "Mode",
+            "description": "auto: the climate version's global VIF shortlist; custom: `predictors`",
+            "default": "auto"
+          },
+          "predictors": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Predictors"
+          },
+          "vif_screen": {
+            "type": "boolean",
+            "title": "Vif Screen",
+            "description": "custom: drop collinear predictors (VIF \u2265 5) on the species' background",
+            "default": true
+          },
+          "protected": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Protected",
+            "description": "custom: predictors the VIF screen never drops"
+          }
+        },
+        "type": "object",
+        "title": "PredictorConfigModel",
+        "description": "How a species' predictors are chosen."
+      },
+      "PredictorInfo": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description"
+          },
+          "group": {
+            "type": "string",
+            "title": "Group",
+            "description": "temperature, precipitation, humidity, wind, soil, \u2026"
+          },
+          "group_label": {
+            "type": "string",
+            "title": "Group Label"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "climate_band",
+              "climate_layer",
+              "soil"
+            ],
+            "title": "Kind"
+          },
+          "future_available": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Future Available",
+            "description": "Whether future-scenario data exists for it (null: the version has no scenarios yet). Soil is held constant, so always true when scenarios exist"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "description",
+          "group",
+          "group_label",
+          "kind"
+        ],
+        "title": "PredictorInfo"
+      },
+      "PredictorSelectionInfo": {
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "auto",
+              "custom"
+            ],
+            "title": "Mode"
+          },
+          "bioclim_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bioclim Version"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          },
+          "requested": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Requested"
+          },
+          "unavailable": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Unavailable",
+            "description": "Chosen predictors the climate version lacks"
+          },
+          "vif_screen": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vif Screen"
+          },
+          "protected": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Protected"
+          },
+          "screened_on": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Screened On"
+          },
+          "screen_skipped": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Screen Skipped"
+          },
+          "dropped": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Dropped"
+          },
+          "vif": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "type": "object",
+            "title": "Vif"
+          },
+          "used": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Used"
+          },
+          "present_only": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Present Only"
+          },
+          "fallback_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fallback Reason"
+          }
+        },
+        "type": "object",
+        "required": [
+          "mode"
+        ],
+        "title": "PredictorSelectionInfo",
+        "description": "How the version's predictors were chosen (recorded at training time)."
+      },
+      "PredictorSetIn": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 60,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          },
+          "predictors": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "minItems": 2,
+            "title": "Predictors"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "predictors"
+        ],
+        "title": "PredictorSetIn"
+      },
+      "PredictorSetResultOut": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "fitted",
+              "skipped"
+            ],
+            "title": "Status"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "rank": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rank"
+          },
+          "requested": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Requested"
+          },
+          "groups": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Groups"
+          },
+          "predictors": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Predictors",
+            "description": "After the VIF screen"
+          },
+          "dropped_by_vif": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Dropped By Vif"
+          },
+          "present_only": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Present Only",
+            "description": "Predictors without future data"
+          },
+          "n_presence": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "N Presence"
+          },
+          "n_background": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "N Background"
+          },
+          "feature_classes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Feature Classes"
+          },
+          "beta_multiplier": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Beta Multiplier"
+          },
+          "cbi_mean": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cbi Mean"
+          },
+          "cbi_std": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cbi Std"
+          },
+          "auc_mean": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auc Mean"
+          },
+          "auc_std": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auc Std"
+          },
+          "tss_mean": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tss Mean"
+          },
+          "tss_std": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tss Std"
+          },
+          "importance": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": "object",
+            "title": "Importance"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "label",
+          "status",
+          "requested"
+        ],
+        "title": "PredictorSetResultOut"
+      },
       "PresenceWeightsInfo": {
         "properties": {
           "method": {
@@ -8839,6 +9776,36 @@
             ],
             "title": "Bioclim Dvc Md5",
             "description": "DVC hash of the bioclim version directory (data/bioclim/<v>.dvc)"
+          },
+          "climate_source": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ClimateSourceInfo"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Climate data family and baseline; absent for older versions"
+          },
+          "predictor_selection": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PredictorSelectionInfo"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Predictor choice (auto / custom + screen); absent for older versions"
+          },
+          "static_predictor_layers": {
+            "items": {
+              "$ref": "#/components/schemas/StaticPredictorLayerInfo"
+            },
+            "type": "array",
+            "title": "Static Predictor Layers",
+            "description": "Static predictor layers of the version (e.g. SoilGrids soil); empty for climate-only versions and versions trained before static layers existed"
           },
           "gbif_download_key": {
             "anyOf": [
@@ -10059,6 +11026,26 @@
               }
             ],
             "description": "Regional model area (U2); null = global model"
+          },
+          "climate_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Climate Version",
+            "description": "Climate data chosen for this species; null = deployment default"
+          },
+          "effective_climate_version": {
+            "type": "string",
+            "title": "Effective Climate Version",
+            "description": "The climate data the next training run uses"
+          },
+          "predictor_config": {
+            "$ref": "#/components/schemas/PredictorConfigModel"
           }
         },
         "type": "object",
@@ -10073,7 +11060,9 @@
           "retrain_needed",
           "native_range_status",
           "sources",
-          "severity_config"
+          "severity_config",
+          "effective_climate_version",
+          "predictor_config"
         ],
         "title": "SpeciesDetail"
       },
@@ -10688,6 +11677,139 @@
         ],
         "title": "StaticBiasLayerInfo",
         "description": "A registered static observer-bias raster used as a covariate (travel time, roads, \u2026)."
+      },
+      "StaticPredictorLayerInfo": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "used": {
+            "type": "boolean",
+            "title": "Used",
+            "description": "Whether the model used it (the VIF screen may drop it)"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kind",
+            "description": "e.g. soil"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "units": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Units"
+          },
+          "depth": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Depth"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          },
+          "source_resolution_m": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Resolution M"
+          },
+          "citation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Citation"
+          },
+          "sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sha256"
+          },
+          "land_coverage": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Land Coverage",
+            "description": "Share of the version's land cells with a value"
+          },
+          "static_under_scenarios": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Static Under Scenarios",
+            "description": "True: held constant under future-climate scenarios"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "used"
+        ],
+        "title": "StaticPredictorLayerInfo",
+        "description": "A static predictor layer of the bioclim version (e.g. a SoilGrids soil property), with\nits provenance and checksum as recorded at training time."
       },
       "StudyRegionInfo": {
         "properties": {

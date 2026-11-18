@@ -25,7 +25,7 @@ from src.api.schemas import (
     VectorLayer,
 )
 from src.config import Settings
-from src.domain import BIOCLIM_DESCRIPTIONS, CHANGE_LABELS, ZONE_LABELS
+from src.domain import CHANGE_LABELS, PREDICTOR_DESCRIPTIONS, ZONE_LABELS
 from src.features.raster_sampler import METADATA_FILENAME, BioclimMetadata
 from src.persistence.artifact_store import ArtifactStore
 from src.persistence.repository import Repository
@@ -380,7 +380,7 @@ def _product_layers(
         classes = {
             i: (
                 LIMITING_COLORS[i % len(LIMITING_COLORS)],
-                f"{p} · {BIOCLIM_DESCRIPTIONS.get(p, p)}",
+                f"{p} · {PREDICTOR_DESCRIPTIONS.get(p, p)}",
             )
             for i, p in enumerate(preds)
         }
@@ -726,6 +726,18 @@ def get_layers(
     if bioclim_version and meta_path.exists():
         meta = BioclimMetadata.load(meta_path)
         layers.scenarios_available = list(meta.scenarios)
+        # Futures this model cannot be projected onto (present-only predictors, e.g. CHELSA
+        # relative humidity or wind), with the reason.
+        predictors = list(mv.metrics.get("predictors") or [])
+        unavailable = dict(mv.artifacts.get("scenarios_unavailable") or {})
+        for name in meta.scenarios:
+            missing = meta.unavailable_in_scenario(name, predictors)
+            if missing and name not in unavailable:
+                unavailable[name] = (
+                    f"uses {', '.join(missing)}, which the climate source does not provide "
+                    "for this future (present-climate only)"
+                )
+        layers.scenarios_unavailable = unavailable
         layers.hires_available = meta.finest_hires()
         if layers.hires_available:
             layers.hires_max_cells = settings.hires_max_cells

@@ -38,6 +38,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/bioclim/versions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Climate Versions
+         * @description Installed climate data versions a species can be trained on (WorldClim, CHELSA, …),
+         *     with their predictors grouped by process and whether future data exists for each.
+         */
+        get: operations["listClimateVersions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/me": {
         parameters: {
             query?: never;
@@ -292,6 +313,50 @@ export interface paths {
          */
         put: operations["updateStudyRegion"];
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/species/{taxon_key}/environment": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Put Environment
+         * @description Choose the species' climate data (WorldClim, CHELSA, …; null = deployment default)
+         *     and how its predictors are chosen (automatic VIF shortlist, or the user's variables).
+         *     Changing either flags a retrain; the current model stays published until then.
+         */
+        put: operations["updateEnvironment"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/species/{taxon_key}/predictor-comparison": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Run Predictor Comparison
+         * @description Refit the current version's exact training locations with candidate predictor sets
+         *     (temperature, precipitation, humidity/wind, … or the given sets) and rank them by
+         *     spatial-CV CBI. Nothing is retrained; the result is stored with the version.
+         */
+        post: operations["comparePredictorSets"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1396,6 +1461,13 @@ export interface components {
             crosscheck_version?: string | null;
             /** Crosscheck Source */
             crosscheck_source?: string | null;
+            /**
+             * Static Layers
+             * @description Static (non-climate) predictor layers of the version, e.g. soil_phh2o
+             */
+            static_layers?: string[];
+            /** Static Layer Citations */
+            static_layer_citations?: string[];
         };
         /** Body_uploadReferenceDataset */
         Body_uploadReferenceDataset: {
@@ -1516,6 +1588,11 @@ export interface components {
             beta_multiplier: number;
             /** Predictors */
             predictors: components["schemas"]["PredictorAgreementOut"][];
+            /**
+             * Unchanged Predictors
+             * @description Non-climate predictors (e.g. soil) kept at their training values
+             */
+            unchanged_predictors?: string[];
             primary: components["schemas"]["CrossCheckMetricsOut"];
             alternative: components["schemas"]["CrossCheckMetricsOut"];
             /**
@@ -1534,6 +1611,59 @@ export interface components {
             verdict: "consistent" | "moderate" | "divergent";
             /** Interpretation */
             interpretation: string;
+        };
+        /** ClimateSourceInfo */
+        ClimateSourceInfo: {
+            /** Family */
+            family: string;
+            /** Baseline Period */
+            baseline_period?: string | null;
+            /** Resolution */
+            resolution?: string | null;
+            /**
+             * Chosen For Species
+             * @description True: chosen for this species; false: the deployment default
+             * @default false
+             */
+            chosen_for_species: boolean;
+        };
+        /**
+         * ClimateVersionOut
+         * @description An installed climate data version a species can be trained on.
+         */
+        ClimateVersionOut: {
+            /** Version */
+            version: string;
+            /**
+             * Family
+             * @enum {string}
+             */
+            family: "worldclim" | "chelsa" | "other";
+            /** Label */
+            label: string;
+            /** Source */
+            source: string;
+            /** Baseline Period */
+            baseline_period?: string | null;
+            /** Resolution */
+            resolution: string;
+            /** Hires Resolutions */
+            hires_resolutions?: string[];
+            /** Scenarios */
+            scenarios?: string[];
+            /**
+             * Selected Predictors
+             * @description Global VIF shortlist used by the automatic predictor choice
+             */
+            selected_predictors: string[];
+            /** Predictors */
+            predictors: components["schemas"]["PredictorInfo"][];
+            /** Citation */
+            citation?: string | null;
+            /** Is Default */
+            is_default: boolean;
+            /** Is Crosscheck */
+            is_crosscheck: boolean;
         };
         /** CrossCheckMetricsOut */
         CrossCheckMetricsOut: {
@@ -1732,6 +1862,15 @@ export interface components {
             cv_test_set: string;
             /** Reference */
             reference: string;
+        };
+        /** EnvironmentUpdate */
+        EnvironmentUpdate: {
+            /**
+             * Climate Version
+             * @description Installed climate data version; null = deployment default
+             */
+            climate_version?: string | null;
+            predictor_config?: components["schemas"]["PredictorConfigModel"];
         };
         /** ExportIndex */
         ExportIndex: {
@@ -2121,7 +2260,7 @@ export interface components {
          * JobKind
          * @enum {string}
          */
-        JobKind: "pipeline" | "bulletin" | "scenarios" | "validation" | "crosscheck" | "hires" | "evaluation" | "benchmark" | "batch" | "target_groups" | "shared_bias";
+        JobKind: "pipeline" | "bulletin" | "scenarios" | "validation" | "crosscheck" | "hires" | "evaluation" | "benchmark" | "batch" | "target_groups" | "shared_bias" | "predictor_sets";
         /** JobOut */
         JobOut: {
             /**
@@ -2206,6 +2345,13 @@ export interface components {
              * @description Scenarios registered for the model's bioclim version (projected or not)
              */
             scenarios_available?: string[];
+            /**
+             * Scenarios Unavailable
+             * @description Registered scenarios this model cannot be projected onto, with the reason
+             */
+            scenarios_unavailable?: {
+                [key: string]: string;
+            };
             hires?: components["schemas"]["HiresLayer"] | null;
             /**
              * Hires Available
@@ -2445,6 +2591,15 @@ export interface components {
             };
             /** Crosschecks */
             crosschecks?: components["schemas"]["ClimateCrossCheckOut"][];
+            /** @description Latest predictor-set comparison on this version's training data */
+            predictor_comparison?: components["schemas"]["PredictorComparisonOut"] | null;
+            /**
+             * Scenarios Unavailable
+             * @description Scenarios this version cannot be projected onto, with the reason (present-only predictors such as relative humidity or wind)
+             */
+            scenarios_unavailable?: {
+                [key: string]: string;
+            };
             response_curves?: components["schemas"]["ResponseCurvesOut"] | null;
             ensemble?: components["schemas"]["EnsembleOut"] | null;
             integrated?: components["schemas"]["IntegratedOut"] | null;
@@ -2776,6 +2931,201 @@ export interface components {
             units_suspect: boolean;
         };
         /**
+         * PredictorComparisonOut
+         * @description Candidate predictor sets refitted on a version's exact training locations.
+         */
+        PredictorComparisonOut: {
+            /** Model Version */
+            model_version: number;
+            /** Bioclim Version */
+            bioclim_version: string;
+            /** Climate Family */
+            climate_family: string;
+            /** Resolution */
+            resolution?: string | null;
+            /** Created Ts */
+            created_ts: string;
+            /** Sets */
+            sets: components["schemas"]["PredictorSetResultOut"][];
+            /** Best */
+            best?: string | null;
+            /** Similar To Best */
+            similar_to_best?: string[];
+            /** Ranking Metric */
+            ranking_metric: string;
+            /** Vif Screen */
+            vif_screen: boolean;
+            /** Note */
+            note: string;
+            /** Path */
+            path?: string | null;
+        };
+        /** PredictorComparisonRequest */
+        PredictorComparisonRequest: {
+            /**
+             * Sets
+             * @description Candidate sets; null = built from the version's predictor groups
+             */
+            sets?: components["schemas"]["PredictorSetIn"][] | null;
+        };
+        /**
+         * PredictorConfigModel
+         * @description How a species' predictors are chosen.
+         */
+        PredictorConfigModel: {
+            /**
+             * Mode
+             * @description auto: the climate version's global VIF shortlist; custom: `predictors`
+             * @default auto
+             * @enum {string}
+             */
+            mode: "auto" | "custom";
+            /** Predictors */
+            predictors?: string[];
+            /**
+             * Vif Screen
+             * @description custom: drop collinear predictors (VIF ≥ 5) on the species' background
+             * @default true
+             */
+            vif_screen: boolean;
+            /**
+             * Protected
+             * @description custom: predictors the VIF screen never drops
+             */
+            protected?: string[];
+        };
+        /** PredictorInfo */
+        PredictorInfo: {
+            /** Name */
+            name: string;
+            /** Description */
+            description: string;
+            /**
+             * Group
+             * @description temperature, precipitation, humidity, wind, soil, …
+             */
+            group: string;
+            /** Group Label */
+            group_label: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "climate_band" | "climate_layer" | "soil";
+            /**
+             * Future Available
+             * @description Whether future-scenario data exists for it (null: the version has no scenarios yet). Soil is held constant, so always true when scenarios exist
+             */
+            future_available?: boolean | null;
+        };
+        /**
+         * PredictorSelectionInfo
+         * @description How the version's predictors were chosen (recorded at training time).
+         */
+        PredictorSelectionInfo: {
+            /**
+             * Mode
+             * @enum {string}
+             */
+            mode: "auto" | "custom";
+            /** Bioclim Version */
+            bioclim_version?: string | null;
+            /** Source */
+            source?: string | null;
+            /** Requested */
+            requested?: string[];
+            /**
+             * Unavailable
+             * @description Chosen predictors the climate version lacks
+             */
+            unavailable?: string[];
+            /** Vif Screen */
+            vif_screen?: boolean | null;
+            /** Protected */
+            protected?: string[];
+            /** Screened On */
+            screened_on?: string | null;
+            /** Screen Skipped */
+            screen_skipped?: string | null;
+            /** Dropped */
+            dropped?: string[];
+            /** Vif */
+            vif?: {
+                [key: string]: number;
+            };
+            /** Used */
+            used?: string[];
+            /** Present Only */
+            present_only?: string[];
+            /** Fallback Reason */
+            fallback_reason?: string | null;
+        };
+        /** PredictorSetIn */
+        PredictorSetIn: {
+            /** Name */
+            name: string;
+            /** Label */
+            label?: string | null;
+            /** Predictors */
+            predictors: string[];
+        };
+        /** PredictorSetResultOut */
+        PredictorSetResultOut: {
+            /** Name */
+            name: string;
+            /** Label */
+            label: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "fitted" | "skipped";
+            /** Reason */
+            reason?: string | null;
+            /** Rank */
+            rank?: number | null;
+            /** Requested */
+            requested: string[];
+            /** Groups */
+            groups?: string[];
+            /**
+             * Predictors
+             * @description After the VIF screen
+             */
+            predictors?: string[];
+            /** Dropped By Vif */
+            dropped_by_vif?: string[];
+            /**
+             * Present Only
+             * @description Predictors without future data
+             */
+            present_only?: string[];
+            /** N Presence */
+            n_presence?: number | null;
+            /** N Background */
+            n_background?: number | null;
+            /** Feature Classes */
+            feature_classes?: string | null;
+            /** Beta Multiplier */
+            beta_multiplier?: number | null;
+            /** Cbi Mean */
+            cbi_mean?: number | null;
+            /** Cbi Std */
+            cbi_std?: number | null;
+            /** Auc Mean */
+            auc_mean?: number | null;
+            /** Auc Std */
+            auc_std?: number | null;
+            /** Tss Mean */
+            tss_mean?: number | null;
+            /** Tss Std */
+            tss_std?: number | null;
+            /** Importance */
+            importance?: {
+                [key: string]: number | null;
+            };
+        };
+        /**
          * PresenceWeightsInfo
          * @description Observation weights given to presences (features/sampling_bias.py).
          */
@@ -3030,6 +3380,15 @@ export interface components {
              * @description DVC hash of the bioclim version directory (data/bioclim/<v>.dvc)
              */
             bioclim_dvc_md5?: string | null;
+            /** @description Climate data family and baseline; absent for older versions */
+            climate_source?: components["schemas"]["ClimateSourceInfo"] | null;
+            /** @description Predictor choice (auto / custom + screen); absent for older versions */
+            predictor_selection?: components["schemas"]["PredictorSelectionInfo"] | null;
+            /**
+             * Static Predictor Layers
+             * @description Static predictor layers of the version (e.g. SoilGrids soil); empty for climate-only versions and versions trained before static layers existed
+             */
+            static_predictor_layers?: components["schemas"]["StaticPredictorLayerInfo"][];
             /** Gbif Download Key */
             gbif_download_key?: string | null;
             /** Gbif Download Doi */
@@ -3466,6 +3825,17 @@ export interface components {
             severity_config: components["schemas"]["SeverityConfigModel"];
             /** @description Regional model area (U2); null = global model */
             study_region?: components["schemas"]["StudyRegionOut"] | null;
+            /**
+             * Climate Version
+             * @description Climate data chosen for this species; null = deployment default
+             */
+            climate_version?: string | null;
+            /**
+             * Effective Climate Version
+             * @description The climate data the next training run uses
+             */
+            effective_climate_version: string;
+            predictor_config: components["schemas"]["PredictorConfigModel"];
         };
         /** SpeciesListEntryOut */
         SpeciesListEntryOut: {
@@ -3676,6 +4046,49 @@ export interface components {
             citation?: string | null;
             /** Sha256 */
             sha256?: string | null;
+        };
+        /**
+         * StaticPredictorLayerInfo
+         * @description A static predictor layer of the bioclim version (e.g. a SoilGrids soil property), with
+         *     its provenance and checksum as recorded at training time.
+         */
+        StaticPredictorLayerInfo: {
+            /** Name */
+            name: string;
+            /**
+             * Used
+             * @description Whether the model used it (the VIF screen may drop it)
+             */
+            used: boolean;
+            /**
+             * Kind
+             * @description e.g. soil
+             */
+            kind?: string | null;
+            /** Description */
+            description?: string | null;
+            /** Units */
+            units?: string | null;
+            /** Depth */
+            depth?: string | null;
+            /** Source */
+            source?: string | null;
+            /** Source Resolution M */
+            source_resolution_m?: number | null;
+            /** Citation */
+            citation?: string | null;
+            /** Sha256 */
+            sha256?: string | null;
+            /**
+             * Land Coverage
+             * @description Share of the version's land cells with a value
+             */
+            land_coverage?: number | null;
+            /**
+             * Static Under Scenarios
+             * @description True: held constant under future-climate scenarios
+             */
+            static_under_scenarios?: boolean | null;
         };
         /** StudyRegionInfo */
         StudyRegionInfo: {
@@ -4213,6 +4626,26 @@ export interface operations {
             };
         };
     };
+    listClimateVersions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClimateVersionOut"][];
+                };
+            };
+        };
+    };
     getMe: {
         parameters: {
             query?: never;
@@ -4649,6 +5082,76 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SpeciesDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    updateEnvironment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                taxon_key: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EnvironmentUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SpeciesDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    comparePredictorSets: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                taxon_key: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["PredictorComparisonRequest"] | null;
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobOut"];
                 };
             };
             /** @description Validation Error */

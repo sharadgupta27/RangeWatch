@@ -121,7 +121,7 @@
     <h2>Variable importance</h2>
     <img src="{{ figures.importance }}" alt="Variable importance">
     <ul class="small">
-      {% for p in m.predictors %}<li>{{ p.upper() }} — {{ bioclim_names[p] }}</li>{% endfor %}
+      {% for p in m.predictors %}<li>{{ p.upper() }} — {{ bioclim_names.get(p, p) }}</li>{% endfor %}
     </ul>
   </section>
 </div>
@@ -288,7 +288,15 @@
     {% endif %}
     Predictors: {{ m.predictors | join(', ') | upper }} (global VIF &lt; 5 screen of
     {{ repro.bioclim_version_used }}, {{ repro.bioclim_source }}). Native-range polygon:
-    {{ native_status }}.</p>
+    {{ native_status }}.
+    {% set soil = (repro.static_predictor_layers or []) | selectattr('kind', 'equalto', 'soil') | list %}
+    {% if soil %}
+    {% set soil_used = soil | selectattr('used') | map(attribute='name') | list %}
+    Soil predictors (SoilGrids 2.0, topsoil 0–30 cm{% if soil[0].source_resolution_m %}, {{ soil[0].source_resolution_m }} m source{% endif %}) were offered to the screen;
+    {% if soil_used %}used: {{ soil_used | join(', ') | upper }}{% else %}none was retained{% endif %}.
+    Soil is held constant under future-climate scenarios, and SoilGrids is itself a model
+    product with its own uncertainty.
+    {% endif %}</p>
   {% set dq = repro.data_quality %}
   {% if dq %}
   <p><strong>Data quality.</strong> {{ dq.n_records | num }} records with climate data were
@@ -308,6 +316,9 @@
   <p><strong>Severity index.</strong> {{ severity_footnote }}</p>
   <table class="compact">
     <tr><td>Bioclim version</td><td>{{ repro.bioclim_version_used }} (sha256 {{ (repro.bioclim_sha256 or 'n/a')[:12] }})</td></tr>
+    {% for l in repro.static_predictor_layers or [] %}
+    <tr><td>Static layer {{ l.name }}</td><td>{{ 'used' if l.used else 'not retained' }}, sha256 {{ (l.sha256 or 'n/a')[:12] }}</td></tr>
+    {% endfor %}
     <tr><td>GBIF download</td><td>{{ repro.gbif_download_doi or repro.gbif_download_key or 'search API (no DOI)' }}</td></tr>
     <tr><td>Packages</td><td>{% for k, v in repro.package_versions.items() %}{{ k }} {{ v }}{% if not loop.last %}, {% endif %}{% endfor %}</td></tr>
     <tr><td>Random seeds</td><td>{% for k, v in repro.random_seeds.items() %}{{ k }}={{ v }}{% if not loop.last %}, {% endif %}{% endfor %}</td></tr>

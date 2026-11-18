@@ -20,6 +20,7 @@ const STAGE_LABEL: Record<string, string> = {
   batch: 'Running the species of a list',
   target_groups: 'Refitting with alternative target groups',
   shared_bias: 'Estimating the shared observer bias',
+  predictor_sets: 'Refitting candidate predictor sets',
   done: 'Finishing',
 }
 
@@ -35,6 +36,7 @@ const KIND_LABEL: Record<JobOut['kind'], string> = {
   batch: 'Batch run (species list)',
   target_groups: 'Target-group comparison',
   shared_bias: 'Shared bias estimate',
+  predictor_sets: 'Predictor-set comparison',
 }
 
 /** Live progress for the latest job (SSE stream, or polling while the stream is down). */

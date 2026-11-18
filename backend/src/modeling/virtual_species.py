@@ -83,7 +83,7 @@ def run_benchmark(
     report = progress or (lambda f, m: None)
     seed = int(request.get("seed", 42))
     rng = np.random.default_rng(seed)
-    predictors = list(stack.metadata.selected_predictors or stack.metadata.bands)
+    predictors = list(stack.metadata.selected_predictors or stack.predictor_bands)
     land = _landscape(stack, predictors, request.get("region"), max_width)
     if len(land) < 500:
         raise ValueError(f"Only {len(land)} land cells in the benchmark region")

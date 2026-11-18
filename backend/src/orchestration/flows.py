@@ -73,6 +73,14 @@ def crosscheck_flow(taxon_key: int, job_id: str | None = None) -> dict[str, Any]
     return pipeline.crosscheck_climate(taxon_key)
 
 
+@flow(name="predictor-set-comparison")
+def predictor_sets_flow(
+    taxon_key: int, sets: list[dict[str, Any]] | None = None, job_id: str | None = None
+) -> dict[str, Any]:
+    pipeline = build_pipeline(progress=job_progress(job_id), step=prefect_step)
+    return pipeline.compare_predictor_sets(taxon_key, sets)
+
+
 @flow(name="project-hires")
 def hires_flow(taxon_key: int, bbox: list[float], job_id: str | None = None) -> dict[str, Any]:
     pipeline = build_pipeline(progress=job_progress(job_id), step=prefect_step)

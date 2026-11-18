@@ -130,7 +130,8 @@ class Settings(BaseSettings):
     quality_reference_version: str = "quality_refs_v1"
     # Tests whose flags exclude a record from training; None = every "error" test.
     quality_exclude: list[str] | None = None
-    quality_baseline_start_year: int = 1970
+    # None = from the climate version (1970 WorldClim v2.1, 1981 CHELSA).
+    quality_baseline_start_year: int | None = None
 
     # --- reference (evaluation-only) datasets ---
     upload_max_bytes: int = 25 * 1024 * 1024

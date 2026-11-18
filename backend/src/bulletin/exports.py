@@ -144,6 +144,7 @@ def citation_bundle(sp: SpeciesRecord, mv: ModelVersionRecord) -> str:
         "Climate data",
         f"  {repro.get('bioclim_source') or repro.get('bioclim_version_used')} "
         f"({repro.get('bioclim_version_used')}, SHA-256 {repro.get('bioclim_sha256')})",
+        *_static_layer_citation_lines(repro),
         "",
         "Software",
         *(f"  {k} {v}" for k, v in (repro.get("package_versions") or {}).items()),
@@ -231,6 +232,10 @@ def odmap(sp: SpeciesRecord, mv: ModelVersionRecord) -> dict[str, Any]:
                 "data_partitioning": m.get("cv_method"),
                 "predictors": m.get("predictors"),
                 "predictor_source": repro.get("bioclim_source"),
+                "static_predictor_layers": [
+                    {k: layer.get(k) for k in ("name", "used", "source", "citation", "sha256")}
+                    for layer in repro.get("static_predictor_layers") or []
+                ],
                 "bioclim_version": repro.get("bioclim_version_used"),
                 "sampling_bias": {
                     "presence_weights": repro.get("presence_weights"),
@@ -402,3 +407,15 @@ def bundle_zip(
         z.writestr("CITATION.txt", citation_bundle(sp, mv))
         z.writestr("MODEL_CARD.md", model_card_markdown(model_card(sp, mv)))
     return buf.getvalue()
+
+
+def _static_layer_citation_lines(repro: dict[str, Any]) -> list[str]:
+    """Citation-bundle lines for the static predictor layers the model used (e.g. soil)."""
+    used = [s for s in repro.get("static_predictor_layers") or [] if s.get("used")]
+    if not used:
+        return []
+    lines = ["", "Static predictor data"]
+    for cite in dict.fromkeys(s.get("citation") for s in used if s.get("citation")):
+        lines.append(f"  {cite}")
+    lines += [f"  {s['name']}: {s.get('source')} (SHA-256 {s.get('sha256')})" for s in used]
+    return lines

@@ -22,9 +22,11 @@ import type {
   BatchRunRequest,
   BenchmarkRequest,
   DatasetUploadFields,
+  EnvironmentUpdate,
   JobOut,
   ModelCardOut,
   NativeRangeUpdate,
+  PredictorSetIn,
   SeverityConfigModel,
   SpeciesListIn,
   StudyRegionUpdate,
@@ -48,6 +50,7 @@ export const qk = {
   datasets: (k: number) => ['species', k, 'datasets'] as const,
   jobs: (k: number) => ['jobs', { taxonKey: k }] as const,
   bioclim: () => ['bioclim'] as const,
+  climateVersions: () => ['bioclim', 'versions'] as const,
   annotations: (k: number) => ['species', k, 'annotations'] as const,
   alerts: (k: number) => ['species', k, 'alerts'] as const,
   subscriptions: (k: number) => ['alerts', 'subscriptions', k] as const,
@@ -566,6 +569,50 @@ export function useUpdateStudyRegion(taxonKey: number) {
       qc.setQueryData(qk.species(taxonKey), data)
       void qc.invalidateQueries({ queryKey: qk.speciesList() })
     },
+  })
+}
+
+// ------------------------------------------------------------ climate data + predictors
+/** Installed climate data versions (WorldClim, CHELSA, …) with their grouped predictors. */
+export function useClimateVersions() {
+  return useQuery({
+    queryKey: qk.climateVersions(),
+    queryFn: async () => unwrap(await api.GET('/bioclim/versions')),
+    staleTime: 10 * 60_000,
+    retry: false,
+  })
+}
+
+/** Choose the species' climate data and predictor set (flags a retrain on the server). */
+export function useUpdateEnvironment(taxonKey: number) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (body: EnvironmentUpdate) =>
+      unwrap(
+        await api.PUT('/species/{taxon_key}/environment', {
+          params: { path: { taxon_key: taxonKey } },
+          body,
+        }),
+      ),
+    onSuccess: (data) => {
+      qc.setQueryData(qk.species(taxonKey), data)
+      void qc.invalidateQueries({ queryKey: qk.speciesList() })
+    },
+  })
+}
+
+/** Rank candidate predictor sets on the current version's training data (a background job). */
+export function useComparePredictorSets(taxonKey: number) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (sets: PredictorSetIn[] | null) =>
+      unwrap(
+        await api.POST('/species/{taxon_key}/predictor-comparison', {
+          params: { path: { taxon_key: taxonKey } },
+          body: { sets },
+        }),
+      ),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.jobs(taxonKey) }),
   })
 }
 

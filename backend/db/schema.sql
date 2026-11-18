@@ -37,6 +37,10 @@ CREATE TABLE IF NOT EXISTS species_registry (
 );
 -- Regional model (U2): {"bbox": [w, s, e, n], "resolution": "30s" | null}; NULL = global.
 ALTER TABLE species_registry ADD COLUMN IF NOT EXISTS study_region jsonb;
+-- Per-species climate data source (a bioclim version tag; NULL = deployment default) and
+-- predictor choice ({"mode": "auto"} | {"mode": "custom", "predictors": [...], "vif_screen": b}).
+ALTER TABLE species_registry ADD COLUMN IF NOT EXISTS climate_version text;
+ALTER TABLE species_registry ADD COLUMN IF NOT EXISTS predictor_config jsonb;
 
 -- ---------------------------------------------------------------------------
 -- Occurrence store (append-only, partitioned by taxon_key).

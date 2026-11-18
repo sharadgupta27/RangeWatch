@@ -11,7 +11,7 @@ import {
   useSpeciesAlerts,
   useUpdateStudyRegion,
 } from '@/api/queries'
-import type { AlertOut, BioclimInfo, SpeciesDetail } from '@/api/types'
+import type { AlertOut, BioclimInfo, ClimateVersionOut, SpeciesDetail } from '@/api/types'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -216,7 +216,16 @@ export function AlertsCard({ taxonKey }: { taxonKey: number }) {
 }
 
 /** U2: train and project a regional model, optionally at a registered high resolution. */
-export function StudyRegionCard({ sp, bioclim }: { sp: SpeciesDetail; bioclim: BioclimInfo | undefined }) {
+export function StudyRegionCard({
+  sp,
+  bioclim,
+  climate,
+}: {
+  sp: SpeciesDetail
+  bioclim: BioclimInfo | undefined
+  /** The species' own climate version (its grids decide the resolutions on offer). */
+  climate?: ClimateVersionOut
+}) {
   const update = useUpdateStudyRegion(sp.taxon_key)
   const { run } = usePermissions()
   const bounds = useSelector(mapStore, (s) => s.viewBounds)
@@ -294,8 +303,10 @@ export function StudyRegionCard({ sp, bioclim }: { sp: SpeciesDetail; bioclim: B
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="base">Base grid ({bioclim?.resolution ?? 'bioclim'})</SelectItem>
-                    {(bioclim?.hires_resolutions ?? []).map((r) => (
+                    <SelectItem value="base">
+                      Base grid ({climate?.resolution ?? bioclim?.resolution ?? 'bioclim'})
+                    </SelectItem>
+                    {(climate?.hires_resolutions ?? bioclim?.hires_resolutions ?? []).map((r) => (
                       <SelectItem key={r} value={r}>
                         {resolutionLabel(r)} high resolution
                       </SelectItem>

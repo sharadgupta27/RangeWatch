@@ -181,6 +181,157 @@ class SpeciesDetail(SpeciesSummary):
     study_region: StudyRegionOut | None = Field(
         None, description="Regional model area (U2); null = global model"
     )
+    climate_version: str | None = Field(
+        None, description="Climate data chosen for this species; null = deployment default"
+    )
+    effective_climate_version: str = Field(
+        description="The climate data the next training run uses"
+    )
+    predictor_config: PredictorConfigModel
+
+
+# ----------------------------------------------------------- climate data and predictors
+class PredictorConfigModel(ApiModel):
+    """How a species' predictors are chosen."""
+
+    mode: Literal["auto", "custom"] = Field(
+        "auto",
+        description="auto: the climate version's global VIF shortlist; custom: `predictors`",
+    )
+    predictors: list[str] = Field(default_factory=list)
+    vif_screen: bool = Field(
+        True, description="custom: drop collinear predictors (VIF ≥ 5) on the species' background"
+    )
+    protected: list[str] = Field(
+        default_factory=list, description="custom: predictors the VIF screen never drops"
+    )
+
+
+class EnvironmentUpdate(ApiModel):
+    climate_version: str | None = Field(
+        None, description="Installed climate data version; null = deployment default"
+    )
+    predictor_config: PredictorConfigModel = Field(default_factory=PredictorConfigModel)
+
+
+class PredictorInfo(ApiModel):
+    name: str
+    description: str
+    group: str = Field(description="temperature, precipitation, humidity, wind, soil, …")
+    group_label: str
+    kind: Literal["climate_band", "climate_layer", "soil"]
+    future_available: bool | None = Field(
+        None,
+        description="Whether future-scenario data exists for it (null: the version has no "
+        "scenarios yet). Soil is held constant, so always true when scenarios exist",
+    )
+
+
+class ClimateVersionOut(ApiModel):
+    """An installed climate data version a species can be trained on."""
+
+    version: str
+    family: Literal["worldclim", "chelsa", "other"]
+    label: str
+    source: str
+    baseline_period: str | None = None
+    resolution: str
+    hires_resolutions: list[str] = Field(default_factory=list)
+    scenarios: list[str] = Field(default_factory=list)
+    selected_predictors: list[str] = Field(
+        description="Global VIF shortlist used by the automatic predictor choice"
+    )
+    predictors: list[PredictorInfo]
+    citation: str | None = None
+    is_default: bool
+    is_crosscheck: bool
+
+
+class PredictorSetIn(ApiModel):
+    name: str = Field(min_length=1, max_length=60)
+    label: str | None = None
+    predictors: list[str] = Field(min_length=2)
+
+
+class PredictorComparisonRequest(ApiModel):
+    sets: list[PredictorSetIn] | None = Field(
+        None,
+        max_length=12,
+        description="Candidate sets; null = built from the version's predictor groups",
+    )
+
+
+class PredictorSetResultOut(ApiModel):
+    name: str
+    label: str
+    status: Literal["fitted", "skipped"]
+    reason: str | None = None
+    rank: int | None = None
+    requested: list[str]
+    groups: list[str] = Field(default_factory=list)
+    predictors: list[str] = Field(default_factory=list, description="After the VIF screen")
+    dropped_by_vif: list[str] = Field(default_factory=list)
+    present_only: list[str] = Field(
+        default_factory=list, description="Predictors without future data"
+    )
+    n_presence: int | None = None
+    n_background: int | None = None
+    feature_classes: str | None = None
+    beta_multiplier: float | None = None
+    cbi_mean: float | None = None
+    cbi_std: float | None = None
+    auc_mean: float | None = None
+    auc_std: float | None = None
+    tss_mean: float | None = None
+    tss_std: float | None = None
+    importance: dict[str, float | None] = Field(default_factory=dict)
+
+
+class PredictorComparisonOut(ApiModel):
+    """Candidate predictor sets refitted on a version's exact training locations."""
+
+    model_version: int
+    bioclim_version: str
+    climate_family: str
+    resolution: str | None = None
+    created_ts: str
+    sets: list[PredictorSetResultOut]
+    best: str | None = None
+    similar_to_best: list[str] = Field(default_factory=list)
+    ranking_metric: str
+    vif_screen: bool
+    note: str
+    path: str | None = None
+
+
+class ClimateSourceInfo(ApiModel):
+    family: str
+    baseline_period: str | None = None
+    resolution: str | None = None
+    chosen_for_species: bool = Field(
+        False, description="True: chosen for this species; false: the deployment default"
+    )
+
+
+class PredictorSelectionInfo(ApiModel):
+    """How the version's predictors were chosen (recorded at training time)."""
+
+    mode: Literal["auto", "custom"]
+    bioclim_version: str | None = None
+    source: str | None = None
+    requested: list[str] = Field(default_factory=list)
+    unavailable: list[str] = Field(
+        default_factory=list, description="Chosen predictors the climate version lacks"
+    )
+    vif_screen: bool | None = None
+    protected: list[str] = Field(default_factory=list)
+    screened_on: str | None = None
+    screen_skipped: str | None = None
+    dropped: list[str] = Field(default_factory=list)
+    vif: dict[str, float] = Field(default_factory=dict)
+    used: list[str] = Field(default_factory=list)
+    present_only: list[str] = Field(default_factory=list)
+    fallback_reason: str | None = None
 
 
 # ----------------------------------------------------------- native range
@@ -568,12 +719,45 @@ class StudyRegionInfo(ApiModel):
     n_records_outside: int = 0
 
 
+class StaticPredictorLayerInfo(ApiModel):
+    """A static predictor layer of the bioclim version (e.g. a SoilGrids soil property), with
+    its provenance and checksum as recorded at training time."""
+
+    name: str
+    used: bool = Field(description="Whether the model used it (the VIF screen may drop it)")
+    kind: str | None = Field(None, description="e.g. soil")
+    description: str | None = None
+    units: str | None = None
+    depth: str | None = None
+    source: str | None = None
+    source_resolution_m: int | None = None
+    citation: str | None = None
+    sha256: str | None = None
+    land_coverage: float | None = Field(
+        None, description="Share of the version's land cells with a value"
+    )
+    static_under_scenarios: bool | None = Field(
+        None, description="True: held constant under future-climate scenarios"
+    )
+
+
 class ReproducibilityInfo(ApiModel):
     bioclim_version_used: str
     bioclim_source: str | None = None
     bioclim_sha256: str | None = None
     bioclim_dvc_md5: str | None = Field(
         None, description="DVC hash of the bioclim version directory (data/bioclim/<v>.dvc)"
+    )
+    climate_source: ClimateSourceInfo | None = Field(
+        None, description="Climate data family and baseline; absent for older versions"
+    )
+    predictor_selection: PredictorSelectionInfo | None = Field(
+        None, description="Predictor choice (auto / custom + screen); absent for older versions"
+    )
+    static_predictor_layers: list[StaticPredictorLayerInfo] = Field(
+        default_factory=list,
+        description="Static predictor layers of the version (e.g. SoilGrids soil); empty for "
+        "climate-only versions and versions trained before static layers existed",
     )
     gbif_download_key: str | None = None
     gbif_download_doi: str | None = None
@@ -799,6 +983,10 @@ class ClimateCrossCheckOut(ApiModel):
     feature_classes: str
     beta_multiplier: float
     predictors: list[PredictorAgreementOut]
+    unchanged_predictors: list[str] = Field(
+        default_factory=list,
+        description="Non-climate predictors (e.g. soil) kept at their training values",
+    )
     primary: CrossCheckMetricsOut
     alternative: CrossCheckMetricsOut
     suitability_rank_correlation: float | None = Field(
@@ -979,6 +1167,14 @@ class ModelVersionDetail(ModelVersionOut):
     severity: SeverityResult | None = None
     n_records_by_effective_label: dict[str, int]
     crosschecks: list[ClimateCrossCheckOut] = Field(default_factory=list)
+    predictor_comparison: PredictorComparisonOut | None = Field(
+        None, description="Latest predictor-set comparison on this version's training data"
+    )
+    scenarios_unavailable: dict[str, str] = Field(
+        default_factory=dict,
+        description="Scenarios this version cannot be projected onto, with the reason "
+        "(present-only predictors such as relative humidity or wind)",
+    )
     response_curves: ResponseCurvesOut | None = None
     ensemble: EnsembleOut | None = None
     integrated: IntegratedOut | None = None
@@ -1204,6 +1400,10 @@ class LayerSet(ApiModel):
         default_factory=list,
         description="Scenarios registered for the model's bioclim version (projected or not)",
     )
+    scenarios_unavailable: dict[str, str] = Field(
+        default_factory=dict,
+        description="Registered scenarios this model cannot be projected onto, with the reason",
+    )
     hires: HiresLayer | None = None
     hires_available: str | None = Field(
         None, description="Resolution of the model's high-resolution stack, if one is registered"
@@ -1246,6 +1446,11 @@ class BioclimInfo(ApiModel):
         None, description="Independent climate stack used for the climate-data cross-check"
     )
     crosscheck_source: str | None = None
+    static_layers: list[str] = Field(
+        default_factory=list,
+        description="Static (non-climate) predictor layers of the version, e.g. soil_phh2o",
+    )
+    static_layer_citations: list[str] = Field(default_factory=list)
 
 
 class HiresRequest(ApiModel):

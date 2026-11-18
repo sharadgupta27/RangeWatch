@@ -71,6 +71,13 @@ def climate_crosscheck(job_id: str, taxon_key: int) -> dict:
     return _run_job(job_id, crosscheck_flow, taxon_key=taxon_key, job_id=job_id)
 
 
+@celery_app.task(name="sdm.compare_predictor_sets")
+def compare_predictor_sets(job_id: str, taxon_key: int, sets: list[dict] | None = None) -> dict:
+    from src.orchestration.flows import predictor_sets_flow
+
+    return _run_job(job_id, predictor_sets_flow, taxon_key=taxon_key, sets=sets, job_id=job_id)
+
+
 @celery_app.task(name="sdm.project_hires")
 def project_hires(job_id: str, taxon_key: int, bbox: list[float]) -> dict:
     from src.orchestration.flows import hires_flow

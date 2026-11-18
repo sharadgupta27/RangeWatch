@@ -22,7 +22,9 @@ export function ScenariosCard({
   const project = useProjectScenarios(taxonKey)
   const available = layers.scenarios_available ?? []
   const projected = new Map((layers.scenarios ?? []).map((s) => [s.name, s]))
-  const missing = available.filter((n) => !projected.get(n)?.extrapolation)
+  // Futures this model cannot use (present-only predictors such as CHELSA humidity or wind).
+  const unavailable = layers.scenarios_unavailable ?? {}
+  const missing = available.filter((n) => !projected.get(n)?.extrapolation && !unavailable[n])
   const ensembles = (layers.scenarios ?? []).filter((s) => s.gcm_ensemble)
 
   return (
@@ -60,6 +62,10 @@ export function ScenariosCard({
                     <Badge variant={(sc.extrapolated_land_fraction ?? 0) > 0.25 ? 'warning' : 'secondary'}>
                       {((sc.extrapolated_land_fraction ?? 0) * 100).toFixed(0)}% of land extrapolated
                     </Badge>
+                  ) : unavailable[name] ? (
+                    <Badge variant="outline" title={unavailable[name]}>
+                      not projectable
+                    </Badge>
                   ) : (
                     <Badge variant="outline">not projected</Badge>
                   )}
@@ -67,6 +73,14 @@ export function ScenariosCard({
               )
             })}
           </ul>
+        )}
+        {Object.keys(unavailable).length > 0 && (
+          <p className="text-xs text-muted-foreground">
+            Not projectable: this model{' '}
+            {Object.values(unavailable)[0]}. It maps the present distribution only; to project
+            futures, retrain with predictors that have future data (Monitoring → Climate data &amp;
+            predictors).
+          </p>
         )}
         {ensembles.length > 0 && (
           <div className="space-y-1.5 border-t pt-3 text-xs">

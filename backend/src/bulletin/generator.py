@@ -13,7 +13,7 @@ from rasterio.enums import Resampling
 
 from src.bulletin import charts
 from src.config import Settings
-from src.domain import BIOCLIM_DESCRIPTIONS, ModelVersionRecord, NativeRange, SpeciesRecord
+from src.domain import PREDICTOR_DESCRIPTIONS, ModelVersionRecord, NativeRange, SpeciesRecord
 from src.features.raster_sampler import read_raster_overview
 from src.modeling.maxent_trainer import TRANSFERABILITY_CAVEAT
 from src.modeling.native_range import effective_range_labels
@@ -162,7 +162,7 @@ class BulletinGenerator:
             "caveat": TRANSFERABILITY_CAVEAT,
             "severity_footnote": methods_footnote(sev) if sev else "",
             "severity_components": COMPONENTS,
-            "bioclim_names": BIOCLIM_DESCRIPTIONS,
+            "bioclim_names": PREDICTOR_DESCRIPTIONS,
             "references": REFERENCES,
             "generated": datetime.now(UTC).strftime("%d %B %Y, %H:%M UTC"),
         }
@@ -179,7 +179,7 @@ class BulletinGenerator:
         p = m["projection"]
         top = sorted(m["variable_importance"].items(), key=lambda kv: -kv[1])[:3]
         top_txt = ", ".join(
-            f"{BIOCLIM_DESCRIPTIONS.get(k, k).lower()} ({k.upper()}, {v:.0f}%)" for k, v in top
+            f"{PREDICTOR_DESCRIPTIONS.get(k, k).lower()} ({k.upper()}, {v:.0f}%)" for k, v in top
         )
         conf = sev.get("confidence", {})
         return (
@@ -232,7 +232,7 @@ class BulletinGenerator:
             "trend": trend,
             "regions": p.get("top_candidate_regions", []),
             "limiting": [
-                {**d, "name": BIOCLIM_DESCRIPTIONS.get(d["variable"], d["variable"])}
+                {**d, "name": PREDICTOR_DESCRIPTIONS.get(d["variable"], d["variable"])}
                 for d in p.get("top_limiting_variables", [])
             ],
             "spread_rate": (mv.severity or {}).get("inputs", {}).get("new_cells_per_year"),
@@ -247,7 +247,7 @@ def extrapolation_context(ext: dict[str, Any] | None) -> dict[str, Any] | None:
     return {
         **ext,
         "combinatorial": [
-            {**d, "name": BIOCLIM_DESCRIPTIONS.get(d["variable"], d["variable"])}
+            {**d, "name": PREDICTOR_DESCRIPTIONS.get(d["variable"], d["variable"])}
             for d in ext.get("top_combinatorial_variables", [])
         ],
     }

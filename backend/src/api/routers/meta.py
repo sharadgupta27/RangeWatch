@@ -5,11 +5,12 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from src.api.auth import CurrentUser
+from src.api.converters import climate_version_out
 from src.api.deps import settings_dep
-from src.api.schemas import BioclimInfo, Health, MeOut
+from src.api.schemas import BioclimInfo, ClimateVersionOut, Health, MeOut
 from src.config import Settings
-from src.domain import BIOCLIM_DESCRIPTIONS
-from src.features.raster_sampler import METADATA_FILENAME, BioclimMetadata
+from src.domain import PREDICTOR_DESCRIPTIONS
+from src.features.raster_sampler import METADATA_FILENAME, BioclimMetadata, list_versions
 
 router = APIRouter(tags=["meta"])
 
@@ -43,10 +44,23 @@ def bioclim(settings: Settings = Depends(settings_dep)) -> BioclimInfo:
         resolution=meta.resolution,
         selected_predictors=list(meta.selected_predictors),
         vif=meta.vif,
-        descriptions=BIOCLIM_DESCRIPTIONS,
+        descriptions=PREDICTOR_DESCRIPTIONS,
         scenarios=list(meta.scenarios),
         citation=meta.citation,
+        static_layers=list(meta.static_layers),
+        static_layer_citations=sorted(
+            {c for e in meta.static_layers.values() if (c := e.get("citation"))}
+        ),
     )
+
+
+@router.get(
+    "/bioclim/versions", response_model=list[ClimateVersionOut], operation_id="listClimateVersions"
+)
+def climate_versions(settings: Settings = Depends(settings_dep)) -> list[ClimateVersionOut]:
+    """Installed climate data versions a species can be trained on (WorldClim, CHELSA, …),
+    with their predictors grouped by process and whether future data exists for each."""
+    return [climate_version_out(m, settings) for m in list_versions(settings.bioclim_root)]
 
 
 @router.get("/me", response_model=MeOut, operation_id="getMe")

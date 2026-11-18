@@ -17,7 +17,7 @@ from typing import Any
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
-from src.domain import BIOCLIM_DESCRIPTIONS, ModelVersionRecord, SpeciesRecord
+from src.domain import PREDICTOR_DESCRIPTIONS, ModelVersionRecord, SpeciesRecord
 
 TEMPLATE_DIR = Path(__file__).resolve().parent / "templates"
 ALGORITHM_NAMES = {
@@ -62,7 +62,7 @@ def _cbi_words(v: float | None) -> str:
 
 
 def _variable(name: str) -> str:
-    desc = BIOCLIM_DESCRIPTIONS.get(name)
+    desc = PREDICTOR_DESCRIPTIONS.get(name)
     return f"{desc.lower()} ({name})" if desc else name
 
 
@@ -234,6 +234,15 @@ def model_card(sp: SpeciesRecord, mv: ModelVersionRecord) -> dict[str, Any]:
             "paragraphs": data_paragraphs,
             "facts": [
                 {"label": "Climate data", "value": str(repro.get("bioclim_version_used", "n/a"))},
+                {
+                    "label": "Soil data",
+                    "value": ", ".join(
+                        s["name"]
+                        for s in repro.get("static_predictor_layers") or []
+                        if s.get("used") and s.get("kind") == "soil"
+                    )
+                    or "none",
+                },
                 {"label": "GBIF download", "value": repro.get("gbif_download_doi") or "n/a"},
                 {"label": "Background", "value": str(m.get("background_method", "n/a"))},
             ],
