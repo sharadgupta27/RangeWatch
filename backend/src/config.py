@@ -34,7 +34,7 @@ class Settings(BaseSettings):
     gbif_email: str | None = None
     gbif_download_poll_seconds: int = 30
     gbif_download_timeout_seconds: int = 3 * 60 * 60
-    gbif_search_max_records: int = 100_000
+    gbif_search_max_records: int = 800_000
     inat_enabled: bool = True
     inat_max_records: int = 20_000
     coordinate_uncertainty_max_m: float = 10_000.0
