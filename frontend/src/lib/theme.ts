@@ -50,10 +50,15 @@ export function basemapStyle(theme: Theme): string {
   return theme === 'dark' ? DARK_STYLE : LIGHT_STYLE
 }
 
+/** CARTO GL styles whose colours components/maps/indiaBoundary.ts matches. */
+const CARTO_STYLE = /^https:\/\/basemaps\.cartocdn\.com\/gl\/(dark-matter|positron)[\w-]*\/style\.json$/
+
 /**
- * Whether the theme's basemap is the stock CARTO style, on which India's official boundary is
- * drawn (components/maps/indiaBoundary.ts). A custom VITE_BASEMAP_STYLE_URL is shown as-is.
+ * Whether India's official boundary is drawn on the theme's basemap (components/maps/
+ * indiaBoundary.ts): true for CARTO dark-matter / positron styles (with or without labels),
+ * which is also what the Docker build sets by default. Any other VITE_BASEMAP_STYLE_URL is
+ * shown as-is, since the correction is painted in CARTO's colours.
  */
-export function basemapHasIndiaBoundary(theme: Theme): boolean {
-  return theme === 'light' || !import.meta.env.VITE_BASEMAP_STYLE_URL
+export function basemapHasIndiaBoundary(theme: Theme, styleUrl: string = basemapStyle(theme)): boolean {
+  return CARTO_STYLE.test(styleUrl)
 }

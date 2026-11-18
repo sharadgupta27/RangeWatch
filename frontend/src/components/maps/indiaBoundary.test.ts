@@ -49,3 +49,14 @@ describe('India boundary layers', () => {
     )
   })
 })
+
+describe('which basemaps get the India boundary', () => {
+  it('covers the CARTO styles, including the Docker build default, and skips custom styles', async () => {
+    const { basemapHasIndiaBoundary } = await import('@/lib/theme')
+    const carto = 'https://basemaps.cartocdn.com/gl'
+    expect(basemapHasIndiaBoundary('dark', `${carto}/dark-matter-nolabels-gl-style/style.json`)).toBe(true)
+    expect(basemapHasIndiaBoundary('dark', `${carto}/dark-matter-gl-style/style.json`)).toBe(true)
+    expect(basemapHasIndiaBoundary('light', `${carto}/positron-nolabels-gl-style/style.json`)).toBe(true)
+    expect(basemapHasIndiaBoundary('dark', 'https://tiles.example.org/style.json')).toBe(false)
+  })
+})
