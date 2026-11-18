@@ -49,3 +49,11 @@ const LIGHT_STYLE = 'https://basemaps.cartocdn.com/gl/positron-nolabels-gl-style
 export function basemapStyle(theme: Theme): string {
   return theme === 'dark' ? DARK_STYLE : LIGHT_STYLE
 }
+
+/**
+ * Whether the theme's basemap is the stock CARTO style, on which India's official boundary is
+ * drawn (components/maps/indiaBoundary.ts). A custom VITE_BASEMAP_STYLE_URL is shown as-is.
+ */
+export function basemapHasIndiaBoundary(theme: Theme): boolean {
+  return theme === 'light' || !import.meta.env.VITE_BASEMAP_STYLE_URL
+}

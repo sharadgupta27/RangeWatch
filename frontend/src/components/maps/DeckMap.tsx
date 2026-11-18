@@ -6,16 +6,32 @@ import { setWorkerUrl, type StyleSpecification } from 'maplibre-gl'
 // imports) and hand MapLibre the emitted asset URL.
 import maplibreWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url'
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
-import { Map as MapLibre, type ErrorEvent, type MapInstance } from 'react-map-gl/maplibre'
+import {
+  Layer as MapLayer,
+  Map as MapLibre,
+  Source,
+  type ErrorEvent,
+  type MapInstance,
+} from 'react-map-gl/maplibre'
 
 import { Button } from '@/components/ui/button'
-import { basemapStyle, useTheme, type Theme } from '@/lib/theme'
+import { basemapHasIndiaBoundary, basemapStyle, useTheme, type Theme } from '@/lib/theme'
 import { cn } from '@/lib/utils'
 import { INITIAL_VIEW, type Bounds, type ViewState } from '@/store/mapStore'
 
 import { constrainView, MAX_ZOOM } from './constrainView'
+import {
+  INDIA_BOUNDARY_ATTRIBUTION,
+  INDIA_BOUNDARY_SOURCE,
+  indiaBoundaryLayers,
+  indiaBoundaryUrl,
+  registerPmtilesProtocol,
+} from './indiaBoundary'
 
 setWorkerUrl(maplibreWorkerUrl)
+// Serves the bundled India-boundary correction data to MapLibre (see ./indiaBoundary).
+registerPmtilesProtocol()
+const INDIA_LAYERS = { dark: indiaBoundaryLayers('dark'), light: indiaBoundaryLayers('light') }
 
 /** Plain background used when the remote basemap style cannot be fetched (offline, blocked). */
 export function fallbackStyle(theme: Theme): StyleSpecification {
@@ -227,7 +243,21 @@ function DeckMapInner({
             canvases.current.map = canvas
             watch(canvas)
           }}
-        />
+        >
+          {/* India's official boundary drawn over the basemap's (deck.gl layers stay on top). */}
+          {!styleFailed && basemapHasIndiaBoundary(theme) && (
+            <Source
+              id={INDIA_BOUNDARY_SOURCE}
+              type="vector"
+              url={indiaBoundaryUrl()}
+              attribution={INDIA_BOUNDARY_ATTRIBUTION}
+            >
+              {INDIA_LAYERS[theme].map((layer) => (
+                <MapLayer key={layer.id} {...layer} />
+              ))}
+            </Source>
+          )}
+        </MapLibre>
       </DeckGL>
       {styleFailed && (
         <div className="absolute bottom-3 left-1/2 z-10 -translate-x-1/2 rounded-md border bg-card/90 px-2 py-1 text-[11px] text-muted-foreground">
