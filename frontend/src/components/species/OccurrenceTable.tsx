@@ -5,16 +5,20 @@ import {
   useTable,
   type PaginationState,
 } from '@tanstack/react-table'
-import { ChevronLeft, ChevronRight } from 'lucide-react'
-import { createContext, useContext, useState } from 'react'
+import { ChevronLeft, ChevronRight, Crosshair } from 'lucide-react'
+import { createContext, lazy, Suspense, useContext, useEffect, useState } from 'react'
 
 import { useAnnotateRecord, useOccurrences, usePermissions } from '@/api/queries'
-import type { AnnotationIn, OccurrenceRow } from '@/api/types'
+import type { AnnotationIn, LayerSet, NativeRangeOut, OccurrenceRow } from '@/api/types'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { formatDate, formatNumber } from '@/lib/utils'
+import { Skeleton } from '@/components/ui/skeleton'
+import { cn, formatDate, formatNumber } from '@/lib/utils'
+
+// The map (deck.gl + MapLibre) loads only when a record is first located.
+const OccurrenceLocator = lazy(() => import('./OccurrenceLocator').then((m) => ({ default: m.OccurrenceLocator })))
 
 const features = tableFeatures({ rowPaginationFeature })
 const helper = createColumnHelper<typeof features, OccurrenceRow>()
@@ -24,6 +28,33 @@ const LABEL_VARIANT = { native: 'success', introduced: 'destructive', unknown: '
 const TIER_VARIANT = { A: 'success', B: 'secondary', C: 'warning', excluded: 'destructive' } as const
 
 const TaxonKeyContext = createContext<number>(0)
+
+/** Stable identity of a record across refetches. */
+export const recordKey = (r: Pick<OccurrenceRow, 'source' | 'record_id'>) => `${r.source}:${r.record_id}`
+
+/** Which record the locator map shows, and how to select one (null = map closed). */
+const LocateContext = createContext<{ selected: string | null; locate: (r: OccurrenceRow) => void }>({
+  selected: null,
+  locate: () => {},
+})
+
+function LocateButton({ row }: { row: OccurrenceRow }) {
+  const { selected, locate } = useContext(LocateContext)
+  const active = selected === recordKey(row)
+  return (
+    <Button
+      variant={active ? 'secondary' : 'ghost'}
+      size="icon"
+      className="size-7"
+      onClick={() => locate(row)}
+      aria-label={`Locate record ${row.record_id} on the map`}
+      aria-pressed={active}
+      title="Locate and zoom to this record"
+    >
+      <Crosshair />
+    </Button>
+  )
+}
 
 /** Expert actions on one record (U11): each choice is a new, append-only annotation. */
 export const ANNOTATION_ACTIONS: { value: string; label: string; body: Pick<AnnotationIn, 'kind' | 'value'> }[] = [
@@ -47,7 +78,7 @@ export function annotationSummary(a: OccurrenceRow['annotation']): string[] {
   return out
 }
 
-function AnnotationCell({ row }: { row: OccurrenceRow }) {
+export function AnnotationCell({ row }: { row: OccurrenceRow }) {
   const taxonKey = useContext(TaxonKeyContext)
   const annotate = useAnnotateRecord(taxonKey)
   const { curate } = usePermissions()
@@ -135,7 +166,12 @@ export const occurrenceColumns = helper.columns([
   helper.accessor((r) => `${r.latitude.toFixed(3)}, ${r.longitude.toFixed(3)}`, {
     id: 'coords',
     header: 'Lat, lon',
-    cell: (i) => <span className="font-mono text-xs">{i.getValue()}</span>,
+    cell: (i) => (
+      <span className="flex items-center gap-1">
+        <LocateButton row={i.row.original} />
+        <span className="font-mono text-xs">{i.getValue()}</span>
+      </span>
+    ),
   }),
   helper.accessor('coordinate_uncertainty_m', {
     header: 'Uncertainty',
@@ -156,7 +192,16 @@ type SourceFilter = 'all' | 'GBIF' | 'iNaturalist'
 type LabelFilter = 'all' | 'native' | 'introduced' | 'unknown'
 
 /** Occurrence list (table view only — the map uses pg_tileserv vector tiles). */
-export function OccurrenceTable({ taxonKey }: { taxonKey: number }) {
+export function OccurrenceTable({
+  taxonKey,
+  layers,
+  nativeRange,
+}: {
+  taxonKey: number
+  /** Map layers and native range for the record locator (optional: the map still shows the record). */
+  layers?: LayerSet
+  nativeRange?: NativeRangeOut | null
+}) {
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 25 })
   const [source, setSource] = useState<SourceFilter>('all')
   const [label, setLabel] = useState<LabelFilter>('all')
@@ -175,6 +220,19 @@ export function OccurrenceTable({ taxonKey }: { taxonKey: number }) {
     state: { pagination },
     onPaginationChange: (u) => setPagination((p) => (typeof u === 'function' ? u(p) : u)),
   })
+
+  // Record shown on the locator map. A snapshot is kept so the map stays open when an
+  // annotation moves the record out of the current filter.
+  const [located, setLocated] = useState<OccurrenceRow | null>(null)
+  const rows = query.data?.items ?? EMPTY
+  const selectedKey = located ? recordKey(located) : null
+  const index = selectedKey ? rows.findIndex((r) => recordKey(r) === selectedKey) : -1
+  useEffect(() => {
+    // Refresh the snapshot (e.g. its new annotation) when the page is refetched.
+    const fresh = index >= 0 ? rows[index] : undefined
+    if (fresh && fresh !== located) setLocated(fresh)
+  }, [rows, index, located])
+  const locate = (r: OccurrenceRow) => setLocated((cur) => (cur && recordKey(cur) === recordKey(r) ? null : r))
 
   const total = query.data?.total ?? 0
   const from = total === 0 ? 0 : pagination.pageIndex * pagination.pageSize + 1
@@ -211,6 +269,22 @@ export function OccurrenceTable({ taxonKey }: { taxonKey: number }) {
         </span>
       </div>
       <TaxonKeyContext.Provider value={taxonKey}>
+      <LocateContext.Provider value={{ selected: selectedKey, locate }}>
+      {located && (
+        <Suspense fallback={<Skeleton className="h-96 w-full rounded-xl" />}>
+        <OccurrenceLocator
+          record={located}
+          layers={layers}
+          nativeRange={nativeRange}
+          position={index >= 0 ? index + 1 : 0}
+          count={rows.length}
+          onPrev={index > 0 ? () => setLocated(rows[index - 1]!) : undefined}
+          onNext={index >= 0 && index < rows.length - 1 ? () => setLocated(rows[index + 1]!) : undefined}
+          onClose={() => setLocated(null)}
+          annotate={<AnnotationCell row={located} />}
+        />
+        </Suspense>
+      )}
       <div className="rounded-xl border">
         <Table>
           <TableHeader>
@@ -226,7 +300,11 @@ export function OccurrenceTable({ taxonKey }: { taxonKey: number }) {
           </TableHeader>
           <TableBody className={query.isPlaceholderData ? 'opacity-60' : undefined}>
             {table.getRowModel().rows.map((row) => (
-              <TableRow key={row.id}>
+              <TableRow
+                key={row.id}
+                data-state={recordKey(row.original) === selectedKey ? 'selected' : undefined}
+                className={cn(recordKey(row.original) === selectedKey && 'bg-muted/60')}
+              >
                 {row.getAllCells().map((cell) => (
                   <TableCell key={cell.id}>
                     <table.FlexRender cell={cell} />
@@ -244,6 +322,7 @@ export function OccurrenceTable({ taxonKey }: { taxonKey: number }) {
           </TableBody>
         </Table>
       </div>
+      </LocateContext.Provider>
       </TaxonKeyContext.Provider>
       <div className="flex items-center justify-end gap-2 text-xs text-muted-foreground">
         <span className="tabular-nums">

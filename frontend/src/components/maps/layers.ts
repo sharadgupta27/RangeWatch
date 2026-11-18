@@ -7,7 +7,7 @@
  */
 import type { Layer } from '@deck.gl/core'
 import { MVTLayer, TileLayer } from '@deck.gl/geo-layers'
-import { BitmapLayer, GeoJsonLayer } from '@deck.gl/layers'
+import { BitmapLayer, GeoJsonLayer, ScatterplotLayer } from '@deck.gl/layers'
 import type { Feature, MultiPolygon, Polygon } from 'geojson'
 
 import type { HiresLayer, RasterLayer, VectorLayer } from '@/api/types'
@@ -245,5 +245,73 @@ export function projectionLayers(cfg: ProjectionLayerConfig, messOverlay: boolea
       rasterTileLayer({ id: 'extrapolation-overlay', layer: cfg.extrapolation, opacity: 0.75 }),
     )
   }
+  return out
+}
+
+// --------------------------------------------------------------------------- record locator
+/** Zoom used when a record has no coordinate uncertainty: streets and fields are visible. */
+export const LOCATE_DEFAULT_ZOOM = 11
+const LOCATE_MIN_ZOOM = 4
+const LOCATE_MAX_ZOOM = 14
+/** On-screen radius (px) the uncertainty circle is fitted to. */
+const LOCATE_RADIUS_PX = 70
+
+/**
+ * Zoom that frames one record: its coordinate-uncertainty circle spans about
+ * LOCATE_RADIUS_PX on screen (web-mercator metres per pixel at the record's latitude).
+ */
+export function locateZoom(latitude: number, uncertaintyM: number | null | undefined): number {
+  if (uncertaintyM == null || !(uncertaintyM > 0)) return LOCATE_DEFAULT_ZOOM
+  const metresPerPixelZ0 = 156543.03392 * Math.cos((latitude * Math.PI) / 180)
+  const z = Math.log2((metresPerPixelZ0 * LOCATE_RADIUS_PX) / uncertaintyM)
+  return Math.min(LOCATE_MAX_ZOOM, Math.max(LOCATE_MIN_ZOOM, z))
+}
+
+export const FOCUS_COLOR: RGBA = [250, 204, 21, 255]
+
+/**
+ * Highlight for the record being reviewed: its coordinate-uncertainty circle (true metres)
+ * and a ring + dot drawn above the occurrence tiles, so it stands out among neighbours.
+ */
+export function focusLayers(opts: {
+  longitude: number
+  latitude: number
+  uncertaintyM?: number | null
+}): Layer[] {
+  const point = [{ position: [opts.longitude, opts.latitude] as [number, number] }]
+  const out: Layer[] = []
+  if (opts.uncertaintyM != null && opts.uncertaintyM > 0) {
+    out.push(
+      new ScatterplotLayer({
+        id: 'focus-uncertainty',
+        data: point,
+        getPosition: (d: (typeof point)[number]) => d.position,
+        radiusUnits: 'meters',
+        getRadius: opts.uncertaintyM,
+        filled: true,
+        getFillColor: [FOCUS_COLOR[0], FOCUS_COLOR[1], FOCUS_COLOR[2], 40],
+        stroked: true,
+        getLineColor: [FOCUS_COLOR[0], FOCUS_COLOR[1], FOCUS_COLOR[2], 200],
+        lineWidthUnits: 'pixels',
+        getLineWidth: 1.5,
+        updateTriggers: { getRadius: opts.uncertaintyM },
+      }),
+    )
+  }
+  out.push(
+    new ScatterplotLayer({
+      id: 'focus-point',
+      data: point,
+      getPosition: (d: (typeof point)[number]) => d.position,
+      radiusUnits: 'pixels',
+      getRadius: 9,
+      filled: true,
+      getFillColor: [FOCUS_COLOR[0], FOCUS_COLOR[1], FOCUS_COLOR[2], 90],
+      stroked: true,
+      getLineColor: FOCUS_COLOR,
+      lineWidthUnits: 'pixels',
+      getLineWidth: 2.5,
+    }),
+  )
   return out
 }

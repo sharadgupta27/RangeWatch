@@ -524,7 +524,7 @@ function SpeciesWorkspace() {
         </TabsContent>
 
         <TabsContent value="occurrences">
-          <OccurrenceTable taxonKey={taxonKey} />
+          <OccurrenceTable taxonKey={taxonKey} layers={layers.data} nativeRange={nativeRange.data} />
         </TabsContent>
 
         <TabsContent value="quality">
