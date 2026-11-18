@@ -11,7 +11,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="SDM_", env_file=".env", extra="ignore")
+    # An empty ``SDM_X=`` line in .env means "not set" (use the default), so optional
+    # integer settings such as quality_baseline_start_year do not fail to parse "".
+    model_config = SettingsConfigDict(
+        env_prefix="SDM_", env_file=".env", extra="ignore", env_ignore_empty=True
+    )
 
     # --- persistence ---
     database_url: str = "postgresql+psycopg2://sdm:sdm@localhost:5432/sdm"
