@@ -114,6 +114,31 @@ class PostgresRepository:
             )
         return rec
 
+    def delete_species(self, taxon_key: int) -> None:
+        """Remove a species and everything stored for it, in one transaction (children
+        first: the tables reference species_registry without ON DELETE CASCADE)."""
+        key = int(taxon_key)
+        with self.engine.begin() as c:
+            exists = c.execute(
+                text("SELECT 1 FROM species_registry WHERE taxon_key = :k"), {"k": key}
+            ).first()
+            if exists is None:
+                raise NotFoundError(key)
+            for table in (
+                "reference_datasets",  # its records go with it (ON DELETE CASCADE)
+                "native_ranges",
+                "model_versions",
+                "record_annotations",
+                "alerts",
+                "alert_subscriptions",
+                "jobs",
+                "occurrences",
+            ):
+                c.execute(text(f"DELETE FROM {table} WHERE taxon_key = :k"), {"k": key})
+            # The species' own partition (key is an int, safe to inline).
+            c.execute(text(f"DROP TABLE IF EXISTS occurrences_{key}"))
+            c.execute(text("DELETE FROM species_registry WHERE taxon_key = :k"), {"k": key})
+
     def update_species(self, taxon_key: int, **fields: Any) -> SpeciesRecord:
         unknown = set(fields) - set(_SPECIES_COLS)
         if unknown:

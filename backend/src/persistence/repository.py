@@ -4,7 +4,9 @@ Occurrence data is append-only: `append_occurrences` inserts only unseen (source
 keys; for keys already stored it only fills `issues` / `details` while still NULL (records
 ingested before they were recorded), and `fill_features` only fills bio* columns still NULL.
 Only species_registry, native_ranges, reference_datasets, model_versions (severity recompute)
-and jobs rows are updated in place. Reference records are append-only; a reference dataset is
+and jobs rows are updated in place. The one exception to append-only is `delete_species`: a
+user removing a species they do not need, which removes everything stored for it.
+Reference records are append-only; a reference dataset is
 removed as a whole (with its records), never edited row by row. Record annotations (U11) are
 append-only: a correction is a newer annotation, never an edit. Alerts are append-only except
 for their delivery log; alert subscriptions are created and deleted, never edited. Species
@@ -87,6 +89,7 @@ class Repository(Protocol):
     def list_species(self) -> list[SpeciesRecord]: ...
     def create_species(self, rec: SpeciesRecord) -> SpeciesRecord: ...
     def update_species(self, taxon_key: int, **fields: Any) -> SpeciesRecord: ...
+    def delete_species(self, taxon_key: int) -> None: ...
 
     # occurrences (append-only)
     def append_occurrences(self, records: Sequence[OccurrenceRecord]) -> int: ...
@@ -226,6 +229,22 @@ class InMemoryRepository:
             rec = replace(rec, **fields, updated_ts=utcnow())
             self._species[taxon_key] = rec
             return copy.deepcopy(rec)
+
+    def delete_species(self, taxon_key: int) -> None:
+        with self._lock:
+            if taxon_key not in self._species:
+                raise NotFoundError(taxon_key)
+            for store in (self._species, self._occ, self._native, self._models):
+                store.pop(taxon_key, None)
+            for k in [k for k in self._ref_datasets if k[0] == taxon_key]:
+                self._ref_datasets.pop(k, None)
+                self._ref_records.pop(k, None)
+            self._annotations = [a for a in self._annotations if a.taxon_key != taxon_key]
+            self._alerts = [a for a in self._alerts if a.taxon_key != taxon_key]
+            self._subscriptions = {
+                k: v for k, v in self._subscriptions.items() if v.taxon_key != taxon_key
+            }
+            self._jobs = {k: v for k, v in self._jobs.items() if v.taxon_key != taxon_key}
 
     # ------------------------------------------------------ occurrences
     def append_occurrences(self, records: Sequence[OccurrenceRecord]) -> int:

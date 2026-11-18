@@ -252,6 +252,51 @@
             }
           }
         }
+      },
+      "delete": {
+        "tags": [
+          "species"
+        ],
+        "summary": "Delete Species",
+        "description": "Remove a species that is not needed, with everything stored for it: occurrence records,\nnative range, model versions and their rasters / bulletins, reference datasets,\nannotations, alerts, subscriptions and jobs. Not undoable. MLflow run history and curated\nnative-range polygon files are kept. Refused while a job of the species is queued or\nrunning (discard it first).",
+        "operationId": "deleteSpecies",
+        "parameters": [
+          {
+            "name": "taxon_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Taxon Key"
+            }
+          },
+          {
+            "name": "confirm",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "description": "Repeat the taxon key to confirm",
+              "title": "Confirm"
+            },
+            "description": "Repeat the taxon key to confirm"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/species/{taxon_key}/runs": {
@@ -2822,6 +2867,50 @@
         ],
         "summary": "Get Job",
         "operationId": "getJob",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/jobs/{job_id}/cancel": {
+      "post": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Cancel Job",
+        "description": "Discard a queued or running job. A queued job never starts; a running one stops at its\nnext progress checkpoint (never mid-write), its species marked \"Run discarded by user\".\nWork already finished stays (records already ingested are kept, append-only).",
+        "operationId": "cancelJob",
         "parameters": [
           {
             "name": "job_id",
@@ -6639,7 +6728,8 @@
           "queued",
           "running",
           "succeeded",
-          "failed"
+          "failed",
+          "cancelled"
         ],
         "title": "JobStatus"
       },

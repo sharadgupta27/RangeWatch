@@ -4,6 +4,7 @@ severity configuration."""
 from __future__ import annotations
 
 import logging
+import shutil
 import uuid
 from functools import lru_cache
 from typing import Annotated, Literal
@@ -11,7 +12,7 @@ from typing import Annotated, Literal
 import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from src.api.auth import Analyst, CurrentUser
+from src.api.auth import Analyst, Curator, CurrentUser
 from src.api.converters import job_out, model_summary, native_range_out, species_summary
 from src.api.deps import (
     InatSearch,
@@ -49,7 +50,7 @@ from src.api.schemas import (
     TimelineYear,
 )
 from src.config import Settings
-from src.domain import Job, JobKind, SpeciesStatus
+from src.domain import Job, JobKind, JobStatus, SpeciesStatus
 from src.features.annotations import effective_annotations
 from src.features.raster_sampler import (
     METADATA_FILENAME,
@@ -163,6 +164,43 @@ def get_species(
             sp.predictor_config or {"mode": "auto"}
         ),
     )
+
+
+@router.delete(
+    "/{taxon_key}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    operation_id="deleteSpecies",
+    dependencies=[Curator],
+)
+def delete_species(
+    taxon_key: int,
+    repo: RepoDep,
+    confirm: Annotated[int, Query(description="Repeat the taxon key to confirm")],
+    artifacts: ArtifactStore = Depends(artifacts_dep),
+) -> None:
+    """Remove a species that is not needed, with everything stored for it: occurrence records,
+    native range, model versions and their rasters / bulletins, reference datasets,
+    annotations, alerts, subscriptions and jobs. Not undoable. MLflow run history and curated
+    native-range polygon files are kept. Refused while a job of the species is queued or
+    running (discard it first)."""
+    sp = _get_species_or_404(repo, taxon_key)
+    if confirm != taxon_key:
+        raise HTTPException(422, "confirm must repeat the taxon key")
+    active = [
+        j
+        for j in repo.list_jobs(taxon_key, limit=50)
+        if j.status in (JobStatus.QUEUED, JobStatus.RUNNING)
+    ]
+    if active:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"{sp.scientific_name} has a {active[0].kind.value} job in progress; discard it "
+            "first",
+        )
+    repo.delete_species(taxon_key)
+    folder = artifacts.local_path(str(artifacts.species_dir(taxon_key)))
+    shutil.rmtree(folder, ignore_errors=True)
+    log.info("Deleted species %s (%s) and %s", taxon_key, sp.scientific_name, folder)
 
 
 @router.post(

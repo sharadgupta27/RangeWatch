@@ -131,7 +131,15 @@ export interface paths {
         get: operations["getSpecies"];
         put?: never;
         post?: never;
-        delete?: never;
+        /**
+         * Delete Species
+         * @description Remove a species that is not needed, with everything stored for it: occurrence records,
+         *     native range, model versions and their rasters / bulletins, reference datasets,
+         *     annotations, alerts, subscriptions and jobs. Not undoable. MLflow run history and curated
+         *     native-range polygon files are kept. Refused while a job of the species is queued or
+         *     running (discard it first).
+         */
+        delete: operations["deleteSpecies"];
         options?: never;
         head?: never;
         patch?: never;
@@ -917,6 +925,28 @@ export interface paths {
         get: operations["getJob"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/jobs/{job_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Cancel Job
+         * @description Discard a queued or running job. A queued job never starts; a running one stops at its
+         *     next progress checkpoint (never mid-write), its species marked "Run discarded by user".
+         *     Work already finished stays (records already ingested are kept, append-only).
+         */
+        post: operations["cancelJob"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2297,7 +2327,7 @@ export interface components {
          * JobStatus
          * @enum {string}
          */
-        JobStatus: "queued" | "running" | "succeeded" | "failed";
+        JobStatus: "queued" | "running" | "succeeded" | "failed" | "cancelled";
         /** LayerCaveats */
         LayerCaveats: {
             /**
@@ -4760,6 +4790,38 @@ export interface operations {
             };
         };
     };
+    deleteSpecies: {
+        parameters: {
+            query: {
+                /** @description Repeat the taxon key to confirm */
+                confirm: number;
+            };
+            header?: never;
+            path: {
+                taxon_key: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     runSpeciesPipeline: {
         parameters: {
             query?: never;
@@ -6353,6 +6415,37 @@ export interface operations {
         };
     };
     getJob: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cancelJob: {
         parameters: {
             query?: never;
             header?: never;

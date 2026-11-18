@@ -180,6 +180,13 @@ class JobStatus(StrEnum):
     RUNNING = "running"
     SUCCEEDED = "succeeded"
     FAILED = "failed"
+    # Discarded by a user: a queued job never starts; a running one stops at its next
+    # progress checkpoint (never mid-write).
+    CANCELLED = "cancelled"
+
+
+class RunDiscarded(Exception):  # noqa: N818 — a user action, not an error condition
+    """Raised at a progress checkpoint when the user discarded the running job."""
 
 
 class JobKind(StrEnum):

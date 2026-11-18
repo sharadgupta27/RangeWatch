@@ -237,7 +237,8 @@ CREATE TABLE IF NOT EXISTS jobs (
     job_id       uuid PRIMARY KEY,
     taxon_key    integer,
     kind         text NOT NULL,
-    status       text NOT NULL CHECK (status IN ('queued', 'running', 'succeeded', 'failed')),
+    status       text NOT NULL
+                 CHECK (status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled')),
     stage        text,
     progress     real NOT NULL DEFAULT 0,
     message      text,
@@ -246,6 +247,10 @@ CREATE TABLE IF NOT EXISTS jobs (
     updated_ts   timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS jobs_taxon_created ON jobs (taxon_key, created_ts DESC);
+-- Existing databases: allow 'cancelled' (discarded runs).
+ALTER TABLE jobs DROP CONSTRAINT IF EXISTS jobs_status_check;
+ALTER TABLE jobs ADD CONSTRAINT jobs_status_check
+    CHECK (status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled'));
 
 -- ---------------------------------------------------------------------------
 -- pg_tileserv function layer: occurrence vector tiles.

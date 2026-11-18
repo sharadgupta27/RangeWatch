@@ -16,6 +16,7 @@ import { Badge } from '@/components/ui/badge'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { formatCompact, formatRelative } from '@/lib/utils'
 
+import { DeleteSpeciesButton } from './DeleteSpeciesButton'
 import { StatusBadge } from './StatusBadge'
 
 const features = tableFeatures({
@@ -106,6 +107,19 @@ export const registryColumns = helper.columns([
     header: 'Last GBIF check',
     sortFn: 'datetime',
     cell: (i) => <span className="text-xs text-muted-foreground">{formatRelative(i.getValue())}</span>,
+  }),
+  helper.display({
+    id: 'actions',
+    header: '',
+    cell: (i) => (
+      <div className="flex justify-end">
+        <DeleteSpeciesButton
+          compact
+          taxonKey={i.row.original.taxon_key}
+          scientificName={i.row.original.scientific_name}
+        />
+      </div>
+    ),
   }),
 ])
 

@@ -29,6 +29,7 @@ class JobQueue(Protocol):
     def enqueue_predictor_sets(
         self, job_id: str, taxon_key: int, sets: list[dict] | None
     ) -> None: ...
+    def revoke(self, job_id: str) -> None: ...
 
 
 class CeleryJobQueue:
@@ -39,10 +40,19 @@ class CeleryJobQueue:
 
         self._app = Celery("sdm", broker=redis_url, backend=redis_url)
 
+    def _send(self, name: str, kwargs: dict) -> None:
+        # The job id doubles as the Celery task id, so a discarded job can be revoked.
+        self._app.send_task(name, kwargs=kwargs, task_id=kwargs.get("job_id"))
+
+    def revoke(self, job_id: str) -> None:
+        """Stop a queued task from starting (running tasks stop cooperatively at their next
+        progress checkpoint, once the job row says cancelled)."""
+        self._app.control.revoke(job_id)
+
     def enqueue_pipeline(
         self, job_id: str, taxon_key: int, force_retrain: bool, full_resync: bool = False
     ) -> None:
-        self._app.send_task(
+        self._send(
             "sdm.run_species_pipeline",
             kwargs={
                 "job_id": job_id,
@@ -53,60 +63,50 @@ class CeleryJobQueue:
         )
 
     def enqueue_bulletin(self, job_id: str, taxon_key: int, model_version: int | None) -> None:
-        self._app.send_task(
+        self._send(
             "sdm.generate_bulletin",
             kwargs={"job_id": job_id, "taxon_key": taxon_key, "model_version": model_version},
         )
 
     def enqueue_scenarios(self, job_id: str, taxon_key: int) -> None:
-        self._app.send_task(
-            "sdm.project_scenarios", kwargs={"job_id": job_id, "taxon_key": taxon_key}
-        )
+        self._send("sdm.project_scenarios", kwargs={"job_id": job_id, "taxon_key": taxon_key})
 
     def enqueue_validation(self, job_id: str, taxon_keys: list[int] | None, train: bool) -> None:
-        self._app.send_task(
+        self._send(
             "sdm.run_validation_suite",
             kwargs={"job_id": job_id, "taxon_keys": taxon_keys, "train": train},
         )
 
     def enqueue_crosscheck(self, job_id: str, taxon_key: int) -> None:
-        self._app.send_task(
-            "sdm.climate_crosscheck", kwargs={"job_id": job_id, "taxon_key": taxon_key}
-        )
+        self._send("sdm.climate_crosscheck", kwargs={"job_id": job_id, "taxon_key": taxon_key})
 
     def enqueue_hires(self, job_id: str, taxon_key: int, bbox: list[float]) -> None:
-        self._app.send_task(
+        self._send(
             "sdm.project_hires", kwargs={"job_id": job_id, "taxon_key": taxon_key, "bbox": bbox}
         )
 
     def enqueue_evaluation(self, job_id: str, taxon_key: int) -> None:
-        self._app.send_task(
-            "sdm.evaluate_references", kwargs={"job_id": job_id, "taxon_key": taxon_key}
-        )
+        self._send("sdm.evaluate_references", kwargs={"job_id": job_id, "taxon_key": taxon_key})
 
     def enqueue_benchmark(self, job_id: str, request: dict) -> None:
-        self._app.send_task(
+        self._send(
             "sdm.run_virtual_species_benchmark", kwargs={"job_id": job_id, "request": request}
         )
 
     def enqueue_batch(self, job_id: str, taxon_keys: list[int], force_retrain: bool) -> None:
-        self._app.send_task(
+        self._send(
             "sdm.run_batch",
             kwargs={"job_id": job_id, "taxon_keys": taxon_keys, "force_retrain": force_retrain},
         )
 
     def enqueue_target_groups(self, job_id: str, taxon_key: int) -> None:
-        self._app.send_task(
-            "sdm.compare_target_groups", kwargs={"job_id": job_id, "taxon_key": taxon_key}
-        )
+        self._send("sdm.compare_target_groups", kwargs={"job_id": job_id, "taxon_key": taxon_key})
 
     def enqueue_shared_bias(self, job_id: str, taxon_key: int) -> None:
-        self._app.send_task(
-            "sdm.estimate_shared_bias", kwargs={"job_id": job_id, "taxon_key": taxon_key}
-        )
+        self._send("sdm.estimate_shared_bias", kwargs={"job_id": job_id, "taxon_key": taxon_key})
 
     def enqueue_predictor_sets(self, job_id: str, taxon_key: int, sets: list[dict] | None) -> None:
-        self._app.send_task(
+        self._send(
             "sdm.compare_predictor_sets",
             kwargs={"job_id": job_id, "taxon_key": taxon_key, "sets": sets},
         )

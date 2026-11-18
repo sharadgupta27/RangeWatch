@@ -177,6 +177,13 @@ def climate_version_out(meta: BioclimMetadata, settings: Settings) -> ClimateVer
     family = meta.family
     name = {"worldclim": "WorldClim v2.1", "chelsa": "CHELSA V2.1"}.get(family, meta.source)
     detail = ", ".join(x for x in (meta.baseline, meta.resolution) if x)
+    extras = []
+    if meta.climate_layers:
+        extras.append(f"+ {len(meta.climate_layers)} extra climate variables")
+    if any(e.get("kind") == "soil" for e in meta.static_layers.values()):
+        extras.append("+ soil")
+    if extras:
+        name = f"{name} {' '.join(extras)}"
     has_scenarios = bool(meta.scenarios)
     predictors = []
     for p in meta.predictor_bands:

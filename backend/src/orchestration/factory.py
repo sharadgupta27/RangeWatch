@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import logging
+import time
 import uuid
 from functools import lru_cache
 
 from src.config import Settings, get_settings
+from src.domain import JobStatus, RunDiscarded
 from src.orchestration.pipeline import ProgressFn, SpeciesPipeline, StepRunner, direct_runner
 from src.persistence.artifact_store import ArtifactStore
 from src.persistence.postgres_repository import PostgresRepository
@@ -92,14 +94,30 @@ def build_pipeline(
     return pipeline
 
 
+# How often (seconds) a running job re-reads its row to notice a discard request.
+CANCEL_CHECK_S = 2.0
+
+
 def job_progress(job_id: str | None) -> ProgressFn | None:
-    """Progress callback that writes stage/progress into the `jobs` table."""
+    """Progress callback that writes stage/progress into the `jobs` table, and stops the run
+    (RunDiscarded) at this checkpoint once the user has discarded the job."""
     if not job_id:
         return None
     jid = uuid.UUID(job_id)
     repo = get_repository()
+    last_check = [float("-inf")]
 
     def report(stage: str, fraction: float, message: str | None) -> None:
+        now = time.monotonic()
+        if now - last_check[0] >= CANCEL_CHECK_S:
+            last_check[0] = now
+            try:
+                job = repo.get_job(jid)
+            except Exception:
+                log.exception("Failed to read job %s", job_id)
+                job = None
+            if job is not None and job.status == JobStatus.CANCELLED:
+                raise RunDiscarded("Run discarded by user")
         try:
             repo.update_job(
                 jid, stage=stage, progress=float(min(max(fraction, 0), 1)), message=message

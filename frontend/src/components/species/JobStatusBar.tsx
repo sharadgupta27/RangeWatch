@@ -1,6 +1,8 @@
-import { AlertCircle, CheckCircle2, Loader2 } from 'lucide-react'
+import { AlertCircle, Ban, CheckCircle2, Loader2, XCircle } from 'lucide-react'
 
+import { useCancelJob, usePermissions } from '@/api/queries'
 import type { JobOut } from '@/api/types'
+import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
 import { formatRelative } from '@/lib/utils'
 
@@ -40,7 +42,9 @@ const KIND_LABEL: Record<JobOut['kind'], string> = {
 }
 
 /** Live progress for the latest job (SSE stream, or polling while the stream is down). */
-export function JobStatusBar({ job }: { job: JobOut | undefined }) {
+export function JobStatusBar({ job }: Readonly<{ job: JobOut | undefined }>) {
+  const cancel = useCancelJob()
+  const { run } = usePermissions()
   if (!job) return null
   const active = job.status === 'queued' || job.status === 'running'
   const recentlyDone = !active && Date.now() - new Date(job.updated_ts).getTime() < 5 * 60_000
@@ -54,13 +58,33 @@ export function JobStatusBar({ job }: { job: JobOut | undefined }) {
           <Loader2 className="size-4 animate-spin text-primary" />
         ) : job.status === 'succeeded' ? (
           <CheckCircle2 className="size-4 text-success" />
+        ) : job.status === 'cancelled' ? (
+          <Ban className="size-4 text-muted-foreground" />
         ) : (
           <AlertCircle className="size-4 text-destructive" />
         )}
         <span className="font-medium">
           {KIND_LABEL[job.kind]} ·{' '}
-          {active ? stage : job.status === 'succeeded' ? 'completed' : 'failed'}
+          {active
+            ? stage
+            : job.status === 'succeeded'
+              ? 'completed'
+              : job.status === 'cancelled'
+                ? 'discarded'
+                : 'failed'}
         </span>
+        {active && run && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-6 px-2 text-xs"
+            disabled={cancel.isPending}
+            onClick={() => cancel.mutate(job.job_id)}
+            title="Stop this job. A running job stops at its next safe checkpoint; records already ingested are kept."
+          >
+            {cancel.isPending ? <Loader2 className="animate-spin" /> : <XCircle />} Discard run
+          </Button>
+        )}
         <span className="ml-auto text-xs text-muted-foreground">
           {active ? `${Math.round(job.progress * 100)}%` : formatRelative(job.updated_ts)}
         </span>

@@ -8,7 +8,7 @@ from datetime import timedelta
 from typing import Any
 
 from src.config import get_settings
-from src.domain import JobStatus, SpeciesStatus
+from src.domain import JobStatus, RunDiscarded, SpeciesStatus
 from src.orchestration.celery_app import celery_app
 from src.orchestration.factory import get_repository
 from src.persistence.repository import STALE_JOB_MESSAGE
@@ -21,17 +21,50 @@ def _run_job(job_id: str, fn: Any, /, **kwargs: Any) -> dict[str, Any]:
     carry a `job_id` for the flow's progress reporting."""
     jid = uuid.UUID(job_id)
     repo = get_repository()
+    job = repo.get_job(jid)
+    if job is not None and job.status == JobStatus.CANCELLED:
+        log.info("Job %s was discarded before it started", job_id)
+        return {"discarded": True}
     repo.update_job(jid, status=JobStatus.RUNNING, progress=0.01, message="Started")
     try:
         result = fn(**kwargs)
+    except RunDiscarded:
+        log.info("Job %s discarded by the user", job_id)
+        repo.update_job(jid, status=JobStatus.CANCELLED, message="Discarded by user")
+        _release_species(repo, kwargs.get("taxon_key"))
+        return {"discarded": True}
     except Exception as exc:
         log.exception("Job %s failed", job_id)
         repo.update_job(jid, status=JobStatus.FAILED, message=f"{type(exc).__name__}: {exc}")
         raise
+    job = repo.get_job(jid)
+    late = job is not None and job.status == JobStatus.CANCELLED
     repo.update_job(
-        jid, status=JobStatus.SUCCEEDED, progress=1.0, result=result, message="Completed"
+        jid,
+        status=JobStatus.SUCCEEDED,
+        progress=1.0,
+        result=result,
+        # The discard arrived after the last checkpoint (e.g. while the bulletin rendered):
+        # the work is complete and published, so the job is reported as such.
+        message="Completed before the discard took effect" if late else "Completed",
     )
     return result
+
+
+def _release_species(repo: Any, taxon_key: Any) -> None:
+    """A discarded run must not leave its species shown as ingesting / training."""
+    if taxon_key is None:
+        return
+    sp = repo.get_species(int(taxon_key))
+    # The pipeline's own failure handling records "RunDiscarded: …"; stuck states are reset.
+    stuck = sp is not None and sp.status in (SpeciesStatus.INGESTING, SpeciesStatus.TRAINING)
+    recorded = sp is not None and (sp.last_error or "").startswith(RunDiscarded.__name__)
+    if stuck or recorded:
+        repo.update_species(
+            int(taxon_key),
+            status=SpeciesStatus.FAILED,
+            last_error="Run discarded by user — run again to continue",
+        )
 
 
 @celery_app.task(name="sdm.run_species_pipeline")

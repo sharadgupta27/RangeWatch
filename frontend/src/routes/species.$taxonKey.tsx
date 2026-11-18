@@ -20,6 +20,7 @@ import {
   ShieldCheck,
   SlidersHorizontal,
   Sparkles,
+  Thermometer,
 } from 'lucide-react'
 import { useEffect, useRef } from 'react'
 import { z } from 'zod'
@@ -49,6 +50,7 @@ import { BulletinCard } from '@/components/species/BulletinCard'
 import { CaveatBanner } from '@/components/species/CaveatBanner'
 import { ClimatePredictorsCard } from '@/components/species/ClimatePredictorsCard'
 import { CrossCheckCard } from '@/components/species/CrossCheckCard'
+import { DeleteSpeciesButton } from '@/components/species/DeleteSpeciesButton'
 import { DataQualityCard, SamplingEffortCard } from '@/components/species/DataQualityCard'
 import { ExtrapolationCard } from '@/components/species/ExtrapolationCard'
 import { HiresCard } from '@/components/species/HiresCard'
@@ -201,6 +203,9 @@ function SpeciesWorkspace() {
 
   const current = sp.current_model
   const awaitingReview = sp.status === 'awaiting_native_range_review'
+  const climateLabel =
+    climateVersions.data?.find((v) => v.version === sp.effective_climate_version)?.label ??
+    sp.effective_climate_version
 
   return (
     <div className="space-y-5">
@@ -231,7 +236,19 @@ function SpeciesWorkspace() {
             <SourceSummary sp={sp} />
           </div>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="ghost" size="sm" onClick={() => setTab('monitoring')}>
+                <Thermometer /> {climateLabel}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              Climate data and predictors for the next training run
+              {sp.climate_version ? ' (chosen for this species)' : ' (deployment default)'}. Click to
+              change them (Monitoring → Climate data &amp; predictors).
+            </TooltipContent>
+          </Tooltip>
           <Button variant="outline" size="sm" onClick={() => run.mutate({})} disabled={job.active || run.isPending || !can.run}>
             <RefreshCw className={job.active ? 'animate-spin' : undefined} /> Check for new records
           </Button>
@@ -251,6 +268,12 @@ function SpeciesWorkspace() {
               append any that are missing — e.g. after an interrupted or capped first ingest.
             </TooltipContent>
           </Tooltip>
+          <DeleteSpeciesButton
+            taxonKey={taxonKey}
+            scientificName={sp.scientific_name}
+            disabled={job.active}
+            onDeleted={() => void navigate({ to: '/' })}
+          />
           <Button variant="secondary" size="sm" onClick={() => run.mutate({ forceRetrain: true })} disabled={job.active || run.isPending || !can.run || sp.native_range_status !== 'confirmed'}>
             <Play /> Force retrain
           </Button>
@@ -273,6 +296,12 @@ function SpeciesWorkspace() {
           <AlertDescription className="flex flex-wrap items-center gap-3">
             <span>
               A draft polygon was generated heuristically. Training is blocked until you confirm it.
+              The model will be trained on <strong>{climateLabel}</strong>
+              {sp.predictor_config.mode === 'custom' ? ' with your chosen predictors' : ''} —{' '}
+              <button type="button" className="underline" onClick={() => setTab('monitoring')}>
+                change climate data
+              </button>{' '}
+              before confirming if needed.
             </span>
             <Button size="sm" variant="outline" onClick={() => setTab('native-range')}>
               Open native-range editor

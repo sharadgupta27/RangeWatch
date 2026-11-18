@@ -51,6 +51,9 @@ class RecordingQueue:
     def enqueue_predictor_sets(self, job_id: str, taxon_key: int, sets) -> None:
         self.calls.append(("predictor_sets", job_id, taxon_key, sets))
 
+    def revoke(self, job_id: str) -> None:
+        self.calls.append(("revoke", job_id))
+
     def enqueue_hires(self, job_id: str, taxon_key: int, bbox: list[float]) -> None:
         self.calls.append(("hires", job_id, taxon_key, bbox))
 

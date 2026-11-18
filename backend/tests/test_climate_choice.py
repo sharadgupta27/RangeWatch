@@ -267,7 +267,7 @@ def test_api_lists_climate_versions_with_grouped_predictors(api):
     assert versions[BIOCLIM_VERSION]["is_default"]
     chelsa = versions[CHELSA]
     assert chelsa["family"] == "chelsa" and chelsa["baseline_period"] == "1981-2010"
-    assert chelsa["label"].startswith("CHELSA V2.1 (1981-2010")
+    assert chelsa["label"] == "CHELSA V2.1 + 2 extra climate variables (1981-2010, 1.0deg)"
     assert chelsa["hires_resolutions"] == ["30s"] and chelsa["scenarios"] == [FUTURE_NAME]
     by_name = {p["name"]: p for p in chelsa["predictors"]}
     assert by_name["hurs_mean"]["group"] == "humidity"

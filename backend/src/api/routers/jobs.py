@@ -14,8 +14,9 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import StreamingResponse
 
+from src.api.auth import Analyst
 from src.api.converters import job_out
-from src.api.deps import repository_dep
+from src.api.deps import JobQueue, queue_dep, repository_dep
 from src.api.schemas import JobOut
 from src.domain import JobStatus
 from src.persistence.repository import Repository
@@ -90,6 +91,28 @@ def get_job(job_id: uuid.UUID, repo: RepoDep) -> JobOut:
     job = repo.get_job(job_id)
     if job is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Job not found")
+    return job_out(job)
+
+
+@router.post(
+    "/{job_id}/cancel",
+    response_model=JobOut,
+    operation_id="cancelJob",
+    dependencies=[Analyst],
+)
+def cancel_job(
+    job_id: uuid.UUID, repo: RepoDep, queue: Annotated[JobQueue, Depends(queue_dep)]
+) -> JobOut:
+    """Discard a queued or running job. A queued job never starts; a running one stops at its
+    next progress checkpoint (never mid-write), its species marked "Run discarded by user".
+    Work already finished stays (records already ingested are kept, append-only)."""
+    job = repo.get_job(job_id)
+    if job is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Job not found")
+    if job.status not in _ACTIVE:
+        raise HTTPException(status.HTTP_409_CONFLICT, f"Job already {job.status.value}")
+    job = repo.update_job(job_id, status=JobStatus.CANCELLED, message="Discard requested")
+    queue.revoke(str(job_id))
     return job_out(job)
 
 

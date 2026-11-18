@@ -572,6 +572,34 @@ export function useUpdateStudyRegion(taxonKey: number) {
   })
 }
 
+// ------------------------------------------------------------ discard run / delete species
+/** Discard a queued or running job (a running one stops at its next safe checkpoint). */
+export function useCancelJob() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (jobId: string) =>
+      unwrap(await api.POST('/jobs/{job_id}/cancel', { params: { path: { job_id: jobId } } })),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['jobs'] }),
+  })
+}
+
+/** Remove a species and everything stored for it (not undoable). */
+export function useDeleteSpecies() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (taxonKey: number) => {
+      const { error } = await api.DELETE('/species/{taxon_key}', {
+        params: { path: { taxon_key: taxonKey }, query: { confirm: taxonKey } },
+      })
+      if (error) throw new Error(typeof error === 'object' && error && 'detail' in error ? String(error.detail) : 'Delete failed')
+    },
+    onSuccess: (_d, taxonKey) => {
+      qc.removeQueries({ queryKey: qk.species(taxonKey) })
+      void qc.invalidateQueries({ queryKey: qk.speciesList() })
+    },
+  })
+}
+
 // ------------------------------------------------------------ climate data + predictors
 /** Installed climate data versions (WorldClim, CHELSA, …) with their grouped predictors. */
 export function useClimateVersions() {
